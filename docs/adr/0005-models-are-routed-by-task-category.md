@@ -1,0 +1,3 @@
+# Models are routed by task category
+
+Model-assisted work is configured by Model Task Category, such as mapping `query_understanding` to Ollama and `hard_content_extraction` to Codex App Server with ChatGPT OAuth. There is no automatic provider fallback in the MVP. Hard content extraction through Codex is an explicit user-requested step, not an automatic continuation of local extraction or Specialized Enrichment. Cloud-bound input has an initial configurable limit of 5 MiB; exceeding it skips cloud assistance rather than rejecting the Memory or its local understanding. This keeps provider choice and later usage controls centralized rather than embedding them in individual extractors.

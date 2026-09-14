@@ -1,0 +1,15 @@
+# memoryd binds to loopback by default. Keep this file local: paths may
+# identify personal content.
+server:
+  address: 127.0.0.1:8080
+  shutdown_timeout: 10s
+
+storage:
+  data_dir: ./data
+  # database_path and blob_dir default below data_dir when omitted.
+  # database_path: ./data/memoryd.sqlite
+  # blob_dir: ./data/blobs
+
+logging:
+  level: info
+  format: json
