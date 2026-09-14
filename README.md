@@ -20,13 +20,13 @@ go run ./cmd/memoryd -c memoryd.example.yaml
 
 The server binds to `http://127.0.0.1:8080/` by default.
 
-For compact development logs, set `MEMORYD_DEV` to a true Boolean value while writing to a terminal:
+For compact development logs, set `MEMORYD_DEV` to a true Boolean value:
 
 ```sh
 MEMORYD_DEV=1 go run ./cmd/memoryd
 ```
 
-When both conditions hold, development formatting overrides the configured text or JSON format. Redirected output retains the configured standard `slog` format.
+Development formatting applies to terminal and redirected output. Attributes follow the human-readable prefix as an indented JSON object. When development mode is disabled, logs use standard structured JSON.
 
 - Interactive API documentation: <http://127.0.0.1:8080/docs/>
 - OpenAPI YAML: <http://127.0.0.1:8080/openapi.yaml>

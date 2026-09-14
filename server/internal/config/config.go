@@ -20,7 +20,6 @@ const (
 	DefaultShutdownTimeout = 10 * time.Second
 	DefaultDataDir         = "./data"
 	DefaultLogLevel        = "info"
-	DefaultLogFormat       = "text"
 )
 
 // Config is the complete configuration needed by the server.  Omitted YAML
@@ -45,8 +44,7 @@ type StorageConfig struct {
 }
 
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level string `yaml:"level"`
 }
 
 func Defaults() Config {
@@ -56,7 +54,7 @@ func Defaults() Config {
 			ShutdownTimeout: DefaultShutdownTimeout,
 		},
 		Storage: StorageConfig{DataDir: DefaultDataDir},
-		Logging: LoggingConfig{Level: DefaultLogLevel, Format: DefaultLogFormat},
+		Logging: LoggingConfig{Level: DefaultLogLevel},
 	}
 	return c.withDerivedPaths()
 }
@@ -107,10 +105,6 @@ func (c Config) Validate() error {
 
 	if _, err := ParseLoggingLevel(c.Logging.Level); err != nil {
 		return err
-	}
-	format := strings.ToLower(strings.TrimSpace(c.Logging.Format))
-	if format != "text" && format != "json" {
-		return fmt.Errorf("logging.format must be text or json (got %q)", c.Logging.Format)
 	}
 	if strings.TrimSpace(c.Storage.DataDir) == "" {
 		return fmt.Errorf("storage.data_dir must not be empty")

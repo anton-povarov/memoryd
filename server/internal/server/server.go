@@ -4,7 +4,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,7 +52,7 @@ func (s *Server) Run(ctx context.Context) error {
 	errorsFromServer := make(chan error, 1)
 	go func() {
 		s.logger.Info("HTTP server starting",
-			"address", fmt.Sprintf("http://%s", s.config.Address),
+			"address", s.config.Address,
 			"api_base", api.ServerUrlLocalMemorydServer,
 			"docs", "/docs/",
 		)

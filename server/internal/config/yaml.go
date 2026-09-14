@@ -29,8 +29,7 @@ type rawStorage struct {
 }
 
 type rawLogging struct {
-	Level  *string `yaml:"level"`
-	Format *string `yaml:"format"`
+	Level *string `yaml:"level"`
 }
 
 func parseYAMLConfig(data []byte) (Config, error) {
@@ -82,9 +81,6 @@ func parseYAMLConfig(data []byte) (Config, error) {
 	if raw.Logging != nil {
 		if raw.Logging.Level != nil {
 			c.Logging.Level = *raw.Logging.Level
-		}
-		if raw.Logging.Format != nil {
-			c.Logging.Format = *raw.Logging.Format
 		}
 	}
 	return c.withDerivedPaths(), nil

@@ -17,7 +17,7 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if c.Server.ShutdownTimeout != 10*time.Second {
 		t.Fatalf("default shutdown timeout = %s", c.Server.ShutdownTimeout)
 	}
-	if c.Logging.Level != "info" || c.Logging.Format != "text" {
+	if c.Logging.Level != "info" {
 		t.Fatalf("default logging = %#v", c.Logging)
 	}
 	if err := c.Validate(); err != nil {
@@ -34,7 +34,6 @@ storage:
   data_dir: ./vault
 logging:
   level: DEBUG
-  format: json
 `
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -49,7 +48,7 @@ logging:
 	if c.Storage.DatabasePath != filepath.Join("vault", "memoryd.sqlite") || c.Storage.BlobDir != filepath.Join("vault", "blobs") {
 		t.Fatalf("derived storage paths = %#v", c.Storage)
 	}
-	if c.Logging != (LoggingConfig{Level: "DEBUG", Format: "json"}) {
+	if c.Logging != (LoggingConfig{Level: "DEBUG"}) {
 		t.Fatalf("logging config = %#v", c.Logging)
 	}
 }
