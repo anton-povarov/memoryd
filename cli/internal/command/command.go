@@ -4,6 +4,7 @@ package command
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -268,6 +269,34 @@ func Get(ctx context.Context, serverURL string, memoryID uuid.UUID, output strin
 	}
 	fmt.Fprintf(stderr, "downloaded %d bytes\n", written)
 	return nil
+}
+
+func Info(ctx context.Context, serverURL string, memoryID uuid.UUID, stdout io.Writer) error {
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	response, err := client.GetMemory(ctx, memoryID)
+	if err != nil {
+		return fmt.Errorf("get Memory details: %w", err)
+	}
+	parsed, err := api.ParseGetMemoryResponse(response)
+	if err != nil {
+		return fmt.Errorf("decode Memory details: %w", err)
+	}
+	if parsed.JSON404 != nil {
+		return fmt.Errorf("%s: %s", parsed.JSON404.Code, parsed.JSON404.Message)
+	}
+	if parsed.JSON200 == nil {
+		return fmt.Errorf("get Memory details failed with HTTP %s", parsed.Status())
+	}
+	var formatted bytes.Buffer
+	if err := json.Indent(&formatted, parsed.Body, "", "  "); err != nil {
+		return fmt.Errorf("format Memory details: %w", err)
+	}
+	formatted.WriteByte('\n')
+	_, err = formatted.WriteTo(stdout)
+	return err
 }
 
 func filenameFromDisposition(disposition, fallback string) string {

@@ -104,3 +104,54 @@ func TestGetUsesSafeServerFilenameAndDownloadsAtomically(t *testing.T) {
 		t.Fatalf("temporary files remain: %v", matches)
 	}
 }
+
+func TestInfoReturnsMemoryDetailsWithoutDownloadingContent(t *testing.T) {
+	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v0/memories/"+memoryID.String() {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.MemoryDetail{
+			Memory: api.MemorySummary{
+				Id: memoryID, BlobHash: strings.Repeat("a", 64), ByteSize: 42,
+				MediaType: "application/pdf", OriginalFilename: "memory.pdf", UnderstandingState: api.Done,
+			},
+			ImportContext: api.ImportContext{OriginalFilename: "memory.pdf"},
+			Facts:         []api.Fact{}, DerivedContent: []api.DerivedContent{},
+		})
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	if err := Info(t.Context(), server.URL, memoryID, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	var detail api.MemoryDetail
+	if err := json.Unmarshal(stdout.Bytes(), &detail); err != nil {
+		t.Fatalf("stdout is not JSON: %v", err)
+	}
+	if detail.Memory.Id != memoryID || detail.Memory.OriginalFilename != "memory.pdf" || requests.Load() != 1 {
+		t.Fatalf("detail=%+v requests=%d", detail.Memory, requests.Load())
+	}
+}
+
+func TestInfoReportsNotFound(t *testing.T) {
+	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(api.Error{Code: "memory_not_found", Message: "Memory does not exist"})
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	err := Info(t.Context(), server.URL, memoryID, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "memory_not_found: Memory does not exist") || stdout.Len() != 0 {
+		t.Fatalf("error=%v stdout=%q", err, stdout.String())
+	}
+}

@@ -25,10 +25,11 @@ Import and restore one Memory from another terminal:
 ```sh
 cd cli
 go run ./cmd/mem-put /absolute/path/to/memory.pdf
+go run ./cmd/mem-info <memory-id>
 go run ./cmd/mem-get <memory-id>
 ```
 
-Both commands accept `--server`; otherwise they use `MEMORYD_URL`, then `http://127.0.0.1:8080`. `mem-get` accepts `-o <path>`, `-o -` for stdout, and `--force` when replacing an existing destination.
+All three commands accept `--server`; otherwise they use `MEMORYD_URL`, then `http://127.0.0.1:8080`. `mem-info` prints Memory details as JSON. `mem-get` accepts `-o <path>`, `-o -` for stdout, and `--force` when replacing an existing destination.
 
 For compact development logs, set `MEMORYD_DEV` to a true Boolean value:
 
