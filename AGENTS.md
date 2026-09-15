@@ -5,12 +5,17 @@ Stage: MVP design, see `docs/MVP.md`.
 ## Go
 
 Coding standard: see `GO_CODING_STANDARD.md`.
+
+### Formatting and linting
 When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
+These commands would already perform `go fmt`, `go vet` so no need to run them separately.
+Fix issues. If you need to ignore a warning with `nolint` comment, explicitly report it to the user.
+
 
 
 ## Agents
 
-## Code Exploration
+### Code Exploration
 
 Use subagents for code exploration. Parallelize independent exploration tasks when useful.
 Use an explorer when exploration would require reading multiple files, tracing behavior, or investigating an independent question.

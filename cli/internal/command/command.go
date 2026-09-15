@@ -287,7 +287,11 @@ func Get(
 		return fmt.Errorf("create temporary download: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() {
+		if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(stderr, "could not remove temporary download: %v\n", err)
+		}
+	}()
 	written, err := io.Copy(temporary, response.Body)
 	if err != nil {
 		_ = temporary.Close()
@@ -312,6 +316,7 @@ func Info(ctx context.Context, serverURL string, memoryID uuid.UUID, stdout io.W
 	if err != nil {
 		return fmt.Errorf("get Memory details: %w", err)
 	}
+	defer response.Body.Close()
 	parsed, err := api.ParseGetMemoryResponse(response)
 	if err != nil {
 		return fmt.Errorf("decode Memory details: %w", err)
@@ -358,6 +363,7 @@ func List(
 			return fmt.Errorf("list Memories: %w", err)
 		}
 		parsed, err := api.ParseBrowseMemoriesResponse(response)
+		response.Body.Close()
 		if err != nil {
 			return fmt.Errorf("decode Memory page: %w", err)
 		}

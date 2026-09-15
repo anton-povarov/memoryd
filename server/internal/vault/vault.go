@@ -39,11 +39,11 @@ const (
 )
 
 var (
-	ErrBlobTooLarge       = errors.New("Blob exceeds the 100 MiB limit")
+	ErrBlobTooLarge       = errors.New("blob exceeds the 100 MiB limit")
 	ErrUnsupportedContent = errors.New(
-		"Blob content is not a supported PDF, JPEG, or PNG",
+		"blob content is not a supported PDF, JPEG, or PNG",
 	)
-	ErrMemoryNotFound = errors.New("Memory not found")
+	ErrMemoryNotFound = errors.New("memory not found")
 )
 
 type State string
@@ -145,7 +145,7 @@ func (v *Vault) Close() error { return v.db.Close() }
 
 func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if candidate.Content == nil {
-		return Memory{}, errors.New("Blob content is required")
+		return Memory{}, errors.New("blob content is required")
 	}
 	logger := logging.FromContext(ctx)
 	logger.DebugContext(
@@ -158,7 +158,11 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("create temporary Blob: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() {
+		if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.WarnContext(ctx, "Could not remove temporary Blob", "error", err)
+		}
+	}()
 
 	hash := sha256.New()
 	byteSize, copyErr := copyWithLimit(
@@ -322,7 +326,11 @@ func (v *Vault) ListMemories(
 	if err != nil {
 		return nil, false, fmt.Errorf("list Memories: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			logging.FromContext(ctx).WarnContext(ctx, "Could not close Memory rows", "error", err)
+		}
+	}()
 	var memories []Memory
 	for rows.Next() {
 		memory, err := scanMemory(rows)

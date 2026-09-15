@@ -228,7 +228,11 @@ func (h *Handler) ImportMemory(
 			"could not parse multipart request",
 		), nil
 	}
-	defer form.RemoveAll()
+	defer func() {
+		if err := form.RemoveAll(); err != nil {
+			logger.WarnContext(ctx, "Could not remove multipart files", "error", err)
+		}
+	}()
 	files := form.File["file"]
 	if len(files) != 1 {
 		logger.InfoContext(
@@ -586,31 +590,6 @@ func sampleMemory(id uuid.UUID) api.MemorySummary {
 		UnderstandingState: api.Done, ActiveRunId: &runID,
 		ImportedAt: stubTime, OriginalCreatedAt: &stubTime,
 		OriginalModifiedAt: nil,
-	}
-}
-
-func sampleDetail(id uuid.UUID) api.MemoryDetail {
-	contentURL := "/api/v0/memories/" + id.String() + "/content"
-	text := "Deterministic v0 Derived Content."
-	memory := sampleMemory(id)
-	run := sampleRun(id, api.Regular)
-	return api.MemoryDetail{
-		ActiveRun:  &run,
-		Memory:     memory,
-		ContentUrl: &contentURL,
-		ImportContext: api.ImportContext{
-			ByteSize: &memory.ByteSize, ContentHash: &memory.BlobHash,
-			FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
-			FullPath: nil, MediaType: &memory.MediaType,
-			OriginalFilename: memory.OriginalFilename, RelativePath: nil,
-		},
-		Facts: []api.Fact{{
-			Confidence: nil, Namespace: "memoryd", Name: "stub",
-			Value: true, ValueType: api.Boolean, Origin: "memoryd-v0",
-		}},
-		DerivedContent: []api.DerivedContent{{
-			Kind: "extracted_text", Metadata: nil, Text: &text,
-		}},
 	}
 }
 
