@@ -57,7 +57,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/MemoryPage"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: The request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}:
     parameters:
@@ -74,7 +78,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/MemoryDetail"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/content:
     parameters:
@@ -113,7 +121,11 @@ paths:
                 type: string
                 format: binary
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/import:
     post:
@@ -156,9 +168,13 @@ paths:
                   summary: Successful terminal event
                   value: |-
                     event: import_completed
-                    data: {"memory":{"id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","blob_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","media_type":"application/pdf","byte_size":1234,"original_filename":"bill.pdf","understanding_state":"Done","imported_at":"2026-01-01T00:00:00Z"}}
+                    data: {"memory":{"id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","blob_hash":"sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","media_type":"application/pdf","byte_size":1234,"original_filename":"bill.pdf","understanding_state":"Done","imported_at":"2026-01-01T00:00:00Z"}}
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: The request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: The candidate is a duplicate or an import cannot start.
           content:
@@ -173,6 +189,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "415":
           description: The Blob format is not supported by the MVP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: The import failed inside the server before streaming began.
           content:
             application/json:
               schema:
@@ -193,7 +215,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunPage"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/runs/{runId}:
     parameters:
@@ -211,7 +237,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/UnderstandingRun"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/logs:
     parameters:
@@ -245,7 +275,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessingLogPage"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/runs/{runId}/logs:
     parameters:
@@ -263,7 +297,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ProcessingLogPage"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/rebuild:
     parameters:
@@ -277,7 +315,11 @@ paths:
         "200":
           $ref: "#/components/responses/UnderstandingEventStream"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: A rebuild is already in progress.
           content:
@@ -306,7 +348,11 @@ paths:
         "200":
           $ref: "#/components/responses/UnderstandingEventStream"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: The requested Memory or Run does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: Confirmation is required before repeating an equivalent enhancement.
           content:
@@ -342,7 +388,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/SearchResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: The request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "422":
           description: The query could not be interpreted into a valid Query Plan.
           content:
@@ -384,18 +434,6 @@ components:
         type: string
 
   responses:
-    BadRequest:
-      description: The request is invalid.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    NotFound:
-      description: The requested Memory or Run does not exist.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
     UnderstandingEventStream:
       description: Progress events followed by one terminal rebuild or enhancement event.
       content:
@@ -560,8 +598,8 @@ components:
           format: uuid
         blob_hash:
           type: string
-          pattern: "^[a-fA-F0-9]{64}$"
-          description: SHA-256 content hash of the immutable Blob.
+          pattern: "^sha256-[a-f0-9]{64}$"
+          description: Canonical SHA-256 Blobref of the immutable Blob.
         media_type:
           type: string
         byte_size:
@@ -646,7 +684,7 @@ components:
           minimum: 0
         content_hash:
           type: string
-          pattern: "^[a-fA-F0-9]{64}$"
+          pattern: "^sha256-[a-f0-9]{64}$"
         filesystem_created_at:
           type: string
           format: date-time

@@ -207,7 +207,7 @@ func TestListPaginationAndOutput(t *testing.T) {
 
 func testSummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
 	return api.MemorySummary{
-		ActiveRunId: nil, BlobHash: strings.Repeat("a", 64),
+		ActiveRunId: nil, BlobHash: "sha256-" + strings.Repeat("a", 64),
 		ByteSize: size, Id: id, ImportedAt: time.Time{},
 		MediaType: "application/pdf", OriginalCreatedAt: nil,
 		OriginalFilename: filename, OriginalModifiedAt: nil,

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,8 +45,27 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 		t.Fatalf("created Memory = %#v", created)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(wantBytes))
-	if created.BlobHash != digest {
-		t.Fatalf("Blob hash = %s, want %s", created.BlobHash, digest)
+	if created.BlobRef.String() != "sha256-"+digest {
+		t.Fatalf("Blobref = %s, want sha256-%s", created.BlobRef, digest)
+	}
+	var storedRef string
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT blob_hash FROM memories WHERE id = ?`,
+		created.ID.String(),
+	).Scan(&storedRef); err != nil {
+		t.Fatal(err)
+	}
+	if storedRef != created.BlobRef.String() {
+		t.Fatalf("stored Blobref = %q, want %q", storedRef, created.BlobRef)
+	}
+	if _, err := v.db.ExecContext(
+		ctx,
+		`UPDATE memories SET blob_hash = ? WHERE id = ?`,
+		created.BlobRef.digestHex(),
+		created.ID.String(),
+	); err == nil {
+		t.Fatal("database accepted an unprefixed digest")
 	}
 	blobPath := filepath.Join(
 		blobDir,
@@ -82,7 +103,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if !bytes.Equal(gotBytes, wantBytes) {
 		t.Fatalf("content = %q, want %q", gotBytes, wantBytes)
 	}
-	if opened.ID != created.ID || opened.BlobHash != created.BlobHash ||
+	if opened.ID != created.ID || opened.BlobRef != created.BlobRef ||
 		opened.OriginalFilename != "notes.pdf" {
 		t.Fatalf("reopened Memory = %#v, created = %#v", opened, created)
 	}
@@ -119,5 +140,39 @@ func TestCopyWithLimitRejectsFirstByteOverLimit(t *testing.T) {
 	}
 	if written != 5 || destination.String() != "12345" {
 		t.Fatalf("written = %d, content = %q", written, destination.String())
+	}
+}
+
+func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "memoryd.sqlite")
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `CREATE TABLE memories (
+		id TEXT PRIMARY KEY, blob_hash TEXT NOT NULL UNIQUE
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT INTO memories (id, blob_hash) VALUES (?, ?)`,
+		"legacy", strings.Repeat("a", sha256.Size*2),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Open(ctx, databasePath, filepath.Join(root, "blobs"))
+	if err == nil {
+		t.Fatal("expected invalid stored Blobref error")
+	}
+	if !strings.Contains(err.Error(), "invalid stored Blobref") {
+		t.Fatalf("unexpected error = %v", err)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -65,7 +64,7 @@ type Import struct {
 
 type Memory struct {
 	ID                     uuid.UUID
-	BlobHash               string
+	BlobRef                Blobref
 	OriginalFilename       string
 	RelativePath           string
 	FullPath               string
@@ -122,7 +121,11 @@ func Open(ctx context.Context, databasePath, blobDir string) (*Vault, error) {
 func (v *Vault) initialize(ctx context.Context) error {
 	const schema = `CREATE TABLE IF NOT EXISTS memories (
 		id TEXT PRIMARY KEY,
-		blob_hash TEXT NOT NULL UNIQUE,
+		blob_hash TEXT NOT NULL UNIQUE CHECK (
+			length(blob_hash) = 71 AND
+			substr(blob_hash, 1, 7) = 'sha256-' AND
+			substr(blob_hash, 8) NOT GLOB '*[^0-9a-f]*'
+		),
 		original_filename TEXT NOT NULL,
 		relative_path TEXT,
 		full_path TEXT,
@@ -137,6 +140,34 @@ func (v *Vault) initialize(ctx context.Context) error {
 	)`
 	if _, err := v.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize Vault database: %w", err)
+	}
+	rows, err := v.db.QueryContext(ctx, `SELECT blob_hash FROM memories`)
+	if err != nil {
+		return fmt.Errorf("validate stored Blobrefs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			logging.FromContext(ctx).WarnContext(
+				ctx,
+				"Could not close stored Blobref rows",
+				"error", err,
+			)
+		}
+	}()
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return fmt.Errorf("read stored Blobref: %w", err)
+		}
+		if _, err := ParseBlobref(value); err != nil {
+			return fmt.Errorf("invalid stored Blobref %q: %w", value, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("validate stored Blobrefs: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close stored Blobref rows: %w", err)
 	}
 	return nil
 }
@@ -180,13 +211,15 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if err != nil {
 		return Memory{}, err
 	}
-	blobHash := hex.EncodeToString(hash.Sum(nil))
+	var digest [sha256.Size]byte
+	copy(digest[:], hash.Sum(nil))
+	blobRef := NewSHA256Blobref(digest)
 	logger.DebugContext(ctx, "Blob import staged",
-		"blob_hash", blobHash,
+		"blob_hash", blobRef.String(),
 		"byte_size", byteSize,
 		"media_type", mediaType,
 	)
-	finalPath := v.blobPath(blobHash)
+	finalPath := v.blobPath(blobRef)
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
 		return Memory{}, fmt.Errorf("create Blob shard directory: %w", err)
 	}
@@ -194,7 +227,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		if err := os.Rename(temporaryPath, finalPath); err != nil {
 			return Memory{}, fmt.Errorf("publish Blob: %w", err)
 		}
-		logger.DebugContext(ctx, "Blob published", "blob_hash", blobHash)
+		logger.DebugContext(ctx, "Blob published", "blob_hash", blobRef.String())
 	} else if err != nil {
 		return Memory{}, fmt.Errorf("inspect Blob destination: %w", err)
 	}
@@ -202,7 +235,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	now := time.Now().UTC()
 	memory := Memory{
 		ID:                     uuid.New(),
-		BlobHash:               blobHash,
+		BlobRef:                blobRef,
 		OriginalFilename:       safeFilename(candidate.OriginalFilename),
 		RelativePath:           candidate.RelativePath,
 		FullPath:               candidate.FullPath,
@@ -229,7 +262,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		durableContext,
 		insertSQL,
 		memory.ID.String(),
-		memory.BlobHash,
+		memory.BlobRef.String(),
 		memory.OriginalFilename,
 		nullableString(memory.RelativePath),
 		nullableString(memory.FullPath),
@@ -252,13 +285,13 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("inspect Memory commit: %w", err)
 	}
 	if inserted == 0 {
-		existing, err := v.memoryByHash(durableContext, blobHash)
+		existing, err := v.memoryByHash(durableContext, blobRef)
 		if err != nil {
 			return Memory{}, err
 		}
 		logger.InfoContext(durableContext, "Duplicate import rejected",
 			"memory_id", existing.ID,
-			"blob_hash", existing.BlobHash,
+			"blob_hash", existing.BlobRef.String(),
 			"understanding_state", existing.UnderstandingState,
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
@@ -284,7 +317,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	memory.UnderstandingCompleted = &completed
 	logger.InfoContext(durableContext, "Memory imported",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobHash,
+		"blob_hash", memory.BlobRef.String(),
 		"byte_size", memory.ByteSize,
 		"media_type", memory.MediaType,
 		"understanding_state", memory.UnderstandingState,
@@ -359,25 +392,26 @@ func (v *Vault) OpenContent(
 	if err != nil {
 		return Memory{}, nil, err
 	}
-	content, err := os.Open(v.blobPath(memory.BlobHash))
+	content, err := os.Open(v.blobPath(memory.BlobRef))
 	if err != nil {
 		return Memory{}, nil, fmt.Errorf("open Blob content: %w", err)
 	}
 	logger.DebugContext(ctx, "Memory Blob opened",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobHash,
+		"blob_hash", memory.BlobRef.String(),
 		"byte_size", memory.ByteSize,
 		"media_type", memory.MediaType,
 	)
 	return memory, content, nil
 }
 
-func (v *Vault) blobPath(digest string) string {
+func (v *Vault) blobPath(ref Blobref) string {
+	digest := ref.digestHex()
 	return filepath.Join(
 		v.blobDir,
 		digest[:firstShardEnd],
 		digest[firstShardEnd:secondShardEnd],
-		"sha256-"+digest,
+		ref.String(),
 	)
 }
 
@@ -389,11 +423,11 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanMemory(row rowScanner) (Memory, error) {
 	var memory Memory
-	var id, state, importedAt string
+	var id, state, importedAt, blobHash string
 	var relativePath, fullPath, createdAt, modifiedAt, runID, completedAt sql.NullString
 	err := row.Scan(
 		&id,
-		&memory.BlobHash,
+		&blobHash,
 		&memory.OriginalFilename,
 		&relativePath,
 		&fullPath,
@@ -411,6 +445,10 @@ func scanMemory(row rowScanner) (Memory, error) {
 	}
 	if err != nil {
 		return Memory{}, fmt.Errorf("read Memory: %w", err)
+	}
+	memory.BlobRef, err = ParseBlobref(blobHash)
+	if err != nil {
+		return Memory{}, fmt.Errorf("read Memory Blobref: %w", err)
 	}
 	parsedID, err := uuid.Parse(id)
 	if err != nil {
@@ -449,9 +487,9 @@ func scanMemory(row rowScanner) (Memory, error) {
 	return memory, nil
 }
 
-func (v *Vault) memoryByHash(ctx context.Context, hash string) (Memory, error) {
+func (v *Vault) memoryByHash(ctx context.Context, ref Blobref) (Memory, error) {
 	return scanMemory(
-		v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, hash),
+		v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, ref.String()),
 	)
 }
 

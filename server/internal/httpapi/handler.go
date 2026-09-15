@@ -25,7 +25,7 @@ const (
 	stubMemoryID             = "2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2"
 	stubRunID                = "7eb97a66-59ad-4771-bfc2-0d5a62c55f56"
 	stubLogID                = "450369c7-37cf-4322-bbbb-32091834cb88"
-	stubHash                 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	stubHash                 = "sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	multipartFormMemoryBytes = 1 << 20
 	completedPercent         = 100.0
 	stubByteSize             = 1234
@@ -73,10 +73,8 @@ func (h *Handler) BrowseMemories(
 		decoded, err := decodeBrowseCursor(*request.Params.Cursor)
 		if err != nil {
 			return api.BrowseMemories400JSONResponse{
-				BadRequestJSONResponse: api.BadRequestJSONResponse(api.Error{
-					Code: "invalid_cursor", Details: nil,
-					ExistingMemory: nil, Message: "cursor is invalid",
-				}),
+				Code: "invalid_cursor", Details: nil,
+				ExistingMemory: nil, Message: "cursor is invalid",
 			}, nil
 		}
 		after = &decoded
@@ -121,9 +119,7 @@ func (h *Handler) GetMemory(
 			"memory_id",
 			request.MemoryId,
 		)
-		return api.GetMemory404JSONResponse{
-			NotFoundJSONResponse: api.NotFoundJSONResponse(notFoundError()),
-		}, nil
+		return api.GetMemory404JSONResponse(notFoundError()), nil
 	}
 	if err != nil {
 		return nil, err
@@ -153,9 +149,7 @@ func (h *Handler) GetMemoryContent(
 			"memory_id",
 			request.MemoryId,
 		)
-		return api.GetMemoryContent404JSONResponse{
-			NotFoundJSONResponse: api.NotFoundJSONResponse(notFoundError()),
-		}, nil
+		return api.GetMemoryContent404JSONResponse(notFoundError()), nil
 	}
 	if err != nil {
 		return nil, err
@@ -163,10 +157,10 @@ func (h *Handler) GetMemoryContent(
 	disposition := mime.FormatMediaType("attachment", map[string]string{
 		"filename": memory.OriginalFilename,
 	})
-	etag := fmt.Sprintf("%q", memory.BlobHash)
+	etag := fmt.Sprintf("%q", memory.BlobRef.String())
 	logger.InfoContext(ctx, "Memory content download prepared",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobHash,
+		"blob_hash", memory.BlobRef.String(),
 		"byte_size", memory.ByteSize,
 		"media_type", memory.MediaType,
 	)
@@ -243,7 +237,7 @@ func (h *Handler) ImportMemory(
 	}
 	content, err := files[0].Open()
 	if err != nil {
-		return nil, err
+		return importInternalError(ctx, err), nil
 	}
 	defer content.Close() // nolint:errcheck
 	candidate := vault.Import{
@@ -291,7 +285,7 @@ func (h *Handler) ImportMemory(
 			ExistingMemory: nil, Message: err.Error(),
 		}, nil
 	case err != nil:
-		return nil, err
+		return importInternalError(ctx, err), nil
 	}
 	message := "Deterministic stub understanding completed"
 	percent := completedPercent
@@ -318,9 +312,17 @@ func (h *Handler) ImportMemory(
 		},
 	)
 	if err != nil {
-		return nil, err
+		return importInternalError(ctx, err), nil
 	}
 	return api.ImportMemory200TexteventStreamResponse{Body: stream}, nil
+}
+
+func importInternalError(ctx context.Context, err error) api.ImportMemoryResponseObject {
+	logging.FromContext(ctx).ErrorContext(ctx, "Memory import failed", "error", err)
+	return api.ImportMemory500JSONResponse{
+		Code: "import_failed", Details: nil,
+		ExistingMemory: nil, Message: err.Error(),
+	}
 }
 
 func (h *Handler) RebuildMemory(
@@ -364,9 +366,7 @@ func (h *Handler) ListUnderstandingRuns(
 ) (api.ListUnderstandingRunsResponseObject, error) {
 	memory, err := h.vault.Memory(ctx, request.MemoryId)
 	if errors.Is(err, vault.ErrMemoryNotFound) {
-		return api.ListUnderstandingRuns404JSONResponse{
-			NotFoundJSONResponse: api.NotFoundJSONResponse(notFoundError()),
-		}, nil
+		return api.ListUnderstandingRuns404JSONResponse(notFoundError()), nil
 	}
 	if err != nil {
 		return nil, err
@@ -386,9 +386,7 @@ func (h *Handler) GetUnderstandingRun(
 	memory, err := h.vault.Memory(ctx, request.MemoryId)
 	if errors.Is(err, vault.ErrMemoryNotFound) ||
 		err == nil && (memory.RunID == nil || *memory.RunID != request.RunId) {
-		return api.GetUnderstandingRun404JSONResponse{
-			NotFoundJSONResponse: api.NotFoundJSONResponse(notFoundError()),
-		}, nil
+		return api.GetUnderstandingRun404JSONResponse(notFoundError()), nil
 	}
 	if err != nil {
 		return nil, err
@@ -446,7 +444,7 @@ func (h *Handler) health() api.HealthResponse {
 func memorySummary(memory vault.Memory) api.MemorySummary {
 	return api.MemorySummary{
 		Id:                 memory.ID,
-		BlobHash:           memory.BlobHash,
+		BlobHash:           memory.BlobRef.String(),
 		MediaType:          memory.MediaType,
 		ByteSize:           memory.ByteSize,
 		OriginalFilename:   memory.OriginalFilename,
@@ -462,7 +460,7 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	contentURL := "/api/v0/memories/" + memory.ID.String() + "/content"
 	mediaType := memory.MediaType
 	byteSize := memory.ByteSize
-	contentHash := memory.BlobHash
+	contentHash := memory.BlobRef.String()
 	text := "Understanding is not implemented; this is deterministic stub Derived Content."
 	context := api.ImportContext{
 		ByteSize:             &byteSize,
@@ -527,9 +525,7 @@ func notFoundError() api.Error {
 
 func badImport(code, message string) api.ImportMemoryResponseObject {
 	return api.ImportMemory400JSONResponse{
-		BadRequestJSONResponse: api.BadRequestJSONResponse(api.Error{
-			Code: code, Details: nil, ExistingMemory: nil, Message: message,
-		}),
+		Code: code, Details: nil, ExistingMemory: nil, Message: message,
 	}
 }
 

@@ -395,7 +395,7 @@ type MemoryPage struct {
 type MemorySummary struct {
 	ActiveRunId *openapi_types.UUID `json:"active_run_id,omitempty"`
 
-	// BlobHash SHA-256 content hash of the immutable Blob.
+	// BlobHash Canonical SHA-256 Blobref of the immutable Blob.
 	BlobHash           string             `json:"blob_hash"`
 	ByteSize           int64              `json:"byte_size"`
 	Id                 openapi_types.UUID `json:"id"`
@@ -533,12 +533,6 @@ type MemoryId = openapi_types.UUID
 
 // RunId defines model for RunId.
 type RunId = openapi_types.UUID
-
-// BadRequest defines model for BadRequest.
-type BadRequest = Error
-
-// NotFound defines model for NotFound.
-type NotFound = Error
 
 // BrowseMemoriesParams defines parameters for BrowseMemories.
 type BrowseMemoriesParams struct {
@@ -2038,7 +2032,7 @@ type BrowseMemoriesResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *MemoryPage
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2047,7 +2041,7 @@ func (r BrowseMemoriesResponse) GetJSON200() *MemoryPage {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r BrowseMemoriesResponse) GetJSON400() *BadRequest {
+func (r BrowseMemoriesResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -2084,17 +2078,19 @@ type ImportMemoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
 	// JSON413 the response for an HTTP 413 `application/json` response
 	JSON413 *Error
 	// JSON415 the response for an HTTP 415 `application/json` response
 	JSON415 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ImportMemoryResponse) GetJSON400() *BadRequest {
+func (r ImportMemoryResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -2111,6 +2107,11 @@ func (r ImportMemoryResponse) GetJSON413() *Error {
 // GetJSON415 returns the response for an HTTP 415 `application/json` response
 func (r ImportMemoryResponse) GetJSON415() *Error {
 	return r.JSON415
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ImportMemoryResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -2148,7 +2149,7 @@ type GetMemoryResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *MemoryDetail
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2157,7 +2158,7 @@ func (r GetMemoryResponse) GetJSON200() *MemoryDetail {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetMemoryResponse) GetJSON404() *NotFound {
+func (r GetMemoryResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2194,7 +2195,7 @@ type EnhanceMemoryWithCodexResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
 	// JSON413 the response for an HTTP 413 `application/json` response
@@ -2202,7 +2203,7 @@ type EnhanceMemoryWithCodexResponse struct {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r EnhanceMemoryWithCodexResponse) GetJSON404() *NotFound {
+func (r EnhanceMemoryWithCodexResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2255,13 +2256,13 @@ type GetMemoryContentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetMemoryContentResponse200Headers
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetMemoryContentResponse) GetJSON404() *NotFound {
+func (r GetMemoryContentResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2300,7 +2301,7 @@ type ListProcessingLogsResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ProcessingLogPage
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2309,7 +2310,7 @@ func (r ListProcessingLogsResponse) GetJSON200() *ProcessingLogPage {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListProcessingLogsResponse) GetJSON404() *NotFound {
+func (r ListProcessingLogsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2346,13 +2347,13 @@ type RebuildMemoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r RebuildMemoryResponse) GetJSON404() *NotFound {
+func (r RebuildMemoryResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2396,7 +2397,7 @@ type ListUnderstandingRunsResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *RunPage
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2405,7 +2406,7 @@ func (r ListUnderstandingRunsResponse) GetJSON200() *RunPage {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListUnderstandingRunsResponse) GetJSON404() *NotFound {
+func (r ListUnderstandingRunsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2444,7 +2445,7 @@ type GetUnderstandingRunResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnderstandingRun
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2453,7 +2454,7 @@ func (r GetUnderstandingRunResponse) GetJSON200() *UnderstandingRun {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetUnderstandingRunResponse) GetJSON404() *NotFound {
+func (r GetUnderstandingRunResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2492,7 +2493,7 @@ type ListRunLogsResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ProcessingLogPage
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -2501,7 +2502,7 @@ func (r ListRunLogsResponse) GetJSON200() *ProcessingLogPage {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListRunLogsResponse) GetJSON404() *NotFound {
+func (r ListRunLogsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -2581,7 +2582,7 @@ type SearchMemoriesResponse struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *SearchResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *Error
 	// JSON422 the response for an HTTP 422 `application/json` response
 	JSON422 *Error
 }
@@ -2592,7 +2593,7 @@ func (r SearchMemoriesResponse) GetJSON200() *SearchResponse {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SearchMemoriesResponse) GetJSON400() *BadRequest {
+func (r SearchMemoriesResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -2901,7 +2902,7 @@ func ParseBrowseMemoriesResponse(rsp *http.Response) (*BrowseMemoriesResponse, e
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2927,7 +2928,7 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2953,6 +2954,13 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 			return nil, err
 		}
 		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -2981,7 +2989,7 @@ func ParseGetMemoryResponse(rsp *http.Response) (*GetMemoryResponse, error) {
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3007,7 +3015,7 @@ func ParseEnhanceMemoryWithCodexResponse(rsp *http.Response) (*EnhanceMemoryWith
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3047,7 +3055,7 @@ func ParseGetMemoryContentResponse(rsp *http.Response) (*GetMemoryContentRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3100,7 +3108,7 @@ func ParseListProcessingLogsResponse(rsp *http.Response) (*ListProcessingLogsRes
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3126,7 +3134,7 @@ func ParseRebuildMemoryResponse(rsp *http.Response) (*RebuildMemoryResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3166,7 +3174,7 @@ func ParseListUnderstandingRunsResponse(rsp *http.Response) (*ListUnderstandingR
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3199,7 +3207,7 @@ func ParseGetUnderstandingRunResponse(rsp *http.Response) (*GetUnderstandingRunR
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3232,7 +3240,7 @@ func ParseListRunLogsResponse(rsp *http.Response) (*ListRunLogsResponse, error) 
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -3291,7 +3299,7 @@ func ParseSearchMemoriesResponse(rsp *http.Response) (*SearchMemoriesResponse, e
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

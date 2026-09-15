@@ -215,18 +215,33 @@ func decodeImportEvents(reader io.Reader, progress io.Writer) (uuid.UUID, error)
 func responseError(response *api.ImportMemoryResponse) error {
 	var problem *api.Error
 	switch {
+	case response.JSON400 != nil:
+		problem = response.JSON400
 	case response.JSON413 != nil:
 		problem = response.JSON413
 	case response.JSON415 != nil:
 		problem = response.JSON415
+	case response.JSON500 != nil:
+		problem = response.JSON500
 	}
 	if problem != nil {
-		return fmt.Errorf("%s: %s", problem.Code, problem.Message)
+		return importHTTPError(response, problem.Code, problem.Message)
 	}
-	if response.JSON400 != nil {
-		return fmt.Errorf("%s: %s", response.JSON400.Code, response.JSON400.Message)
+	return importHTTPError(response, "", "")
+}
+
+func importHTTPError(response *api.ImportMemoryResponse, code, message string) error {
+	status := "import failed with HTTP " + response.Status()
+	if code != "" && message != "" {
+		return fmt.Errorf("%s: %s: %s", status, code, message)
 	}
-	return fmt.Errorf("import failed with HTTP %s", response.Status())
+	if code != "" {
+		return fmt.Errorf("%s: %s", status, code)
+	}
+	if message != "" && message != http.StatusText(response.StatusCode()) {
+		return fmt.Errorf("%s: %s", status, message)
+	}
+	return errors.New(status)
 }
 
 func Get(

@@ -92,6 +92,55 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 	}
 }
 
+func TestPutReportsServerImportFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upload.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\ncontent\n%%EOF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Code:           "import_failed",
+			Details:        nil,
+			ExistingMemory: nil,
+			Message:        "create temporary Blob: open data/blobs/sha256/.import-123: no such file or directory",
+		})
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	err := Put(t.Context(), server.URL, path, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500 Internal Server Error") ||
+		!strings.Contains(err.Error(), "create temporary Blob:") ||
+		!strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatalf("Put error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestPutKeepsStatusFromLegacyGenericServerError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upload.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\ncontent\n%%EOF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"message":"Internal Server Error"}`)
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	err := Put(t.Context(), server.URL, path, &stdout, &stderr)
+	if err == nil || err.Error() != "import failed with HTTP 500 Internal Server Error" {
+		t.Fatalf("Put error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestGetUsesSafeServerFilenameAndDownloadsAtomically(t *testing.T) {
 	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
 	want := []byte("%PDF-1.7\ndownload\n%%EOF\n")
@@ -191,7 +240,7 @@ func TestInfoReportsNotFound(t *testing.T) {
 
 func testMemorySummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
 	return api.MemorySummary{
-		ActiveRunId: nil, BlobHash: strings.Repeat("a", 64),
+		ActiveRunId: nil, BlobHash: "sha256-" + strings.Repeat("a", 64),
 		ByteSize: size, Id: id, ImportedAt: time.Time{},
 		MediaType: "application/pdf", OriginalCreatedAt: nil,
 		OriginalFilename: filename, OriginalModifiedAt: nil,

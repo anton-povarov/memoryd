@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,8 +27,12 @@ import (
 
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
+	return newTestServerAt(t, t.TempDir())
+}
+
+func newTestServerAt(t *testing.T, root string) http.Handler {
+	t.Helper()
 	cfg := config.Defaults()
-	root := t.TempDir()
 	cfg.Storage.DataDir = root
 	cfg.Storage.DatabasePath = filepath.Join(root, "memoryd.sqlite")
 	cfg.Storage.BlobDir = filepath.Join(root, "blobs")
@@ -50,6 +55,41 @@ func newTestServer(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	return s.Handler()
+}
+
+func TestImportReturnsServerErrorDetails(t *testing.T) {
+	root := t.TempDir()
+	handler := newTestServerAt(t, root)
+	if err := os.RemoveAll(filepath.Join(root, "blobs")); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "memory.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("%PDF-1.7\ncontent\n%%EOF\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v0/memories/import", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var problem api.Error
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "import_failed" ||
+		!strings.Contains(problem.Message, "create temporary Blob") {
+		t.Fatalf("import error = %#v", problem)
+	}
 }
 
 func TestHealthAndDocumentation(t *testing.T) {
@@ -166,6 +206,11 @@ func TestBrowseUsesNextCursorWithoutRepeatingMemories(t *testing.T) {
 	}
 
 	first := browsePage(t, handler, "/api/v0/memories?limit=2")
+	for _, item := range first.Items {
+		if !regexp.MustCompile(`^sha256-[0-9a-f]{64}$`).MatchString(item.BlobHash) {
+			t.Fatalf("browse Blobref = %q", item.BlobHash)
+		}
+	}
 	if len(first.Items) != 2 || first.NextCursor == nil ||
 		*first.NextCursor == "" {
 		t.Fatalf("first page = %#v, want two items and a next cursor", first)
@@ -177,6 +222,9 @@ func TestBrowseUsesNextCursorWithoutRepeatingMemories(t *testing.T) {
 	)
 	if len(second.Items) != 1 || second.NextCursor != nil {
 		t.Fatalf("second page = %#v, want final one-item page", second)
+	}
+	if !regexp.MustCompile(`^sha256-[0-9a-f]{64}$`).MatchString(second.Items[0].BlobHash) {
+		t.Fatalf("next-page Blobref = %q", second.Items[0].BlobHash)
 	}
 	for _, earlier := range first.Items {
 		if second.Items[0].Id == earlier.Id {
@@ -255,6 +303,10 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 			recorder.Body.String(),
 		)
 	}
+	if !regexp.MustCompile(`"blob_hash":"sha256-[0-9a-f]{64}"`).
+		MatchString(recorder.Body.String()) {
+		t.Fatalf("completion event has no canonical Blobref: %s", recorder.Body.String())
+	}
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(
 		recorder,
@@ -290,7 +342,7 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 		)
 	}
 	if got := recorder.Header().
-		Get("ETag"); !regexp.MustCompile(`^"[0-9a-f]{64}"$`).
+		Get("ETag"); !regexp.MustCompile(`^"sha256-[0-9a-f]{64}"$`).
 		MatchString(got) {
 		t.Fatalf("ETag = %q", got)
 	}
