@@ -20,16 +20,17 @@ go run ./cmd/memoryd -c memoryd.example.yaml
 
 The server binds to `http://127.0.0.1:8080/` by default.
 
-Import and restore one Memory from another terminal:
+Import, inspect, and restore one Memory from another terminal:
 
 ```sh
 cd cli
-go run ./cmd/mem-put /absolute/path/to/memory.pdf
-go run ./cmd/mem-info <memory-id>
-go run ./cmd/mem-get <memory-id>
+go run ./cmd/mem put /absolute/path/to/memory.pdf
+go run ./cmd/mem info <memory-id>
+go run ./cmd/mem get <memory-id>
+go run ./cmd/mem list -n 20
 ```
 
-All three commands accept `--server`; otherwise they use `MEMORYD_URL`, then `http://127.0.0.1:8080`. `mem-info` prints Memory details as JSON. `mem-get` accepts `-o <path>`, `-o -` for stdout, and `--force` when replacing an existing destination.
+Use `mem [--server ADDRESS] (get|put|info|list) [subcommand options]`. Set global `--server` before the subcommand; otherwise `mem` uses `MEMORYD_URL`, then `http://127.0.0.1:8080`. `mem info` prints Memory details as JSON. `mem get` accepts `-o <path>`, `-o -` for stdout, and `--force` when replacing an existing destination. `mem list` returns 50 Memory summaries by default; `-n N` sets a total across pages, `--all` returns every page, and `--short` prints one Memory ID per line. `-n` and `--all` cannot be combined.
 
 For compact development logs, set `MEMORYD_DEV` to a true Boolean value:
 

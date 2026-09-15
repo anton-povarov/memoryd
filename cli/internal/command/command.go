@@ -299,6 +299,56 @@ func Info(ctx context.Context, serverURL string, memoryID uuid.UUID, stdout io.W
 	return err
 }
 
+func List(ctx context.Context, serverURL string, count int, all, short bool, stdout io.Writer) error {
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	items := make([]api.MemorySummary, 0)
+	var cursor *api.Cursor
+	for {
+		pageSize := 100
+		if !all && count-len(items) < pageSize {
+			pageSize = count - len(items)
+		}
+		limit := api.Limit(pageSize)
+		response, err := client.BrowseMemories(ctx, &api.BrowseMemoriesParams{Limit: &limit, Cursor: cursor})
+		if err != nil {
+			return fmt.Errorf("list Memories: %w", err)
+		}
+		parsed, err := api.ParseBrowseMemoriesResponse(response)
+		if err != nil {
+			return fmt.Errorf("decode Memory page: %w", err)
+		}
+		if parsed.JSON400 != nil {
+			return fmt.Errorf("%s: %s", parsed.JSON400.Code, parsed.JSON400.Message)
+		}
+		if parsed.JSON200 == nil {
+			return fmt.Errorf("list Memories failed with HTTP %s", parsed.Status())
+		}
+		page := parsed.JSON200
+		if !all && len(page.Items) > count-len(items) {
+			page.Items = page.Items[:count-len(items)]
+		}
+		items = append(items, page.Items...)
+		if (!all && len(items) >= count) || page.NextCursor == nil || *page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if short {
+		for _, item := range items {
+			if _, err := fmt.Fprintln(stdout, item.Id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(items)
+}
+
 func filenameFromDisposition(disposition, fallback string) string {
 	_, parameters, err := mime.ParseMediaType(disposition)
 	if err == nil {
