@@ -400,11 +400,26 @@ func sampleDetail(id uuid.UUID) api.MemoryDetail {
 }
 
 func sampleRun(memoryID uuid.UUID, pipeline api.UnderstandingRunPipeline) api.UnderstandingRun {
-	return api.UnderstandingRun{Id: uuid.MustParse(stubRunID), MemoryId: memoryID, Pipeline: pipeline, CreatedAt: stubTime, CompletedAt: stubTime.Add(time.Second), Active: true}
+	return api.UnderstandingRun{
+		Id:          uuid.MustParse(stubRunID),
+		MemoryId:    memoryID,
+		Pipeline:    pipeline,
+		CreatedAt:   stubTime,
+		CompletedAt: stubTime.Add(time.Second),
+		Active:      true,
+	}
 }
 
 func sampleLog(memoryID uuid.UUID, runID *uuid.UUID) api.ProcessingLog {
-	return api.ProcessingLog{Id: uuid.MustParse(stubLogID), MemoryId: memoryID, RunId: runID, AttemptId: uuid.MustParse(stubRunID), Timestamp: stubTime, Kind: api.ProcessingLogKindLifecycle, Message: "memoryd v0 stub completed"}
+	return api.ProcessingLog{
+		Id:        uuid.MustParse(stubLogID),
+		MemoryId:  memoryID,
+		RunId:     runID,
+		AttemptId: uuid.MustParse(stubRunID),
+		Timestamp: stubTime,
+		Kind:      api.ProcessingLogKindLifecycle,
+		Message:   "memoryd v0 stub completed",
+	}
 }
 
 type event struct {
@@ -425,12 +440,31 @@ func eventStream(events ...event) (io.Reader, error) {
 	return bytes.NewReader(output.Bytes()), nil
 }
 
-func understandingStream(memoryID uuid.UUID, eventName string, completed api.UnderstandingCompletedEventEvent, pipeline api.UnderstandingRunPipeline) (io.Reader, error) {
+func understandingStream(
+	memoryID uuid.UUID,
+	eventName string,
+	completed api.UnderstandingCompletedEventEvent,
+	pipeline api.UnderstandingRunPipeline,
+) (io.Reader, error) {
 	memory := sampleMemory(memoryID)
 	run := sampleRun(memoryID, pipeline)
 	return eventStream(
-		event{"understanding_started", api.UnderstandingProgressEvent{Event: api.UnderstandingStarted, MemoryId: memoryID, Phase: "started"}},
-		event{eventName, api.UnderstandingCompletedEvent{Event: completed, Memory: memory, Run: run}},
+		event{
+			"understanding_started",
+			api.UnderstandingProgressEvent{
+				Event:    api.UnderstandingStarted,
+				MemoryId: memoryID,
+				Phase:    "started",
+			},
+		},
+		event{
+			eventName,
+			api.UnderstandingCompletedEvent{
+				Event:  completed,
+				Memory: memory,
+				Run:    run,
+			},
+		},
 	)
 }
 

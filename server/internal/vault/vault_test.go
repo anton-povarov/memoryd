@@ -3,8 +3,11 @@ package vault
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -35,6 +38,18 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	}
 	if created.UnderstandingState != StateDone || created.MediaType != "application/pdf" {
 		t.Fatalf("created Memory = %#v", created)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(wantBytes))
+	if created.BlobHash != digest {
+		t.Fatalf("Blob hash = %s, want %s", created.BlobHash, digest)
+	}
+	blobPath := filepath.Join(blobDir, "sha256", digest[:2], digest[2:4], "sha256-"+digest)
+	storedBytes, err := os.ReadFile(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedBytes, wantBytes) {
+		t.Fatalf("stored content = %q, want %q", storedBytes, wantBytes)
 	}
 	if err := v.Close(); err != nil {
 		t.Fatal(err)

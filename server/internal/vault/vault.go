@@ -158,7 +158,10 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"byte_size", byteSize,
 		"media_type", mediaType,
 	)
-	finalPath := filepath.Join(v.blobDir, blobHash)
+	finalPath := v.blobPath(blobHash)
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+		return Memory{}, fmt.Errorf("create Blob shard directory: %w", err)
+	}
 	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.Rename(temporaryPath, finalPath); err != nil {
 			return Memory{}, fmt.Errorf("publish Blob: %w", err)
@@ -282,7 +285,7 @@ func (v *Vault) OpenContent(ctx context.Context, id uuid.UUID) (Memory, io.ReadC
 	if err != nil {
 		return Memory{}, nil, err
 	}
-	content, err := os.Open(filepath.Join(v.blobDir, memory.BlobHash))
+	content, err := os.Open(v.blobPath(memory.BlobHash))
 	if err != nil {
 		return Memory{}, nil, fmt.Errorf("open Blob content: %w", err)
 	}
@@ -293,6 +296,10 @@ func (v *Vault) OpenContent(ctx context.Context, id uuid.UUID) (Memory, io.ReadC
 		"media_type", memory.MediaType,
 	)
 	return memory, content, nil
+}
+
+func (v *Vault) blobPath(digest string) string {
+	return filepath.Join(v.blobDir, digest[:2], digest[2:4], "sha256-"+digest)
 }
 
 const selectMemory = `SELECT id, blob_hash, original_filename, relative_path, full_path,
