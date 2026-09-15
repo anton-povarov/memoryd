@@ -50,6 +50,7 @@ func run() error {
 		context.Background(),
 		cfg.Storage.DatabasePath,
 		cfg.Storage.BlobDir,
+		cfg.Storage.UploadDir,
 	)
 	if err != nil {
 		return err

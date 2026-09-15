@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
@@ -92,11 +93,12 @@ func (e *DuplicateError) Error() string {
 }
 
 type Vault struct {
-	db      *sql.DB
-	blobDir string
+	db        *sql.DB
+	blobDir   string
+	uploadDir string
 }
 
-func Open(ctx context.Context, databasePath, blobDir string) (*Vault, error) {
+func Open(ctx context.Context, databasePath, blobDir, uploadDir string) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
@@ -104,13 +106,20 @@ func Open(ctx context.Context, databasePath, blobDir string) (*Vault, error) {
 	if err := os.MkdirAll(contentDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create Blob directory: %w", err)
 	}
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create Blob upload directory: %w", err)
+	}
 
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("open Vault database: %w", err)
 	}
 	db.SetMaxOpenConns(maxOpenConnections)
-	v := &Vault{db: db, blobDir: contentDir}
+	v := &Vault{
+		db:        db,
+		blobDir:   contentDir,
+		uploadDir: uploadDir,
+	}
 	if err := v.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -184,7 +193,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"original_filename", safeFilename(candidate.OriginalFilename),
 	)
 
-	temporary, err := os.CreateTemp(v.blobDir, ".import-*")
+	temporary, err := os.CreateTemp(v.uploadDir, ".import-*")
 	if err != nil {
 		return Memory{}, fmt.Errorf("create temporary Blob: %w", err)
 	}
@@ -218,13 +227,14 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"blob_hash", blobRef.String(),
 		"byte_size", byteSize,
 		"media_type", mediaType,
+		"temporary_path", temporaryPath,
 	)
 	finalPath := v.blobPath(blobRef)
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
 		return Memory{}, fmt.Errorf("create Blob shard directory: %w", err)
 	}
 	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.Rename(temporaryPath, finalPath); err != nil {
+		if err := publishBlob(temporaryPath, finalPath); err != nil {
 			return Memory{}, fmt.Errorf("publish Blob: %w", err)
 		}
 		logger.DebugContext(ctx, "Blob published", "blob_hash", blobRef.String())
@@ -403,6 +413,41 @@ func (v *Vault) OpenContent(
 		"media_type", memory.MediaType,
 	)
 	return memory, content, nil
+}
+
+// publishBlob keeps the final path on its content-addressed filesystem when
+// the configured upload directory is on another filesystem.
+func publishBlob(sourcePath, finalPath string) error {
+	err := os.Rename(sourcePath, finalPath)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open staged Blob: %w", err)
+	}
+	staged, err := os.CreateTemp(filepath.Dir(finalPath), ".publish-*")
+	if err != nil {
+		_ = source.Close()
+		return fmt.Errorf("create publishing Blob: %w", err)
+	}
+	stagedPath := staged.Name()
+	defer func() { _ = os.Remove(stagedPath) }()
+
+	_, copyErr := io.Copy(staged, source)
+	sourceCloseErr := source.Close()
+	stagedCloseErr := staged.Close()
+	if copyErr != nil {
+		return fmt.Errorf("copy staged Blob: %w", copyErr)
+	}
+	if sourceCloseErr != nil {
+		return fmt.Errorf("close staged Blob: %w", sourceCloseErr)
+	}
+	if stagedCloseErr != nil {
+		return fmt.Errorf("close publishing Blob: %w", stagedCloseErr)
+	}
+	return os.Rename(stagedPath, finalPath)
 }
 
 func (v *Vault) blobPath(ref Blobref) string {

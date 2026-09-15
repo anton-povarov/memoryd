@@ -20,6 +20,9 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if c.Logging.Level != "info" {
 		t.Fatalf("default logging = %#v", c.Logging)
 	}
+	if c.Storage.UploadDir != filepath.Join("data", "uploads") {
+		t.Fatalf("default upload dir = %q", c.Storage.UploadDir)
+	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("defaults should validate: %v", err)
 	}
@@ -47,11 +50,22 @@ logging:
 		t.Fatalf("server config = %#v", c.Server)
 	}
 	if c.Storage.DatabasePath != filepath.Join("vault", "memoryd.sqlite") ||
-		c.Storage.BlobDir != filepath.Join("vault", "blobs") {
+		c.Storage.BlobDir != filepath.Join("vault", "blobs") ||
+		c.Storage.UploadDir != filepath.Join("vault", "uploads") {
 		t.Fatalf("derived storage paths = %#v", c.Storage)
 	}
 	if c.Logging != (LoggingConfig{Level: "DEBUG"}) {
 		t.Fatalf("logging config = %#v", c.Logging)
+	}
+}
+
+func TestParseUsesExplicitUploadDir(t *testing.T) {
+	c, err := Parse([]byte("storage:\n  data_dir: ./vault\n  upload_dir: ./staging\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Storage.UploadDir != "./staging" {
+		t.Fatalf("upload dir = %q", c.Storage.UploadDir)
 	}
 }
 

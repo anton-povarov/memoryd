@@ -36,12 +36,13 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
-// StorageConfig contains paths owned by the Vault.  DatabasePath and BlobDir
-// are derived from DataDir when omitted.
+// StorageConfig contains paths owned by the Vault. DatabasePath, BlobDir, and
+// UploadDir are derived from DataDir when omitted.
 type StorageConfig struct {
 	DataDir      string `yaml:"data_dir"`
 	DatabasePath string `yaml:"database_path"`
 	BlobDir      string `yaml:"blob_dir"`
+	UploadDir    string `yaml:"upload_dir"`
 }
 
 type LoggingConfig struct {
@@ -58,6 +59,7 @@ func Defaults() Config {
 			DataDir:      DefaultDataDir,
 			DatabasePath: "",
 			BlobDir:      "",
+			UploadDir:    "",
 		},
 		Logging: LoggingConfig{Level: DefaultLogLevel},
 	}
@@ -142,6 +144,9 @@ func (c Config) withDerivedPaths() Config {
 	}
 	if c.Storage.BlobDir == "" {
 		c.Storage.BlobDir = filepath.Join(c.Storage.DataDir, "blobs")
+	}
+	if c.Storage.UploadDir == "" {
+		c.Storage.UploadDir = filepath.Join(c.Storage.DataDir, "uploads")
 	}
 	return c
 }

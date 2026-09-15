@@ -22,10 +22,11 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	root := t.TempDir()
 	databasePath := filepath.Join(root, "memoryd.sqlite")
 	blobDir := filepath.Join(root, "blobs")
+	uploadDir := filepath.Join(root, "uploads")
 	wantBytes := []byte("%PDF-1.7\nbyte-exact memory\n%%EOF\n")
 	modifiedAt := time.Date(2026, 9, 15, 10, 11, 12, 0, time.UTC)
 
-	v, err := Open(ctx, databasePath, blobDir)
+	v, err := Open(ctx, databasePath, blobDir, uploadDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +82,18 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if !bytes.Equal(storedBytes, wantBytes) {
 		t.Fatalf("stored content = %q, want %q", storedBytes, wantBytes)
 	}
+	stagedEntries, err := os.ReadDir(uploadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stagedEntries) != 0 {
+		t.Fatalf("upload directory contains %d staged files", len(stagedEntries))
+	}
 	if err := v.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	v, err = Open(ctx, databasePath, blobDir)
+	v, err = Open(ctx, databasePath, blobDir, uploadDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +176,12 @@ func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Open(ctx, databasePath, filepath.Join(root, "blobs"))
+	_, err = Open(
+		ctx,
+		databasePath,
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
 	if err == nil {
 		t.Fatal("expected invalid stored Blobref error")
 	}

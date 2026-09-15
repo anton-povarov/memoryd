@@ -104,7 +104,7 @@ func TestPutReportsServerImportFailure(t *testing.T) {
 			Code:           "import_failed",
 			Details:        nil,
 			ExistingMemory: nil,
-			Message:        "create temporary Blob: open data/blobs/sha256/.import-123: no such file or directory",
+			Message:        "create temporary Blob: open data/uploads/.import-123: no such file or directory",
 		})
 	}))
 	defer server.Close()

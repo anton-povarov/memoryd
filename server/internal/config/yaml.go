@@ -26,6 +26,7 @@ type rawStorage struct {
 	DataDir      *string `yaml:"data_dir"`
 	DatabasePath *string `yaml:"database_path"`
 	BlobDir      *string `yaml:"blob_dir"`
+	UploadDir    *string `yaml:"upload_dir"`
 }
 
 type rawLogging struct {
@@ -57,6 +58,7 @@ func parseYAMLConfig(data []byte) (Config, error) {
 	c := Defaults()
 	c.Storage.DatabasePath = ""
 	c.Storage.BlobDir = ""
+	c.Storage.UploadDir = ""
 	if raw.Server != nil {
 		if raw.Server.Address != nil {
 			c.Server.Address = *raw.Server.Address
@@ -83,6 +85,9 @@ func parseYAMLConfig(data []byte) (Config, error) {
 		}
 		if raw.Storage.BlobDir != nil {
 			c.Storage.BlobDir = *raw.Storage.BlobDir
+		}
+		if raw.Storage.UploadDir != nil {
+			c.Storage.UploadDir = *raw.Storage.UploadDir
 		}
 	}
 	if raw.Logging != nil {

@@ -36,10 +36,12 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 	cfg.Storage.DataDir = root
 	cfg.Storage.DatabasePath = filepath.Join(root, "memoryd.sqlite")
 	cfg.Storage.BlobDir = filepath.Join(root, "blobs")
+	cfg.Storage.UploadDir = filepath.Join(root, "uploads")
 	v, err := vault.Open(
 		t.Context(),
 		cfg.Storage.DatabasePath,
 		cfg.Storage.BlobDir,
+		cfg.Storage.UploadDir,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +62,7 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 func TestImportReturnsServerErrorDetails(t *testing.T) {
 	root := t.TempDir()
 	handler := newTestServerAt(t, root)
-	if err := os.RemoveAll(filepath.Join(root, "blobs")); err != nil {
+	if err := os.RemoveAll(filepath.Join(root, "uploads")); err != nil {
 		t.Fatal(err)
 	}
 	var body bytes.Buffer
