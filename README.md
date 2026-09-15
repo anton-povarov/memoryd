@@ -1,8 +1,8 @@
 # memoryd
 
-Personal Memory Vault. Current server is a v0 OpenAPI-first skeleton with deterministic stub responses and no persistence.
+Personal Memory Vault. The current vertical slice durably imports and restores PDF, JPEG, and PNG Blobs through an OpenAPI-first Go server and CLI.
 
-Top-level areas stay independent. The Go server lives under `server/`; future Understanding Plugins and web UI can use sibling directories.
+The language-neutral contract is `api/openapi.yaml`. The `server/` and `cli/` directories are independent Go modules with their own generated bindings; future web and integration clients can remain independent siblings too.
 
 ## Run
 
@@ -20,6 +20,16 @@ go run ./cmd/memoryd -c memoryd.example.yaml
 
 The server binds to `http://127.0.0.1:8080/` by default.
 
+Import and restore one Memory from another terminal:
+
+```sh
+cd cli
+go run ./cmd/mem-put /absolute/path/to/memory.pdf
+go run ./cmd/mem-get <memory-id>
+```
+
+Both commands accept `--server`; otherwise they use `MEMORYD_URL`, then `http://127.0.0.1:8080`. `mem-get` accepts `-o <path>`, `-o -` for stdout, and `--force` when replacing an existing destination.
+
 For compact development logs, set `MEMORYD_DEV` to a true Boolean value:
 
 ```sh
@@ -35,15 +45,16 @@ Development formatting applies to terminal and redirected output. Attributes fol
 
 ## Develop
 
-From `server/`, regenerate transport code after changing `api/openapi.yaml`:
+Regenerate each module's transport code after changing the root contract:
 
 ```sh
-go generate ./...
+(cd server && go generate ./...)
+(cd cli && go generate ./...)
 ```
 
-Verify the server:
+Verify both modules independently:
 
 ```sh
-go test ./...
-go vet ./...
+(cd server && go test ./... && go vet ./...)
+(cd cli && go test ./... && go vet ./...)
 ```

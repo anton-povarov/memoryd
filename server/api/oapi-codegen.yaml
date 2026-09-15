@@ -3,7 +3,6 @@ output: generated.gen.go
 
 generate:
   models: true
-  client: true
   echo-server: true
   strict-server: true
   embedded-spec: true

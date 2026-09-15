@@ -13,6 +13,7 @@ import (
 	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/anton-povarov/memoryd/server/internal/server"
+	"github.com/anton-povarov/memoryd/server/internal/vault"
 )
 
 var version = "dev"
@@ -43,7 +44,13 @@ func run() error {
 	}
 	slog.SetDefault(logger)
 
-	httpHandler := httpapi.NewHandler(version, cfg.Storage.DataDir)
+	memoryVault, err := vault.Open(context.Background(), cfg.Storage.DatabasePath, cfg.Storage.BlobDir)
+	if err != nil {
+		return err
+	}
+	defer memoryVault.Close()
+
+	httpHandler := httpapi.NewHandler(version, cfg.Storage.DataDir, memoryVault)
 	httpServer, err := server.New(cfg, logger, httpHandler)
 	if err != nil {
 		return err

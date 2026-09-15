@@ -20,12 +20,12 @@ paths:
       tags: [health]
       summary: Check whether the process is alive
       responses:
-        '200':
+        "200":
           description: The process is alive.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /readyz:
     get:
@@ -33,12 +33,12 @@ paths:
       tags: [health]
       summary: Check whether the server can accept requests
       responses:
-        '200':
+        "200":
           description: The server is ready to accept requests.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /memories:
     get:
@@ -47,44 +47,44 @@ paths:
       summary: Browse Memories
       description: Returns whole Memories in reverse original-time order.
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: A page of Memories.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MemoryPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: "#/components/schemas/MemoryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /memories/{memoryId}:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     get:
       operationId: getMemory
       tags: [memories]
       summary: Get Memory details
       responses:
-        '200':
+        "200":
           description: The Memory, its Facts, Derived Content, and active Run.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MemoryDetail'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/MemoryDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/{memoryId}/content:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     get:
       operationId: getMemoryContent
       tags: [memories]
       summary: Download a Memory's immutable Blob
       responses:
-        '200':
+        "200":
           description: The original imported bytes.
           headers:
             Content-Disposition:
@@ -112,8 +112,8 @@ paths:
               schema:
                 type: string
                 format: binary
-        '404':
-          $ref: '#/components/responses/NotFound'
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/import:
     post:
@@ -126,17 +126,19 @@ paths:
         SSE stream; the client owns directory enumeration and uploads Blobs
         sequentially. Once the server has committed the Blob and InProgress
         Memory, disconnecting does not cancel server-side understanding.
+        Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
+        409 before an SSE response begins.
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/ImportMultipart'
+              $ref: "#/components/schemas/ImportMultipart"
             encoding:
               file:
                 contentType: application/pdf, image/jpeg, image/png
       responses:
-        '200':
+        "200":
           description: Progress events followed by exactly one terminal event.
           content:
             text/event-stream:
@@ -155,71 +157,65 @@ paths:
                   value: |-
                     event: import_completed
                     data: {"memory":{"id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","blob_hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","media_type":"application/pdf","byte_size":1234,"original_filename":"bill.pdf","understanding_state":"Done","imported_at":"2026-01-01T00:00:00Z"}}
-
-                duplicate:
-                  summary: Duplicate terminal event
-                  value: |-
-                    event: import_duplicate
-                    data: {"existing_memory":{"id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","understanding_state":"Done"}}
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '409':
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
           description: The candidate is a duplicate or an import cannot start.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '413':
+                $ref: "#/components/schemas/Error"
+        "413":
           description: The request exceeds the server's upload limit.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '415':
+                $ref: "#/components/schemas/Error"
+        "415":
           description: The Blob format is not supported by the MVP.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/runs:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     get:
       operationId: listUnderstandingRuns
       tags: [understanding]
       summary: List successful Understanding Runs
       responses:
-        '200':
+        "200":
           description: Runs for the Memory, newest first.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RunPage'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/RunPage"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/{memoryId}/runs/{runId}:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
-      - $ref: '#/components/parameters/RunId'
+      - $ref: "#/components/parameters/MemoryId"
+      - $ref: "#/components/parameters/RunId"
     get:
       operationId: getUnderstandingRun
       tags: [understanding]
       summary: Get one Understanding Run
       responses:
-        '200':
+        "200":
           description: An immutable successful interpretation.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UnderstandingRun'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/UnderstandingRun"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/{memoryId}/logs:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     get:
       operationId: listProcessingLogs
       tags: [understanding]
@@ -242,56 +238,56 @@ paths:
             maximum: 1000
             default: 200
       responses:
-        '200':
+        "200":
           description: Processing log entries in lifecycle order.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProcessingLogPage'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/ProcessingLogPage"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/{memoryId}/runs/{runId}/logs:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
-      - $ref: '#/components/parameters/RunId'
+      - $ref: "#/components/parameters/MemoryId"
+      - $ref: "#/components/parameters/RunId"
     get:
       operationId: listRunLogs
       tags: [understanding]
       summary: List logs associated with an Understanding Run
       responses:
-        '200':
+        "200":
           description: Processing logs associated with the Run.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProcessingLogPage'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: "#/components/schemas/ProcessingLogPage"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /memories/{memoryId}/rebuild:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     post:
       operationId: rebuildMemory
       tags: [understanding]
       summary: Rebuild a Memory's understanding
       description: Stages a complete new Run and activates it atomically on success.
       responses:
-        '200':
-          $ref: '#/components/responses/UnderstandingEventStream'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+        "200":
+          $ref: "#/components/responses/UnderstandingEventStream"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: A rebuild is already in progress.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /memories/{memoryId}/codex-enhancement:
     parameters:
-      - $ref: '#/components/parameters/MemoryId'
+      - $ref: "#/components/parameters/MemoryId"
     post:
       operationId: enhanceMemoryWithCodex
       tags: [understanding]
@@ -305,24 +301,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CodexEnhancementRequest'
+              $ref: "#/components/schemas/CodexEnhancementRequest"
       responses:
-        '200':
-          $ref: '#/components/responses/UnderstandingEventStream'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
+        "200":
+          $ref: "#/components/responses/UnderstandingEventStream"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
           description: Confirmation is required before repeating an equivalent enhancement.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '413':
+                $ref: "#/components/schemas/Error"
+        "413":
           description: The Blob cannot be prepared within the cloud-bound input limit.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /search:
     post:
@@ -337,22 +333,22 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SearchRequest'
+              $ref: "#/components/schemas/SearchRequest"
       responses:
-        '200':
+        "200":
           description: Query Plan and whole-Memory search results.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '422':
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
           description: The query could not be interpreted into a valid Query Plan.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
 components:
   parameters:
@@ -393,13 +389,13 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     NotFound:
       description: The requested Memory or Run does not exist.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            $ref: "#/components/schemas/Error"
     UnderstandingEventStream:
       description: Progress events followed by one terminal rebuild or enhancement event.
       content:
@@ -436,7 +432,7 @@ components:
           additionalProperties: true
         existing_memory:
           allOf:
-            - $ref: '#/components/schemas/DuplicateMemory'
+            - $ref: "#/components/schemas/DuplicateMemory"
           nullable: true
           description: Present on a duplicate import conflict so clients can recover.
 
@@ -447,6 +443,7 @@ components:
         file:
           type: string
           format: binary
+          maxLength: 104857600
           description: One PDF, JPEG, or PNG Blob.
         relative_path:
           type: string
@@ -467,18 +464,17 @@ components:
     ImportEvent:
       description: One JSON payload carried by an SSE event.
       oneOf:
-        - $ref: '#/components/schemas/UnderstandingProgressEvent'
-        - $ref: '#/components/schemas/ImportCompletedEvent'
-        - $ref: '#/components/schemas/ImportDuplicateEvent'
-        - $ref: '#/components/schemas/UnderstandingFailedEvent'
+        - $ref: "#/components/schemas/UnderstandingProgressEvent"
+        - $ref: "#/components/schemas/ImportCompletedEvent"
+        - $ref: "#/components/schemas/UnderstandingFailedEvent"
       discriminator:
         propertyName: event
     UnderstandingEvent:
       description: One JSON payload carried by a rebuild or Codex SSE event.
       oneOf:
-        - $ref: '#/components/schemas/UnderstandingProgressEvent'
-        - $ref: '#/components/schemas/UnderstandingCompletedEvent'
-        - $ref: '#/components/schemas/UnderstandingFailedEvent'
+        - $ref: "#/components/schemas/UnderstandingProgressEvent"
+        - $ref: "#/components/schemas/UnderstandingCompletedEvent"
+        - $ref: "#/components/schemas/UnderstandingFailedEvent"
       discriminator:
         propertyName: event
 
@@ -511,17 +507,7 @@ components:
           type: string
           enum: [import_completed]
         memory:
-          $ref: '#/components/schemas/MemorySummary'
-
-    ImportDuplicateEvent:
-      type: object
-      required: [event, existing_memory]
-      properties:
-        event:
-          type: string
-          enum: [import_duplicate]
-        existing_memory:
-          $ref: '#/components/schemas/DuplicateMemory'
+          $ref: "#/components/schemas/MemorySummary"
 
     UnderstandingCompletedEvent:
       type: object
@@ -531,9 +517,9 @@ components:
           type: string
           enum: [rebuild_completed, codex_enhancement_completed]
         memory:
-          $ref: '#/components/schemas/MemorySummary'
+          $ref: "#/components/schemas/MemorySummary"
         run:
-          $ref: '#/components/schemas/UnderstandingRun'
+          $ref: "#/components/schemas/UnderstandingRun"
 
     UnderstandingFailedEvent:
       type: object
@@ -546,7 +532,7 @@ components:
           type: string
           format: uuid
         error:
-          $ref: '#/components/schemas/Error'
+          $ref: "#/components/schemas/Error"
 
     DuplicateMemory:
       type: object
@@ -556,7 +542,7 @@ components:
           type: string
           format: uuid
         understanding_state:
-          $ref: '#/components/schemas/UnderstandingState'
+          $ref: "#/components/schemas/UnderstandingState"
 
     MemorySummary:
       type: object
@@ -574,7 +560,7 @@ components:
           format: uuid
         blob_hash:
           type: string
-          pattern: '^[a-fA-F0-9]{64}$'
+          pattern: "^[a-fA-F0-9]{64}$"
           description: SHA-256 content hash of the immutable Blob.
         media_type:
           type: string
@@ -585,7 +571,7 @@ components:
         original_filename:
           type: string
         understanding_state:
-          $ref: '#/components/schemas/UnderstandingState'
+          $ref: "#/components/schemas/UnderstandingState"
         active_run_id:
           type: string
           format: uuid
@@ -613,7 +599,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/MemorySummary'
+            $ref: "#/components/schemas/MemorySummary"
         next_cursor:
           type: string
           nullable: true
@@ -623,23 +609,23 @@ components:
       required: [memory, import_context, facts, derived_content]
       properties:
         memory:
-          $ref: '#/components/schemas/MemorySummary'
+          $ref: "#/components/schemas/MemorySummary"
         content_url:
           type: string
           description: Relative URL of the content download endpoint.
         import_context:
-          $ref: '#/components/schemas/ImportContext'
+          $ref: "#/components/schemas/ImportContext"
         facts:
           type: array
           items:
-            $ref: '#/components/schemas/Fact'
+            $ref: "#/components/schemas/Fact"
         derived_content:
           type: array
           items:
-            $ref: '#/components/schemas/DerivedContent'
+            $ref: "#/components/schemas/DerivedContent"
         active_run:
           allOf:
-            - $ref: '#/components/schemas/UnderstandingRun'
+            - $ref: "#/components/schemas/UnderstandingRun"
           nullable: true
 
     ImportContext:
@@ -660,7 +646,7 @@ components:
           minimum: 0
         content_hash:
           type: string
-          pattern: '^[a-fA-F0-9]{64}$'
+          pattern: "^[a-fA-F0-9]{64}$"
         filesystem_created_at:
           type: string
           format: date-time
@@ -685,7 +671,7 @@ components:
           nullable: true
         value_type:
           type: string
-          enum: [string, integer, number, boolean, date, datetime, json, 'null']
+          enum: [string, integer, number, boolean, date, datetime, json, "null"]
         origin:
           type: string
           description: Extractor, plugin, or import provenance that asserted the Fact.
@@ -749,7 +735,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/UnderstandingRun'
+            $ref: "#/components/schemas/UnderstandingRun"
         next_cursor:
           type: string
           nullable: true
@@ -776,7 +762,17 @@ components:
           format: date-time
         kind:
           type: string
-          enum: [lifecycle, tool, stdout, stderr, model_output, structured_result, usage, error]
+          enum:
+            [
+              lifecycle,
+              tool,
+              stdout,
+              stderr,
+              model_output,
+              structured_result,
+              usage,
+              error,
+            ]
         message:
           type: string
         truncated:
@@ -793,7 +789,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ProcessingLog'
+            $ref: "#/components/schemas/ProcessingLog"
         next_cursor:
           type: string
           nullable: true
@@ -832,11 +828,11 @@ components:
         query:
           type: string
         plan:
-          $ref: '#/components/schemas/QueryPlan'
+          $ref: "#/components/schemas/QueryPlan"
         items:
           type: array
           items:
-            $ref: '#/components/schemas/SearchResult'
+            $ref: "#/components/schemas/SearchResult"
         next_cursor:
           type: string
           nullable: true
@@ -848,7 +844,7 @@ components:
         fact_filters:
           type: array
           items:
-            $ref: '#/components/schemas/FactFilter'
+            $ref: "#/components/schemas/FactFilter"
         full_text_terms:
           type: array
           items:
@@ -866,7 +862,15 @@ components:
           type: string
         operator:
           type: string
-          enum: [equals, contains, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+          enum:
+            [
+              equals,
+              contains,
+              greater_than,
+              greater_than_or_equal,
+              less_than,
+              less_than_or_equal,
+            ]
         value:
           description: Typed value used for exact Fact filtering.
           nullable: true
@@ -876,11 +880,11 @@ components:
       required: [memory, matched_facts, matched_terms]
       properties:
         memory:
-          $ref: '#/components/schemas/MemorySummary'
+          $ref: "#/components/schemas/MemorySummary"
         matched_facts:
           type: array
           items:
-            $ref: '#/components/schemas/Fact'
+            $ref: "#/components/schemas/Fact"
         matched_terms:
           type: array
           items:

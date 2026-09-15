@@ -1,0 +1,303 @@
+// Package command implements the small amount of CLI behavior above the
+// generated memoryd HTTP client.
+package command
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/anton-povarov/memoryd/cli/internal/api"
+	"github.com/google/uuid"
+)
+
+const DefaultServerURL = "http://127.0.0.1:8080"
+
+func ServerURL(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if configured := os.Getenv("MEMORYD_URL"); configured != "" {
+		return configured
+	}
+	return DefaultServerURL
+}
+
+func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect import candidate: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("import candidate %q is not a regular file", path)
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve import path: %w", err)
+	}
+	fmt.Fprintf(stderr, "uploading %s (%d bytes)\n", filepath.Base(absolutePath), info.Size())
+
+	bodyReader, bodyWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(bodyWriter)
+	uploadErrors := make(chan error, 1)
+	go func() {
+		uploadErrors <- writeMultipart(bodyWriter, multipartWriter, absolutePath, info)
+	}()
+
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		_ = bodyReader.Close()
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	response, requestErr := client.ImportMemoryWithBody(ctx, multipartWriter.FormDataContentType(), bodyReader)
+	uploadErr := <-uploadErrors
+	if requestErr != nil {
+		return fmt.Errorf("import Memory: %w", requestErr)
+	}
+	if uploadErr != nil && !errors.Is(uploadErr, io.ErrClosedPipe) {
+		response.Body.Close()
+		return uploadErr
+	}
+
+	if response.StatusCode == http.StatusConflict {
+		parsed, err := api.ParseImportMemoryResponse(response)
+		if err != nil {
+			return fmt.Errorf("decode Duplicate response: %w", err)
+		}
+		if parsed.JSON409 == nil || parsed.JSON409.ExistingMemory == nil {
+			return fmt.Errorf("duplicate response did not identify the existing Memory")
+		}
+		fmt.Fprintf(stderr, "duplicate: using existing Memory %s\n", parsed.JSON409.ExistingMemory.Id)
+		_, err = fmt.Fprintln(stdout, parsed.JSON409.ExistingMemory.Id)
+		return err
+	}
+	if response.StatusCode != http.StatusOK {
+		parsed, err := api.ParseImportMemoryResponse(response)
+		if err != nil {
+			return fmt.Errorf("import failed with HTTP %s", response.Status)
+		}
+		return responseError(parsed)
+	}
+	defer response.Body.Close()
+
+	memoryID, err := decodeImportEvents(response.Body, stderr)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, memoryID)
+	return err
+}
+
+func writeMultipart(pipe *io.PipeWriter, writer *multipart.Writer, absolutePath string, info os.FileInfo) (err error) {
+	defer func() {
+		if closeErr := writer.Close(); err == nil {
+			err = closeErr
+		}
+		_ = pipe.CloseWithError(err)
+	}()
+	if err := writer.WriteField("full_path", absolutePath); err != nil {
+		return fmt.Errorf("write full path metadata: %w", err)
+	}
+	if err := writer.WriteField("filesystem_modified_at", info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")); err != nil {
+		return fmt.Errorf("write modification metadata: %w", err)
+	}
+	part, err := writer.CreateFormFile("file", filepath.Base(absolutePath))
+	if err != nil {
+		return fmt.Errorf("create multipart Blob: %w", err)
+	}
+	content, err := os.Open(absolutePath)
+	if err != nil {
+		return fmt.Errorf("open import candidate: %w", err)
+	}
+	defer content.Close()
+	if _, err := io.Copy(part, content); err != nil {
+		return fmt.Errorf("stream import candidate: %w", err)
+	}
+	return nil
+}
+
+func decodeImportEvents(reader io.Reader, progress io.Writer) (uuid.UUID, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	var eventName string
+	var data []byte
+	dispatch := func() (uuid.UUID, bool, error) {
+		if eventName == "" && len(data) == 0 {
+			return uuid.Nil, false, nil
+		}
+		switch eventName {
+		case "import_started", "understanding_progress":
+			var event api.UnderstandingProgressEvent
+			if err := json.Unmarshal(data, &event); err != nil {
+				return uuid.Nil, false, fmt.Errorf("decode %s event: %w", eventName, err)
+			}
+			message := ""
+			if event.Message != nil {
+				message = ": " + *event.Message
+			}
+			fmt.Fprintf(progress, "%s%s\n", event.Phase, message)
+		case "import_completed":
+			var event api.ImportCompletedEvent
+			if err := json.Unmarshal(data, &event); err != nil {
+				return uuid.Nil, false, fmt.Errorf("decode import_completed event: %w", err)
+			}
+			return event.Memory.Id, true, nil
+		case "import_failed":
+			var event api.UnderstandingFailedEvent
+			if err := json.Unmarshal(data, &event); err != nil {
+				return uuid.Nil, false, fmt.Errorf("decode import_failed event: %w", err)
+			}
+			return uuid.Nil, false, fmt.Errorf("%s: %s", event.Error.Code, event.Error.Message)
+		}
+		return uuid.Nil, false, nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			id, done, err := dispatch()
+			if err != nil || done {
+				return id, err
+			}
+			eventName, data = "", nil
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "event:"); ok {
+			eventName = strings.TrimSpace(value)
+		}
+		if value, ok := strings.CutPrefix(line, "data:"); ok {
+			if len(data) != 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, strings.TrimSpace(value)...)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return uuid.Nil, fmt.Errorf("read import event stream: %w", err)
+	}
+	if id, done, err := dispatch(); err != nil || done {
+		return id, err
+	}
+	return uuid.Nil, errors.New("import event stream ended without import_completed")
+}
+
+func responseError(response *api.ImportMemoryResponse) error {
+	var problem *api.Error
+	switch {
+	case response.JSON413 != nil:
+		problem = response.JSON413
+	case response.JSON415 != nil:
+		problem = response.JSON415
+	}
+	if problem != nil {
+		return fmt.Errorf("%s: %s", problem.Code, problem.Message)
+	}
+	if response.JSON400 != nil {
+		return fmt.Errorf("%s: %s", response.JSON400.Code, response.JSON400.Message)
+	}
+	return fmt.Errorf("import failed with HTTP %s", response.Status())
+}
+
+func Get(ctx context.Context, serverURL string, memoryID uuid.UUID, output string, force bool, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stderr, "downloading Memory %s\n", memoryID)
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	response, err := client.GetMemoryContent(ctx, memoryID)
+	if err != nil {
+		return fmt.Errorf("download Memory: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		parsed, parseErr := api.ParseGetMemoryContentResponse(response)
+		if parseErr == nil && parsed.JSON404 != nil {
+			return fmt.Errorf("%s: %s", parsed.JSON404.Code, parsed.JSON404.Message)
+		}
+		if parseErr != nil {
+			return fmt.Errorf("download failed with HTTP %s", response.Status)
+		}
+		return fmt.Errorf("download failed with HTTP %s", parsed.Status())
+	}
+	defer response.Body.Close()
+
+	if output == "-" {
+		fmt.Fprintln(stderr, "streaming Blob to stdout")
+		written, err := io.Copy(stdout, response.Body)
+		if err == nil {
+			fmt.Fprintf(stderr, "downloaded %d bytes\n", written)
+		}
+		return err
+	}
+	if output == "" {
+		output = filenameFromDisposition(response.Header.Get("Content-Disposition"), memoryID.String())
+	}
+	fmt.Fprintf(stderr, "saving Blob to %s\n", output)
+	if !force {
+		if _, err := os.Lstat(output); err == nil {
+			return fmt.Errorf("destination %q already exists (use --force to replace it)", output)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect destination: %w", err)
+		}
+	}
+
+	directory := filepath.Dir(output)
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(output)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary download: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	written, err := io.Copy(temporary, response.Body)
+	if err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("download Blob: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary download: %w", err)
+	}
+	if err := os.Rename(temporaryPath, output); err != nil {
+		return fmt.Errorf("publish download: %w", err)
+	}
+	fmt.Fprintf(stderr, "downloaded %d bytes\n", written)
+	return nil
+}
+
+func filenameFromDisposition(disposition, fallback string) string {
+	_, parameters, err := mime.ParseMediaType(disposition)
+	if err == nil {
+		if name := safeFilename(parameters["filename"]); name != "" {
+			return name
+		}
+	}
+	return safeFilename(fallback)
+}
+
+func safeFilename(name string) string {
+	name = filepath.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == "/" {
+		return "memory"
+	}
+	return name
+}
+
+func apiBaseURL(serverURL string) string {
+	serverURL = strings.TrimRight(serverURL, "/")
+	if strings.HasSuffix(serverURL, "/api/v0") {
+		return serverURL
+	}
+	return serverURL + "/api/v0"
+}

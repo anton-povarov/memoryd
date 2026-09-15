@@ -12,6 +12,7 @@ import (
 	"github.com/anton-povarov/memoryd/server/api"
 	"github.com/anton-povarov/memoryd/server/internal/apidoc"
 	"github.com/anton-povarov/memoryd/server/internal/config"
+	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -33,9 +34,14 @@ func New(cfg config.Config, logger *slog.Logger, handler api.StrictServerInterfa
 	e.Logger.SetOutput(io.Discard)
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())
+	e.Use(requestLogContext(logger))
 	e.Use(requestLogger(logger))
 
-	if err := apidoc.RegisterDocumentationEndpoint(e, "", api.OpenapiYAML); err != nil {
+	openAPIYAML, err := api.OpenAPIYAML()
+	if err != nil {
+		return nil, err
+	}
+	if err := apidoc.RegisterDocumentationEndpoint(e, "", openAPIYAML); err != nil {
 		return nil, err
 	}
 	api.RegisterHandlersWithBaseURL(e, api.NewStrictHandler(handler, nil), api.ServerUrlLocalMemorydServer)
@@ -118,4 +124,18 @@ func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
 			return nil
 		},
 	})
+}
+
+func requestLogContext(logger *slog.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			request := c.Request()
+			// Echo writes generated IDs to the response header; unlike a
+			// client-supplied ID, it does not copy them into the request header.
+			requestID := c.Response().Header().Get(echo.HeaderXRequestID)
+			requestLogger := logger.With("request_id", requestID)
+			c.SetRequest(request.WithContext(logging.WithLogger(request.Context(), requestLogger)))
+			return next(c)
+		}
+	}
 }

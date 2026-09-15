@@ -15,6 +15,24 @@ import (
 	"github.com/anton-povarov/memoryd/server/internal/config"
 )
 
+type contextKey struct{}
+
+// WithLogger associates a structured logger with work derived from ctx.
+func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return context.WithValue(ctx, contextKey{}, logger)
+}
+
+// FromContext returns the request-scoped logger when one is present.
+func FromContext(ctx context.Context) *slog.Logger {
+	if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok && logger != nil {
+		return logger
+	}
+	return slog.Default()
+}
+
 // New builds a logger writing to stderr.  The format and level are validated
 // here as well as by config.Config so callers that construct a config directly
 // get the same safe behavior.
