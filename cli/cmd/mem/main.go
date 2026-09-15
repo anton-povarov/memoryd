@@ -51,10 +51,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		getFlags.SetOutput(stderr)
 		output := getFlags.String("o", "", "destination path, or - for stdout")
 		force := getFlags.Bool("force", false, "replace an existing destination")
+		verbose := getFlags.Bool("v", false, "show download progress")
 		getFlags.Usage = func() {
 			fmt.Fprintln(
 				stderr,
-				"usage: mem [--server ADDRESS] get [-o PATH] [--force] <memory-id>",
+				"usage: mem [--server ADDRESS] get [-o PATH] [--force] [-v] <memory-id>",
 			)
 		}
 		if err := getFlags.Parse(remaining); err != nil {
@@ -68,12 +69,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if parseErr != nil {
 			return exitUsage
 		}
-		err = command.Get(ctx, serverURL, memoryID, *output, *force, stdout, stderr)
+		progress := stderr
+		if !*verbose {
+			progress = io.Discard
+		}
+		err = command.Get(ctx, serverURL, memoryID, *output, *force, stdout, progress)
 	case "put":
 		putFlags := flag.NewFlagSet("mem put", flag.ContinueOnError)
 		putFlags.SetOutput(stderr)
+		verbose := putFlags.Bool("v", false, "show import progress")
 		putFlags.Usage = func() {
-			fmt.Fprintln(stderr, "usage: mem [--server ADDRESS] put <path>")
+			fmt.Fprintln(stderr, "usage: mem [--server ADDRESS] put [-v] <path>")
 		}
 		if err := putFlags.Parse(remaining); err != nil {
 			return exitUsage
@@ -82,7 +88,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			putFlags.Usage()
 			return exitUsage
 		}
-		err = command.Put(ctx, serverURL, putFlags.Arg(0), stdout, stderr)
+		progress := stderr
+		if !*verbose {
+			progress = io.Discard
+		}
+		err = command.Put(ctx, serverURL, putFlags.Arg(0), stdout, progress)
 	case "info":
 		infoFlags := flag.NewFlagSet("mem info", flag.ContinueOnError)
 		infoFlags.SetOutput(stderr)
@@ -107,8 +117,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		count := listFlags.Int("n", defaultListCount, "number of Memories to return")
 		all := listFlags.Bool("all", false, "return all Memories across pages")
 		short := listFlags.Bool("short", false, "print only Memory IDs")
+		verbose := listFlags.Bool("v", false, "show list progress")
 		listFlags.Usage = func() {
-			fmt.Fprintln(stderr, "usage: mem [--server ADDRESS] list [-n N | --all] [--short]")
+			fmt.Fprintln(stderr, "usage: mem [--server ADDRESS] list [-n N | --all] [--short] [-v]")
 		}
 		if err := listFlags.Parse(remaining); err != nil {
 			return exitUsage
@@ -126,6 +137,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if *all && countSet {
 			fmt.Fprintln(stderr, "mem list: -n and --all cannot be used together")
 			return exitUsage
+		}
+		if *verbose {
+			fmt.Fprintln(stderr, "listing Memories")
 		}
 		err = command.List(ctx, serverURL, *count, *all, *short, stdout)
 	default:

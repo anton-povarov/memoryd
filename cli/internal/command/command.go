@@ -259,13 +259,13 @@ func Get(
 	defer response.Body.Close()
 
 	if output == "-" {
-		fmt.Fprintln(stderr, "streaming Blob to stdout")
 		written, err := io.Copy(stdout, response.Body)
 		if err == nil {
 			fmt.Fprintf(stderr, "downloaded %d bytes\n", written)
 		}
 		return err
 	}
+
 	if output == "" {
 		output = filenameFromDisposition(
 			response.Header.Get("Content-Disposition"),
@@ -304,6 +304,8 @@ func Get(
 		return fmt.Errorf("publish download: %w", err)
 	}
 	fmt.Fprintf(stderr, "downloaded %d bytes\n", written)
+
+	fmt.Fprintf(stdout, "%s\n", output) // indicate the filename we've written to
 	return nil
 }
 

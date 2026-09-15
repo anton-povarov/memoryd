@@ -58,14 +58,19 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name string
-		args []string
-		want string
+		name         string
+		args         []string
+		want         string
+		wantProgress string
 	}{
 		{name: "put", args: []string{"put", path}, want: memoryID.String() + "\n"},
+		{name: "put verbose", args: []string{"put", "-v", path},
+			want: memoryID.String() + "\n", wantProgress: "uploading memory.pdf"},
 		{name: "info", args: []string{"info", memoryID.String()},
 			want: "\"original_filename\": \"memory.pdf\""},
 		{name: "get", args: []string{"get", "-o", "-", memoryID.String()}, want: string(content)},
+		{name: "get verbose", args: []string{"get", "-v", "-o", "-", memoryID.String()},
+			want: string(content), wantProgress: "downloading Memory " + memoryID.String()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -75,6 +80,12 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 			}
 			if !strings.Contains(stdout.String(), test.want) {
 				t.Fatalf("stdout=%q, want %q", stdout.String(), test.want)
+			}
+			if test.wantProgress == "" && stderr.Len() != 0 {
+				t.Fatalf("unexpected stderr=%q", stderr.String())
+			}
+			if test.wantProgress != "" && !strings.Contains(stderr.String(), test.wantProgress) {
+				t.Fatalf("stderr=%q, want %q", stderr.String(), test.wantProgress)
 			}
 		})
 	}
@@ -139,14 +150,17 @@ func TestListPaginationAndOutput(t *testing.T) {
 	defer server.Close()
 
 	for _, test := range []struct {
-		name       string
-		args       []string
-		wantCount  int
-		wantLimits []int
-		short      bool
+		name         string
+		args         []string
+		wantCount    int
+		wantLimits   []int
+		short        bool
+		wantProgress string
 	}{
 		{name: "default", args: []string{"list"}, wantCount: 50,
 			wantLimits: []int{50}, short: false},
+		{name: "verbose", args: []string{"list", "-v"}, wantCount: 50,
+			wantLimits: []int{50}, short: false, wantProgress: "listing Memories\n"},
 		{name: "count over page cap", args: []string{"list", "-n", "101"},
 			wantCount: 101, wantLimits: []int{100, 1}, short: false},
 		{name: "all short", args: []string{"list", "--all", "--short"},
@@ -158,6 +172,9 @@ func TestListPaginationAndOutput(t *testing.T) {
 			args := append([]string{"--server=" + server.URL}, test.args...)
 			if code := run(t.Context(), args, &stdout, &stderr); code != 0 {
 				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+			}
+			if stderr.String() != test.wantProgress {
+				t.Fatalf("stderr=%q, want %q", stderr.String(), test.wantProgress)
 			}
 			if fmt.Sprint(limits) != fmt.Sprint(test.wantLimits) {
 				t.Fatalf("limits=%v, want %v", limits, test.wantLimits)
