@@ -355,3 +355,82 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 		t.Fatalf("Content-Length = %q", got)
 	}
 }
+
+func TestMarkdownImportDownloadAndDuplicate(t *testing.T) {
+	handler := newTestServer(t)
+	want := []byte("# Notes\nA café visit.\n")
+	upload := func() *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, err := writer.CreateFormFile("file", "notes.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(want); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v0/memories/import",
+			&body,
+		)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	imported := upload()
+	if imported.Code != http.StatusOK ||
+		!strings.Contains(imported.Body.String(), `"media_type":"text/markdown"`) {
+		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body.String())
+	}
+	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
+		FindStringSubmatch(imported.Body.String())
+	if len(match) != 2 {
+		t.Fatalf("completion event has no Memory ID: %s", imported.Body.String())
+	}
+
+	download := httptest.NewRecorder()
+	handler.ServeHTTP(
+		download,
+		httptest.NewRequest(
+			http.MethodGet,
+			"/api/v0/memories/"+match[1]+"/content",
+			nil,
+		),
+	)
+	if download.Code != http.StatusOK ||
+		!bytes.Equal(download.Body.Bytes(), want) ||
+		!strings.Contains(download.Header().Get("Content-Type"), "text/markdown") {
+		t.Fatalf(
+			"download status=%d type=%q body=%q",
+			download.Code,
+			download.Header().Get("Content-Type"),
+			download.Body.Bytes(),
+		)
+	}
+	if disposition := download.Header().
+		Get("Content-Disposition"); !strings.Contains(
+		disposition,
+		"notes.md",
+	) {
+		t.Fatalf("Content-Disposition = %q", disposition)
+	}
+
+	duplicate := upload()
+	if duplicate.Code != http.StatusConflict {
+		t.Fatalf("duplicate status=%d body=%s", duplicate.Code, duplicate.Body.String())
+	}
+	var problem api.Error
+	if err := json.Unmarshal(duplicate.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "duplicate_memory" ||
+		problem.ExistingMemory == nil || problem.ExistingMemory.Id.String() != match[1] {
+		t.Fatalf("duplicate response = %#v", problem)
+	}
+}

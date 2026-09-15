@@ -15,6 +15,63 @@ import (
 	"time"
 )
 
+func TestDetectMediaType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		filename  string
+		content   []byte
+		mediaType string
+	}{
+		{"pdf signature", "renamed.md", []byte("%PDF-1.7\n"), "application/pdf"},
+		{"jpeg signature", "photo.txt", []byte{0xff, 0xd8, 0xff, 0x00}, "image/jpeg"},
+		{"png signature", "photo.md", []byte("\x89PNG\r\n\x1a\n"), "image/png"},
+		{"markdown extension", "notes.MD", []byte("Ordinary UTF-8 prose.\n"), "text/markdown"},
+		{"long extension", "notes.markdown", []byte("Café\n"), "text/markdown"},
+		{"empty markdown", "empty.md", nil, "text/markdown"},
+		{"heading without extension", "notes", []byte("# Heading\nBody\n"), "text/markdown"},
+		{"fence without extension", "notes.txt", []byte("```go\ncode\n```\n"), "text/markdown"},
+		{
+			"link without extension",
+			"notes.txt",
+			[]byte("See [home](https://example.com).\n"),
+			"text/markdown",
+		},
+		{"plain text", "notes.txt", []byte("Ordinary UTF-8 prose.\n"), ""},
+		{"list text", "notes.txt", []byte("- apples\n- pears\n"), ""},
+		{"invalid UTF-8", "notes.md", []byte{'#', ' ', 0xff}, ""},
+		{
+			"invalid UTF-8 after probe",
+			"notes.md",
+			append(bytes.Repeat([]byte("a"), markdownProbeBytes), 0xff),
+			"",
+		},
+		{"NUL byte", "notes.md", []byte("# Heading\x00\n"), ""},
+		{"control byte", "notes.md", []byte("# Heading\x01\n"), ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "candidate")
+			if err := os.WriteFile(path, test.content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := detectMediaType(path, test.filename)
+			if test.mediaType == "" {
+				if !errors.Is(err, ErrUnsupportedContent) {
+					t.Fatalf("detectMediaType() error = %v, want unsupported", err)
+				}
+				return
+			}
+			if err != nil || got != test.mediaType {
+				t.Fatalf("detectMediaType() = %q, %v; want %q", got, err, test.mediaType)
+			}
+		})
+	}
+}
+
 func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	t.Parallel()
 

@@ -120,6 +120,10 @@ paths:
               schema:
                 type: string
                 format: binary
+            text/markdown:
+              schema:
+                type: string
+                format: binary
         "404":
           description: The requested Memory or Run does not exist.
           content:
@@ -148,7 +152,7 @@ paths:
               $ref: "#/components/schemas/ImportMultipart"
             encoding:
               file:
-                contentType: application/pdf, image/jpeg, image/png
+                contentType: application/pdf, image/jpeg, image/png, text/markdown
       responses:
         "200":
           description: Progress events followed by exactly one terminal event.
@@ -482,7 +486,7 @@ components:
           type: string
           format: binary
           maxLength: 104857600
-          description: One PDF, JPEG, or PNG Blob.
+          description: One PDF, JPEG, PNG, or Markdown Blob.
         relative_path:
           type: string
           description: Browser-provided path relative to the selected directory.

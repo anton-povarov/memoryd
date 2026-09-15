@@ -183,6 +183,10 @@ func (h *Handler) GetMemoryContent(
 		return api.GetMemoryContent200ImagepngResponse{
 			Body: content, Headers: headers, ContentLength: memory.ByteSize,
 		}, nil
+	case "text/markdown":
+		return api.GetMemoryContent200TextmarkdownResponse{
+			Body: content, Headers: headers, ContentLength: memory.ByteSize,
+		}, nil
 	default:
 		return api.GetMemoryContent200ApplicationoctetStreamResponse{
 			Body: content, Headers: headers, ContentLength: memory.ByteSize,

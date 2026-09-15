@@ -6,7 +6,7 @@ Status: authoritative snapshot of decisions from the current design interview. E
 
 Import personal files into a durable local Vault, understand them as well as currently available tools allow, and retrieve whole Memories using natural-language queries over structured Facts and extracted text.
 
-The first useful demonstration imports a directory containing PDFs, JPEGs, and PNGs, then answers variations of:
+The first useful demonstration imports a directory, importing files of supported formats, then answers variations of:
 
 - Find all Tasleem bills from 2026.
 - Find a particular person's passport photo when that person is named explicitly.
@@ -15,7 +15,7 @@ The first useful demonstration imports a directory containing PDFs, JPEGs, and P
 ## Explicit MVP boundaries
 
 - One imported file is one user-visible Memory. Internal pages, chunks, attachments, or sections are not separately returned.
-- Supported content formats are PDF, JPEG, and PNG.
+- Supported content formats are PDF, JPEG, PNG and MD.
 - Cross-language retrieval, embeddings, relevance ranking, query relaxation, user Fact corrections, deletion, and garbage collection are deferred.
 - Relationship aliases are not inferred. A query containing `my wife` is treated as literal full text and may return no results; the user must rephrase it with a name.
 - Results are reverse-sorted by the best available original filesystem creation timestamp, then modification timestamp, then import timestamp.

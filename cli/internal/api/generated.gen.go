@@ -358,7 +358,7 @@ type ImportEvent struct {
 
 // ImportMultipart defines model for ImportMultipart.
 type ImportMultipart struct {
-	// File One PDF, JPEG, or PNG Blob.
+	// File One PDF, JPEG, PNG, or Markdown Blob.
 	File                 openapi_types.File `json:"file"`
 	FilesystemCreatedAt  *time.Time         `json:"filesystem_created_at,omitempty"`
 	FilesystemModifiedAt *time.Time         `json:"filesystem_modified_at,omitempty"`

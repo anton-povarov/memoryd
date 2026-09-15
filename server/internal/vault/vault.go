@@ -2,6 +2,7 @@
 package vault
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/google/uuid"
@@ -22,26 +24,28 @@ import (
 const MaxBlobBytes int64 = 100 << 20
 
 const (
-	DefaultListLimit   = 50
-	MaxListLimit       = 100
-	maxOpenConnections = 1
-	firstShardEnd      = 2
-	secondShardEnd     = 4
-	mediaHeaderBytes   = 16
-	pdfSignatureBytes  = 5
-	jpegSignatureBytes = 3
-	pngSignatureBytes  = 8
-	overflowProbeBytes = 1
-	asciiControlLimit  = 0x20
-	asciiDelete        = 0x7f
-	jpegStartByte      = 0xff
-	jpegMarkerByte     = 0xd8
+	DefaultListLimit    = 50
+	MaxListLimit        = 100
+	maxOpenConnections  = 1
+	firstShardEnd       = 2
+	secondShardEnd      = 4
+	mediaHeaderBytes    = 16
+	pdfSignatureBytes   = 5
+	jpegSignatureBytes  = 3
+	pngSignatureBytes   = 8
+	markdownProbeBytes  = 64 << 10
+	markdownBufferBytes = 32 << 10
+	overflowProbeBytes  = 1
+	asciiControlLimit   = 0x20
+	asciiDelete         = 0x7f
+	jpegStartByte       = 0xff
+	jpegMarkerByte      = 0xd8
 )
 
 var (
 	ErrBlobTooLarge       = errors.New("blob exceeds the 100 MiB limit")
 	ErrUnsupportedContent = errors.New(
-		"blob content is not a supported PDF, JPEG, or PNG",
+		"blob content is not a supported PDF, JPEG, PNG, or Markdown",
 	)
 	ErrMemoryNotFound = errors.New("memory not found")
 )
@@ -216,7 +220,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("close temporary Blob: %w", closeErr)
 	}
 
-	mediaType, err := detectMediaType(temporaryPath)
+	mediaType, err := detectMediaType(temporaryPath, candidate.OriginalFilename)
 	if err != nil {
 		return Memory{}, err
 	}
@@ -561,7 +565,7 @@ func copyWithLimit(
 	return written, nil
 }
 
-func detectMediaType(path string) (string, error) {
+func detectMediaType(path, filename string) (string, error) {
 	content, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("inspect Blob content: %w", err)
@@ -569,7 +573,7 @@ func detectMediaType(path string) (string, error) {
 	defer content.Close()
 	header := make([]byte, mediaHeaderBytes)
 	n, err := io.ReadFull(content, header)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("inspect Blob content: %w", err)
 	}
 	header = header[:n]
@@ -584,8 +588,78 @@ func detectMediaType(path string) (string, error) {
 	case len(header) >= pngSignatureBytes &&
 		string(header[:pngSignatureBytes]) == "\x89PNG\r\n\x1a\n":
 		return "image/png", nil
-	default:
+	}
+	if _, err := content.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("inspect Blob content: %w", err)
+	}
+	probe, err := io.ReadAll(io.LimitReader(content, markdownProbeBytes))
+	if err != nil {
+		return "", fmt.Errorf("inspect Blob content: %w", err)
+	}
+	if !markdownFilename(filename) && !hasMarkdownStructure(string(probe)) {
 		return "", ErrUnsupportedContent
+	}
+	if _, err := content.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("inspect Blob content: %w", err)
+	}
+	valid, err := validMarkdownText(content)
+	if err != nil {
+		return "", fmt.Errorf("inspect Blob content: %w", err)
+	}
+	if !valid {
+		return "", ErrUnsupportedContent
+	}
+	return "text/markdown", nil
+}
+
+func markdownFilename(filename string) bool {
+	switch strings.ToLower(filepath.Ext(safeFilename(filename))) {
+	case ".md", ".markdown":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasMarkdownStructure(probe string) bool {
+	for _, line := range strings.Split(probe, "\n") {
+		line = strings.TrimLeft(line, " ")
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			return true
+		}
+		marks := 0
+		for marks < len(line) && line[marks] == '#' {
+			marks++
+		}
+		if marks > 0 && marks <= 6 && marks < len(line) &&
+			(line[marks] == ' ' || line[marks] == '\t') {
+			return true
+		}
+		if open := strings.IndexByte(line, '['); open >= 0 {
+			if close := strings.Index(line[open:], "]("); close >= 0 &&
+				strings.Contains(line[open+close+2:], ")") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validMarkdownText(content io.Reader) (bool, error) {
+	reader := bufio.NewReaderSize(content, markdownBufferBytes)
+	for {
+		r, size, err := reader.ReadRune()
+		if errors.Is(err, io.EOF) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if (r == utf8.RuneError && size == 1) ||
+			(r < asciiControlLimit && r != '\n' && r != '\r' && r != '\t') ||
+			r == asciiDelete {
+			return false, nil
+		}
 	}
 }
 

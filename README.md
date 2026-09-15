@@ -1,6 +1,8 @@
 # memoryd
 
-Personal Memory Vault. The current vertical slice durably imports and restores PDF, JPEG, and PNG Blobs through an OpenAPI-first Go server and CLI.
+Personal Memory Vault. The current vertical slice durably imports and restores PDF, JPEG, PNG, and Markdown Blobs through an OpenAPI-first Go server and CLI.
+
+Markdown files with `.md` or `.markdown` names are accepted when their bytes are valid UTF-8 text. Files with other names can also be recognized when their first 64 KiB contain a Markdown heading, fenced code block, or link. Plain text without those signals remains unsupported.
 
 The language-neutral contract is `api/openapi.yaml`. The `server/` and `cli/` directories are independent Go modules with their own generated bindings; future web and integration clients can remain independent siblings too.
 
