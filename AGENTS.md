@@ -2,21 +2,11 @@ This is a Personal Memory Vault project. Store content and medatata, understand 
 
 Stage: MVP design, see `docs/MVP.md`.
 
-## Go coding standard
+## Go
 
-See `GO_CODING_STANDARD.md`.
+Coding standard: see `GO_CODING_STANDARD.md`.
+When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
 
-## Structure
-
-```
-CONTEXT.md                - shared vocabulary
-api/                      - HTTP API contract as OpenAPI YAML
-docs/                     - documentation, ADRs, research, and design notes
-cli/                      - CLI for memoryd (Go)
-server/                   - main server code (Go)
-  api/                    - HTTP API contract
-  memoryd.example.yaml    - example server config
-```
 
 ## Agents
 

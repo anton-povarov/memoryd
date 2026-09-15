@@ -1,0 +1,7 @@
+#!/bin/sh
+
+set -eu
+
+topdir=$(git rev-parse --show-toplevel)
+
+"$topdir/dev-lint-go.sh"

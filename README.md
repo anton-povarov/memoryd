@@ -47,6 +47,15 @@ Development formatting applies to terminal and redirected output. Attributes fol
 
 ## Develop
 
+Enable the repository's pre-commit hook in this clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook runs `dev-lint-go.sh` to format and lint all Go packages in both modules.
+It blocks commits when the script fails, including when `golangci-lint` is missing.
+
 Regenerate each module's transport code after changing the root contract:
 
 ```sh
