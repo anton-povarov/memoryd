@@ -1,3 +1,4 @@
 /server/data/
 /server/memoryd
 .DS_Store
+.scratch
