@@ -27,7 +27,8 @@ func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
 
 // FromContext returns the request-scoped logger when one is present.
 func FromContext(ctx context.Context) *slog.Logger {
-	if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok && logger != nil {
+	if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok &&
+		logger != nil {
 		return logger
 	}
 	return slog.Default()
@@ -47,7 +48,10 @@ func NewFromConfig(cfg config.Config) (*slog.Logger, error) {
 }
 
 // NewWithWriter is useful for tests and for applications embedding memoryd.
-func NewWithWriter(cfg config.LoggingConfig, writer io.Writer) (*slog.Logger, error) {
+func NewWithWriter(
+	cfg config.LoggingConfig,
+	writer io.Writer,
+) (*slog.Logger, error) {
 	h, err := Handler(cfg, writer)
 	if err != nil {
 		return nil, err
@@ -68,10 +72,18 @@ func Must(cfg config.LoggingConfig) *slog.Logger {
 
 // Handler constructs the slog handler corresponding to cfg.
 func Handler(cfg config.LoggingConfig, writer io.Writer) (slog.Handler, error) {
-	return handlerForOutput(cfg, writer, developmentEnabled(os.Getenv("MEMORYD_DEV")))
+	return handlerForOutput(
+		cfg,
+		writer,
+		developmentEnabled(os.Getenv("MEMORYD_DEV")),
+	)
 }
 
-func handlerForOutput(cfg config.LoggingConfig, writer io.Writer, development bool) (slog.Handler, error) {
+func handlerForOutput(
+	cfg config.LoggingConfig,
+	writer io.Writer,
+	development bool,
+) (slog.Handler, error) {
 	if writer == nil {
 		return nil, fmt.Errorf("logging writer must not be nil")
 	}
@@ -82,11 +94,19 @@ func handlerForOutput(cfg config.LoggingConfig, writer io.Writer, development bo
 	if development {
 		return newDevHandler(writer, level), nil
 	}
-	return slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: level}), nil
+	return slog.NewJSONHandler(writer, &slog.HandlerOptions{
+		AddSource: false, Level: level, ReplaceAttr: nil,
+	}), nil
 }
 
 func newDevHandler(writer io.Writer, level slog.Level) slog.Handler {
-	return &devHandler{writer: writer, level: level, mutex: &sync.Mutex{}}
+	return &devHandler{
+		writer: writer,
+		level:  level,
+		mutex:  &sync.Mutex{},
+		attrs:  nil,
+		groups: nil,
+	}
 }
 
 func developmentEnabled(value string) bool {
@@ -160,7 +180,11 @@ func (h *devHandler) writeJSONAttrs(line *strings.Builder, record slog.Record) {
 
 	encoded, err := json.MarshalIndent(object, "", "    ")
 	if err != nil {
-		encoded = []byte(strconv.Quote(fmt.Sprintf("could not encode log attributes: %v", err)))
+		encoded = []byte(
+			strconv.Quote(
+				fmt.Sprintf("could not encode log attributes: %v", err),
+			),
+		)
 	}
 	line.WriteByte(' ')
 	line.Write(encoded)

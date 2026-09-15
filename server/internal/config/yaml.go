@@ -47,7 +47,9 @@ func parseYAMLConfig(data []byte) (Config, error) {
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return Config{}, fmt.Errorf("multiple YAML documents are not supported")
+			return Config{}, fmt.Errorf(
+				"multiple YAML documents are not supported",
+			)
 		}
 		return Config{}, err
 	}
@@ -60,9 +62,14 @@ func parseYAMLConfig(data []byte) (Config, error) {
 			c.Server.Address = *raw.Server.Address
 		}
 		if raw.Server.ShutdownTimeout != nil {
-			duration, err := time.ParseDuration(strings.TrimSpace(*raw.Server.ShutdownTimeout))
+			duration, err := time.ParseDuration(
+				strings.TrimSpace(*raw.Server.ShutdownTimeout),
+			)
 			if err != nil {
-				return Config{}, fmt.Errorf("server.shutdown_timeout must be a duration such as 10s: %w", err)
+				return Config{}, fmt.Errorf(
+					"server.shutdown_timeout must be a duration such as 10s: %w",
+					err,
+				)
 			}
 			c.Server.ShutdownTimeout = duration
 		}

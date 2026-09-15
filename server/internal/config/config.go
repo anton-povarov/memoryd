@@ -20,6 +20,7 @@ const (
 	DefaultShutdownTimeout = 10 * time.Second
 	DefaultDataDir         = "./data"
 	DefaultLogLevel        = "info"
+	maxTCPPort             = 65535
 )
 
 // Config is the complete configuration needed by the server.  Omitted YAML
@@ -53,7 +54,11 @@ func Defaults() Config {
 			Address:         DefaultAddress,
 			ShutdownTimeout: DefaultShutdownTimeout,
 		},
-		Storage: StorageConfig{DataDir: DefaultDataDir},
+		Storage: StorageConfig{
+			DataDir:      DefaultDataDir,
+			DatabasePath: "",
+			BlobDir:      "",
+		},
 		Logging: LoggingConfig{Level: DefaultLogLevel},
 	}
 	return c.withDerivedPaths()
@@ -121,13 +126,19 @@ func ParseLoggingLevel(value string) (string, error) {
 	case "warn", "warning":
 		return "warn", nil
 	default:
-		return "", fmt.Errorf("logging.level must be one of debug, info, warn, warning, or error (got %q)", value)
+		return "", fmt.Errorf(
+			"logging.level must be one of debug, info, warn, warning, or error (got %q)",
+			value,
+		)
 	}
 }
 
 func (c Config) withDerivedPaths() Config {
 	if c.Storage.DatabasePath == "" {
-		c.Storage.DatabasePath = filepath.Join(c.Storage.DataDir, "memoryd.sqlite")
+		c.Storage.DatabasePath = filepath.Join(
+			c.Storage.DataDir,
+			"memoryd.sqlite",
+		)
 	}
 	if c.Storage.BlobDir == "" {
 		c.Storage.BlobDir = filepath.Join(c.Storage.DataDir, "blobs")
@@ -162,7 +173,8 @@ func validateAddress(address string) error {
 
 func validatePort(port string) error {
 	var n int
-	if _, err := fmt.Sscanf(port, "%d", &n); err != nil || n < 1 || n > 65535 || fmt.Sprintf("%d", n) != port {
+	if _, err := fmt.Sscanf(port, "%d", &n); err != nil ||
+		n < 1 || n > maxTCPPort || fmt.Sprintf("%d", n) != port {
 		return fmt.Errorf("port %q is not in the range 1..65535", port)
 	}
 	return nil

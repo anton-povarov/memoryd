@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/anton-povarov/memoryd/cli/internal/api"
 	"github.com/google/uuid"
@@ -41,21 +42,39 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		}
 		defer file.Close()
 		got, _ := io.ReadAll(file)
-		if header.Filename != "upload.pdf" || !bytes.Equal(got, want) || !filepath.IsAbs(r.FormValue("full_path")) || r.FormValue("filesystem_modified_at") == "" {
-			t.Errorf("multipart filename=%q bytes=%q full_path=%q modified=%q", header.Filename, got, r.FormValue("full_path"), r.FormValue("filesystem_modified_at"))
+		if header.Filename != "upload.pdf" || !bytes.Equal(got, want) ||
+			!filepath.IsAbs(
+				r.FormValue("full_path"),
+			) || r.FormValue("filesystem_modified_at") == "" {
+			t.Errorf(
+				"multipart filename=%q bytes=%q full_path=%q modified=%q",
+				header.Filename, got, r.FormValue("full_path"),
+				r.FormValue("filesystem_modified_at"),
+			)
 		}
 		if requests.Add(1) == 1 {
 			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprintf(w, "event: import_started\ndata: {\"event\":\"import_started\",\"memory_id\":%q,\"phase\":\"accepted\"}\n\n", memoryID)
-			fmt.Fprintf(w, "event: understanding_progress\ndata: {\"event\":\"understanding_progress\",\"memory_id\":%q,\"phase\":\"stub\",\"message\":\"working\"}\n\n", memoryID)
-			completion := api.ImportCompletedEvent{Event: api.ImportCompleted, Memory: api.MemorySummary{Id: memoryID, BlobHash: strings.Repeat("a", 64), MediaType: "application/pdf", ByteSize: int64(len(want)), OriginalFilename: "upload.pdf", UnderstandingState: api.Done}}
+			fmt.Fprintf(w, "event: import_started\ndata: "+
+				"{\"event\":\"import_started\",\"memory_id\":%q,\"phase\":\"accepted\"}\n\n", memoryID)
+			fmt.Fprintf(w, "event: understanding_progress\ndata: "+
+				"{\"event\":\"understanding_progress\",\"memory_id\":%q,"+
+				"\"phase\":\"stub\",\"message\":\"working\"}\n\n", memoryID)
+			completion := api.ImportCompletedEvent{
+				Event:  api.ImportCompleted,
+				Memory: testMemorySummary(memoryID, int64(len(want)), "upload.pdf"),
+			}
 			encoded, _ := json.Marshal(completion)
 			fmt.Fprintf(w, "event: import_completed\ndata: %s\n\n", encoded)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(api.Error{Code: "duplicate_memory", Message: "duplicate", ExistingMemory: &api.DuplicateMemory{Id: memoryID, UnderstandingState: api.Done}})
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Code: "duplicate_memory", Details: nil, Message: "duplicate",
+			ExistingMemory: &api.DuplicateMemory{
+				Id: memoryID, UnderstandingState: api.Done,
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -86,7 +105,15 @@ func TestGetUsesSafeServerFilenameAndDownloadsAtomically(t *testing.T) {
 
 	directory := t.TempDir()
 	t.Chdir(directory)
-	if err := Get(t.Context(), server.URL, memoryID, "", false, io.Discard, io.Discard); err != nil {
+	if err := Get(
+		t.Context(),
+		server.URL,
+		memoryID,
+		"",
+		false,
+		io.Discard,
+		io.Discard,
+	); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(directory, "restored.pdf"))
@@ -96,7 +123,15 @@ func TestGetUsesSafeServerFilenameAndDownloadsAtomically(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("download = %q, want %q", got, want)
 	}
-	if err := Get(t.Context(), server.URL, memoryID, "", false, io.Discard, io.Discard); err == nil {
+	if err := Get(
+		t.Context(),
+		server.URL,
+		memoryID,
+		"",
+		false,
+		io.Discard,
+		io.Discard,
+	); err == nil {
 		t.Fatal("existing destination was overwritten without --force")
 	}
 	matches, _ := filepath.Glob(filepath.Join(directory, ".restored.pdf.tmp-*"))
@@ -116,14 +151,7 @@ func TestInfoReturnsMemoryDetailsWithoutDownloadingContent(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(api.MemoryDetail{
-			Memory: api.MemorySummary{
-				Id: memoryID, BlobHash: strings.Repeat("a", 64), ByteSize: 42,
-				MediaType: "application/pdf", OriginalFilename: "memory.pdf", UnderstandingState: api.Done,
-			},
-			ImportContext: api.ImportContext{OriginalFilename: "memory.pdf"},
-			Facts:         []api.Fact{}, DerivedContent: []api.DerivedContent{},
-		})
+		_ = json.NewEncoder(w).Encode(testMemoryDetail(memoryID, 42, "memory.pdf"))
 	}))
 	defer server.Close()
 
@@ -135,7 +163,8 @@ func TestInfoReturnsMemoryDetailsWithoutDownloadingContent(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &detail); err != nil {
 		t.Fatalf("stdout is not JSON: %v", err)
 	}
-	if detail.Memory.Id != memoryID || detail.Memory.OriginalFilename != "memory.pdf" || requests.Load() != 1 {
+	if detail.Memory.Id != memoryID || detail.Memory.OriginalFilename != "memory.pdf" ||
+		requests.Load() != 1 {
 		t.Fatalf("detail=%+v requests=%d", detail.Memory, requests.Load())
 	}
 }
@@ -145,13 +174,41 @@ func TestInfoReportsNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(api.Error{Code: "memory_not_found", Message: "Memory does not exist"})
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Code: "memory_not_found", Details: nil,
+			ExistingMemory: nil, Message: "Memory does not exist",
+		})
 	}))
 	defer server.Close()
 
 	var stdout bytes.Buffer
 	err := Info(t.Context(), server.URL, memoryID, &stdout)
-	if err == nil || !strings.Contains(err.Error(), "memory_not_found: Memory does not exist") || stdout.Len() != 0 {
+	if err == nil || !strings.Contains(err.Error(), "memory_not_found: Memory does not exist") ||
+		stdout.Len() != 0 {
 		t.Fatalf("error=%v stdout=%q", err, stdout.String())
+	}
+}
+
+func testMemorySummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
+	return api.MemorySummary{
+		ActiveRunId: nil, BlobHash: strings.Repeat("a", 64),
+		ByteSize: size, Id: id, ImportedAt: time.Time{},
+		MediaType: "application/pdf", OriginalCreatedAt: nil,
+		OriginalFilename: filename, OriginalModifiedAt: nil,
+		UnderstandingState: api.Done,
+	}
+}
+
+func testMemoryDetail(id uuid.UUID, size int64, filename string) api.MemoryDetail {
+	return api.MemoryDetail{
+		ActiveRun: nil, ContentUrl: nil,
+		DerivedContent: []api.DerivedContent{}, Facts: []api.Fact{},
+		ImportContext: api.ImportContext{
+			ByteSize: nil, ContentHash: nil,
+			FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
+			FullPath: nil, MediaType: nil,
+			OriginalFilename: filename, RelativePath: nil,
+		},
+		Memory: testMemorySummary(id, size, filename),
 	}
 }

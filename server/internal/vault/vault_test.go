@@ -30,20 +30,29 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	created, err := v.Put(ctx, Import{
 		Content:            bytes.NewReader(wantBytes),
 		OriginalFilename:   "notes.pdf",
+		RelativePath:       "",
 		FullPath:           "/original/notes.pdf",
+		FilesystemCreated:  nil,
 		FilesystemModified: &modifiedAt,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.UnderstandingState != StateDone || created.MediaType != "application/pdf" {
+	if created.UnderstandingState != StateDone ||
+		created.MediaType != "application/pdf" {
 		t.Fatalf("created Memory = %#v", created)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(wantBytes))
 	if created.BlobHash != digest {
 		t.Fatalf("Blob hash = %s, want %s", created.BlobHash, digest)
 	}
-	blobPath := filepath.Join(blobDir, "sha256", digest[:2], digest[2:4], "sha256-"+digest)
+	blobPath := filepath.Join(
+		blobDir,
+		"sha256",
+		digest[:2],
+		digest[2:4],
+		"sha256-"+digest,
+	)
 	storedBytes, err := os.ReadFile(blobPath)
 	if err != nil {
 		t.Fatal(err)
@@ -73,17 +82,26 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if !bytes.Equal(gotBytes, wantBytes) {
 		t.Fatalf("content = %q, want %q", gotBytes, wantBytes)
 	}
-	if opened.ID != created.ID || opened.BlobHash != created.BlobHash || opened.OriginalFilename != "notes.pdf" {
+	if opened.ID != created.ID || opened.BlobHash != created.BlobHash ||
+		opened.OriginalFilename != "notes.pdf" {
 		t.Fatalf("reopened Memory = %#v, created = %#v", opened, created)
 	}
 
-	_, err = v.Put(ctx, Import{Content: bytes.NewReader(wantBytes), OriginalFilename: "renamed.pdf"})
+	_, err = v.Put(ctx, Import{
+		Content: bytes.NewReader(wantBytes), OriginalFilename: "renamed.pdf",
+		RelativePath: "", FullPath: "",
+		FilesystemCreated: nil, FilesystemModified: nil,
+	})
 	var duplicate *DuplicateError
 	if !errors.As(err, &duplicate) {
 		t.Fatalf("duplicate error = %v, want *DuplicateError", err)
 	}
 	if duplicate.Existing.ID != created.ID {
-		t.Fatalf("duplicate Memory ID = %s, want %s", duplicate.Existing.ID, created.ID)
+		t.Fatalf(
+			"duplicate Memory ID = %s, want %s",
+			duplicate.Existing.ID,
+			created.ID,
+		)
 	}
 }
 
@@ -91,7 +109,11 @@ func TestCopyWithLimitRejectsFirstByteOverLimit(t *testing.T) {
 	t.Parallel()
 
 	var destination bytes.Buffer
-	written, err := copyWithLimit(&destination, bytes.NewReader([]byte("123456")), 5)
+	written, err := copyWithLimit(
+		&destination,
+		bytes.NewReader([]byte("123456")),
+		5,
+	)
 	if !errors.Is(err, ErrBlobTooLarge) {
 		t.Fatalf("error = %v, want ErrBlobTooLarge", err)
 	}

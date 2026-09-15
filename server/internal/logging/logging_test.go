@@ -38,7 +38,10 @@ func TestNewWithWriterUsesDevelopmentFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger.Debug("hello", "answer", 42)
-	if !strings.Contains(output.String(), "DBG  hello {\n    \"answer\": 42\n}") {
+	if !strings.Contains(
+		output.String(),
+		"DBG  hello {\n    \"answer\": 42\n}",
+	) {
 		t.Fatalf("text output = %q", output.String())
 	}
 }
@@ -47,16 +50,36 @@ func TestDevelopmentHandlerFormat(t *testing.T) {
 	var output bytes.Buffer
 	handler := newDevHandler(&output, slog.LevelInfo)
 	record := slog.NewRecord(
-		time.Date(2026, 9, 14, 23, 57, 33, 288000000, time.FixedZone("Dubai", 4*60*60)),
+		time.Date(
+			2026,
+			9,
+			14,
+			23,
+			57,
+			33,
+			288000000,
+			time.FixedZone("Dubai", 4*60*60),
+		),
 		slog.LevelInfo,
 		"HTTP request",
 		0,
 	)
-	record.Add("method", "GET", "path", "/docs", "status", 308, "latency", 3667*time.Nanosecond)
+	record.Add(
+		"method",
+		"GET",
+		"path",
+		"/docs",
+		"status",
+		308,
+		"latency",
+		3667*time.Nanosecond,
+	)
 	if err := handler.Handle(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
-	want := "2026-09-14 23:57:33 .288000 \x1b[32mINF\x1b[0m  HTTP request {\n    \"latency\": \"3.667µs\",\n    \"method\": \"GET\",\n    \"path\": \"/docs\",\n    \"status\": 308\n}\n"
+	want := "2026-09-14 23:57:33 .288000 \x1b[32mINF\x1b[0m  HTTP request {\n" +
+		"    \"latency\": \"3.667µs\",\n    \"method\": \"GET\",\n" +
+		"    \"path\": \"/docs\",\n    \"status\": 308\n}\n"
 	if output.String() != want {
 		t.Fatalf("text output = %q, want %q", output.String(), want)
 	}
@@ -65,9 +88,15 @@ func TestDevelopmentHandlerFormat(t *testing.T) {
 func TestDevelopmentHandlerPreservesAttrsAndGroups(t *testing.T) {
 	var output bytes.Buffer
 	handler := newDevHandler(&output, slog.LevelInfo)
-	logger := slog.New(handler).With("application", "memory vault").WithGroup("HTTP")
+	logger := slog.New(handler).
+		With("application", "memory vault").
+		WithGroup("HTTP")
 	logger.Info("ready", "status", 200)
-	if !strings.Contains(output.String(), "\"HTTP\": {\n        \"status\": 200\n    },\n    \"application\": \"memory vault\"") {
+	if !strings.Contains(
+		output.String(),
+		"\"HTTP\": {\n        \"status\": 200\n    },\n"+
+			"    \"application\": \"memory vault\"",
+	) {
 		t.Fatalf("text output = %q", output.String())
 	}
 }
@@ -83,15 +112,25 @@ func TestDevelopmentFormatRequiresDevelopmentMode(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			handler, err := handlerForOutput(config.LoggingConfig{Level: "info"}, &output, test.development)
+			handler, err := handlerForOutput(
+				config.LoggingConfig{Level: "info"},
+				&output,
+				test.development,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			logger := slog.New(handler)
 			logger.Info("hello")
-			gotDevFormat := strings.Contains(output.String(), "\x1b[32mINF\x1b[0m  hello")
+			gotDevFormat := strings.Contains(
+				output.String(),
+				"\x1b[32mINF\x1b[0m  hello",
+			)
 			if gotDevFormat != test.devFormat {
-				t.Fatalf("development format = %v, want %v; output = %q", gotDevFormat, test.devFormat, output.String())
+				t.Fatalf(
+					"development format = %v, want %v; output = %q",
+					gotDevFormat, test.devFormat, output.String(),
+				)
 			}
 		})
 	}
@@ -101,9 +140,19 @@ func TestDevelopmentJSONPrettyPrintsAttrsAndGroups(t *testing.T) {
 	var output bytes.Buffer
 	handler := newDevHandler(&output, slog.LevelInfo)
 	logger := slog.New(handler).With("application", "memoryd").WithGroup("HTTP")
-	logger.Info("request", "status", 200, "ok", true, "latency", 3667*time.Nanosecond)
+	logger.Info(
+		"request",
+		"status",
+		200,
+		"ok",
+		true,
+		"latency",
+		3667*time.Nanosecond,
+	)
 
-	want := "request {\n    \"HTTP\": {\n        \"latency\": \"3.667µs\",\n        \"ok\": true,\n        \"status\": 200\n    },\n    \"application\": \"memoryd\"\n}\n"
+	want := "request {\n    \"HTTP\": {\n        \"latency\": \"3.667µs\",\n" +
+		"        \"ok\": true,\n        \"status\": 200\n    },\n" +
+		"    \"application\": \"memoryd\"\n}\n"
 	if !strings.HasSuffix(output.String(), want) {
 		t.Fatalf("text output = %q, want suffix %q", output.String(), want)
 	}
@@ -129,7 +178,11 @@ func TestDevelopmentLevelColors(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.Contains(output.String(), test.want) {
-				t.Fatalf("output = %q, want level %q", output.String(), test.want)
+				t.Fatalf(
+					"output = %q, want level %q",
+					output.String(),
+					test.want,
+				)
 			}
 		})
 	}
@@ -149,7 +202,10 @@ func TestDevelopmentEnabled(t *testing.T) {
 }
 
 func TestHandlerRejectsInvalidSettings(t *testing.T) {
-	if _, err := Handler(config.LoggingConfig{Level: "trace"}, &bytes.Buffer{}); err == nil {
+	if _, err := Handler(
+		config.LoggingConfig{Level: "trace"},
+		&bytes.Buffer{},
+	); err == nil {
 		t.Fatal("expected invalid level error")
 	}
 }

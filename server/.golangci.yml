@@ -1,0 +1,59 @@
+version: "2"
+
+run:
+  timeout: 1m
+  tests: true
+
+linters:
+  enable:
+    - gocritic # Criticism
+    - gocyclo # Cyclomatic complexity
+    - govet # Vet
+    - errcheck # Error handling
+    - staticcheck # Static analysis
+    - bodyclose # Closing http response bodies
+    - ineffassign # Assignments to the same variable
+    - prealloc # Preallocation
+
+    - unused # Unused
+    - unparam
+    - unconvert
+
+    # TODO(antoxa): come back to reexamine this
+    # I mean it has a lot of good ideas, but quite demanding if you enable (almost) everything
+    # - revive # Style
+
+    # decided against these
+    # - exhaustruct_v5 # All struct fields must be initialized (annoying as fk)
+    # - dupl # Duplicated code
+    # - whitespace # Whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true # require error checks in type assertions: `a := b.(MyStruct)`
+      check-blank: false
+      disable-default-exclusions: false
+      verbose: true
+      exclude-functions:
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - fmt.Fprintln
+        - fmt.Fprintf
+
+    # revive:
+    #   enable-all-rules: true
+    #   rules:
+    #     - name: exported
+    #       disabled: true
+
+# Configure the formatters block to automatically break those lines up
+formatters:
+  enable:
+    - goimports
+    - golines
+  settings:
+    golines:
+      max-len: 100 # see lll flagging in linters above
+      tab-len: 4
+      reformat-tags: false # Change to true if you also want struct tags split

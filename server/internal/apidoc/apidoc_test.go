@@ -25,7 +25,11 @@ paths:
 
 func TestRegisterDocumentationEndpoint(t *testing.T) {
 	e := echo.New()
-	if err := RegisterDocumentationEndpoint(e, "/api/", []byte(testSpec)); err != nil {
+	if err := RegisterDocumentationEndpoint(
+		e,
+		"/api/",
+		[]byte(testSpec),
+	); err != nil {
 		t.Fatalf("register documentation: %v", err)
 	}
 
@@ -37,11 +41,40 @@ func TestRegisterDocumentationEndpoint(t *testing.T) {
 		content     string
 		mustContain string
 	}{
-		{name: "yaml", method: http.MethodGet, path: "/api/openapi.yaml", status: http.StatusOK, content: "text/yaml", mustContain: "openapi: 3.0.3"},
-		{name: "json", method: http.MethodGet, path: "/api/openapi.json", status: http.StatusOK, content: "application/json", mustContain: `"Memory Vault API"`},
-		{name: "docs redirect", method: http.MethodGet, path: "/api/docs", status: http.StatusPermanentRedirect, content: "", mustContain: ""},
-		{name: "docs UI", method: http.MethodGet, path: "/api/docs/", status: http.StatusOK, content: "text/html", mustContain: "swagger-ui"},
-		{name: "embedded CSS", method: http.MethodGet, path: "/api/docs/swagger-ui.css", status: http.StatusOK, content: "text/css", mustContain: ".swagger-ui"},
+		{
+			name:        "yaml",
+			method:      http.MethodGet,
+			path:        "/api/openapi.yaml",
+			status:      http.StatusOK,
+			content:     "text/yaml",
+			mustContain: "openapi: 3.0.3",
+		},
+		{
+			name:        "json",
+			method:      http.MethodGet,
+			path:        "/api/openapi.json",
+			status:      http.StatusOK,
+			content:     "application/json",
+			mustContain: `"Memory Vault API"`,
+		},
+		{name: "docs redirect", method: http.MethodGet, path: "/api/docs",
+			status: http.StatusPermanentRedirect, content: "", mustContain: ""},
+		{
+			name:        "docs UI",
+			method:      http.MethodGet,
+			path:        "/api/docs/",
+			status:      http.StatusOK,
+			content:     "text/html",
+			mustContain: "swagger-ui",
+		},
+		{
+			name:        "embedded CSS",
+			method:      http.MethodGet,
+			path:        "/api/docs/swagger-ui.css",
+			status:      http.StatusOK,
+			content:     "text/css",
+			mustContain: ".swagger-ui",
+		},
 	}
 
 	for _, tc := range tests {
@@ -51,16 +84,34 @@ func TestRegisterDocumentationEndpoint(t *testing.T) {
 			e.ServeHTTP(res, req)
 
 			if res.Code != tc.status {
-				t.Fatalf("status = %d, want %d (body: %s)", res.Code, tc.status, res.Body.String())
+				t.Fatalf(
+					"status = %d, want %d (body: %s)",
+					res.Code,
+					tc.status,
+					res.Body.String(),
+				)
 			}
-			if tc.content != "" && !strings.Contains(res.Header().Get("Content-Type"), tc.content) {
-				t.Fatalf("Content-Type = %q, want %q", res.Header().Get("Content-Type"), tc.content)
+			if tc.content != "" &&
+				!strings.Contains(
+					res.Header().Get("Content-Type"),
+					tc.content,
+				) {
+				t.Fatalf(
+					"Content-Type = %q, want %q",
+					res.Header().Get("Content-Type"),
+					tc.content,
+				)
 			}
-			if tc.mustContain != "" && !strings.Contains(res.Body.String(), tc.mustContain) {
+			if tc.mustContain != "" &&
+				!strings.Contains(res.Body.String(), tc.mustContain) {
 				t.Fatalf("body does not contain %q", tc.mustContain)
 			}
-			if tc.name == "docs redirect" && res.Header().Get("Location") != "/api/docs/" {
-				t.Fatalf("Location = %q, want /api/docs/", res.Header().Get("Location"))
+			if tc.name == "docs redirect" &&
+				res.Header().Get("Location") != "/api/docs/" {
+				t.Fatalf(
+					"Location = %q, want /api/docs/",
+					res.Header().Get("Location"),
+				)
 			}
 		})
 	}
@@ -100,13 +151,25 @@ func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 }
 
 func TestRegisterDocumentationEndpointRejectsInvalidInput(t *testing.T) {
-	if err := RegisterDocumentationEndpoint(echo.New(), "/api", []byte("openapi: [")); err == nil {
+	if err := RegisterDocumentationEndpoint(
+		echo.New(),
+		"/api",
+		[]byte("openapi: ["),
+	); err == nil {
 		t.Fatal("invalid YAML unexpectedly accepted")
 	}
-	if err := RegisterDocumentationEndpoint(nil, "/api", []byte(testSpec)); err == nil {
+	if err := RegisterDocumentationEndpoint(
+		nil,
+		"/api",
+		[]byte(testSpec),
+	); err == nil {
 		t.Fatal("nil router unexpectedly accepted")
 	}
-	if err := RegisterDocumentationEndpoint(echo.New(), "api", []byte(testSpec)); err == nil {
+	if err := RegisterDocumentationEndpoint(
+		echo.New(),
+		"api",
+		[]byte(testSpec),
+	); err == nil {
 		t.Fatal("relative prefix unexpectedly accepted")
 	}
 }

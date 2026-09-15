@@ -21,10 +21,29 @@ import (
 
 const MaxBlobBytes int64 = 100 << 20
 
+const (
+	DefaultListLimit   = 50
+	MaxListLimit       = 100
+	maxOpenConnections = 1
+	firstShardEnd      = 2
+	secondShardEnd     = 4
+	mediaHeaderBytes   = 16
+	pdfSignatureBytes  = 5
+	jpegSignatureBytes = 3
+	pngSignatureBytes  = 8
+	overflowProbeBytes = 1
+	asciiControlLimit  = 0x20
+	asciiDelete        = 0x7f
+	jpegStartByte      = 0xff
+	jpegMarkerByte     = 0xd8
+)
+
 var (
 	ErrBlobTooLarge       = errors.New("Blob exceeds the 100 MiB limit")
-	ErrUnsupportedContent = errors.New("Blob content is not a supported PDF, JPEG, or PNG")
-	ErrMemoryNotFound     = errors.New("Memory not found")
+	ErrUnsupportedContent = errors.New(
+		"Blob content is not a supported PDF, JPEG, or PNG",
+	)
+	ErrMemoryNotFound = errors.New("Memory not found")
 )
 
 type State string
@@ -91,7 +110,7 @@ func Open(ctx context.Context, databasePath, blobDir string) (*Vault, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open Vault database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(maxOpenConnections)
 	v := &Vault{db: db, blobDir: contentDir}
 	if err := v.initialize(ctx); err != nil {
 		_ = db.Close()
@@ -129,7 +148,10 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, errors.New("Blob content is required")
 	}
 	logger := logging.FromContext(ctx)
-	logger.DebugContext(ctx, "Blob import staging started", "original_filename", safeFilename(candidate.OriginalFilename))
+	logger.DebugContext(
+		ctx, "Blob import staging started",
+		"original_filename", safeFilename(candidate.OriginalFilename),
+	)
 
 	temporary, err := os.CreateTemp(v.blobDir, ".import-*")
 	if err != nil {
@@ -139,7 +161,9 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	defer os.Remove(temporaryPath)
 
 	hash := sha256.New()
-	byteSize, copyErr := copyWithLimit(io.MultiWriter(temporary, hash), candidate.Content, MaxBlobBytes)
+	byteSize, copyErr := copyWithLimit(
+		io.MultiWriter(temporary, hash), candidate.Content, MaxBlobBytes,
+	)
 	closeErr := temporary.Close()
 	if copyErr != nil {
 		return Memory{}, copyErr
@@ -173,30 +197,48 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 
 	now := time.Now().UTC()
 	memory := Memory{
-		ID:                 uuid.New(),
-		BlobHash:           blobHash,
-		OriginalFilename:   safeFilename(candidate.OriginalFilename),
-		RelativePath:       candidate.RelativePath,
-		FullPath:           candidate.FullPath,
-		FilesystemCreated:  normalizeTime(candidate.FilesystemCreated),
-		FilesystemModified: normalizeTime(candidate.FilesystemModified),
-		MediaType:          mediaType,
-		ByteSize:           byteSize,
-		ImportedAt:         now,
-		UnderstandingState: StateInProgress,
+		ID:                     uuid.New(),
+		BlobHash:               blobHash,
+		OriginalFilename:       safeFilename(candidate.OriginalFilename),
+		RelativePath:           candidate.RelativePath,
+		FullPath:               candidate.FullPath,
+		FilesystemCreated:      normalizeTime(candidate.FilesystemCreated),
+		FilesystemModified:     normalizeTime(candidate.FilesystemModified),
+		MediaType:              mediaType,
+		ByteSize:               byteSize,
+		ImportedAt:             now,
+		UnderstandingState:     StateInProgress,
+		RunID:                  nil,
+		UnderstandingCompleted: nil,
 	}
+
 	// The Blob upload is complete now. Committing the Memory and finishing the
 	// deterministic understanding stub must survive client disconnection.
-	durableContext := context.WithoutCancel(ctx)
-	result, err := v.db.ExecContext(durableContext, `INSERT INTO memories (
+	insertSQL := `INSERT INTO memories (
 		id, blob_hash, original_filename, relative_path, full_path,
 		filesystem_created_at, filesystem_modified_at, media_type, byte_size,
 		imported_at, understanding_state
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`,
-		memory.ID.String(), memory.BlobHash, memory.OriginalFilename,
-		nullableString(memory.RelativePath), nullableString(memory.FullPath), nullableTime(memory.FilesystemCreated),
-		nullableTime(memory.FilesystemModified), memory.MediaType, memory.ByteSize,
-		memory.ImportedAt.Format(time.RFC3339Nano), string(memory.UnderstandingState),
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`
+
+	durableContext := context.WithoutCancel(ctx)
+	result, err := v.db.ExecContext(
+		durableContext,
+		insertSQL,
+		memory.ID.String(),
+		memory.BlobHash,
+		memory.OriginalFilename,
+		nullableString(memory.RelativePath),
+		nullableString(memory.FullPath),
+		nullableTime(memory.FilesystemCreated),
+		nullableTime(
+			memory.FilesystemModified,
+		),
+		memory.MediaType,
+		memory.ByteSize,
+		memory.ImportedAt.Format(
+			time.RFC3339Nano,
+		),
+		string(memory.UnderstandingState),
 	)
 	if err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
@@ -220,8 +262,17 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 
 	runID := uuid.New()
 	completed := time.Now().UTC()
-	if _, err := v.db.ExecContext(durableContext, `UPDATE memories SET understanding_state = ?, run_id = ?, understanding_completed_at = ? WHERE id = ?`,
-		string(StateDone), runID.String(), completed.Format(time.RFC3339Nano), memory.ID.String()); err != nil {
+	if _, err := v.db.ExecContext(
+		durableContext,
+		`UPDATE memories SET understanding_state = ?, run_id = ?, `+
+			`understanding_completed_at = ? WHERE id = ?`,
+		string(
+			StateDone,
+		),
+		runID.String(),
+		completed.Format(time.RFC3339Nano),
+		memory.ID.String(),
+	); err != nil {
 		return Memory{}, fmt.Errorf("complete stub understanding: %w", err)
 	}
 	memory.UnderstandingState = StateDone
@@ -239,19 +290,31 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 }
 
 func (v *Vault) Memory(ctx context.Context, id uuid.UUID) (Memory, error) {
-	return scanMemory(v.db.QueryRowContext(ctx, selectMemory+` WHERE id = ?`, id.String()))
+	return scanMemory(
+		v.db.QueryRowContext(ctx, selectMemory+` WHERE id = ?`, id.String()),
+	)
 }
 
-func (v *Vault) ListMemories(ctx context.Context, limit int, after *ListCursor) ([]Memory, bool, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
+func (v *Vault) ListMemories(
+	ctx context.Context,
+	limit int,
+	after *ListCursor,
+) ([]Memory, bool, error) {
+	if limit <= 0 || limit > MaxListLimit {
+		limit = DefaultListLimit
 	}
 	query := selectMemory
 	arguments := []any{}
 	if after != nil {
-		query += ` WHERE julianday(imported_at) < julianday(?) OR (julianday(imported_at) = julianday(?) AND id < ?)`
+		query += ` WHERE julianday(imported_at) < julianday(?) OR ` +
+			`(julianday(imported_at) = julianday(?) AND id < ?)`
 		encodedTime := after.ImportedAt.Format(time.RFC3339Nano)
-		arguments = append(arguments, encodedTime, encodedTime, after.ID.String())
+		arguments = append(
+			arguments,
+			encodedTime,
+			encodedTime,
+			after.ID.String(),
+		)
 	}
 	query += ` ORDER BY julianday(imported_at) DESC, id DESC LIMIT ?`
 	arguments = append(arguments, limit+1)
@@ -278,7 +341,10 @@ func (v *Vault) ListMemories(ctx context.Context, limit int, after *ListCursor) 
 	return memories, hasMore, nil
 }
 
-func (v *Vault) OpenContent(ctx context.Context, id uuid.UUID) (Memory, io.ReadCloser, error) {
+func (v *Vault) OpenContent(
+	ctx context.Context,
+	id uuid.UUID,
+) (Memory, io.ReadCloser, error) {
 	logger := logging.FromContext(ctx)
 	logger.DebugContext(ctx, "Opening Memory Blob", "memory_id", id)
 	memory, err := v.Memory(ctx, id)
@@ -299,7 +365,12 @@ func (v *Vault) OpenContent(ctx context.Context, id uuid.UUID) (Memory, io.ReadC
 }
 
 func (v *Vault) blobPath(digest string) string {
-	return filepath.Join(v.blobDir, digest[:2], digest[2:4], "sha256-"+digest)
+	return filepath.Join(
+		v.blobDir,
+		digest[:firstShardEnd],
+		digest[firstShardEnd:secondShardEnd],
+		"sha256-"+digest,
+	)
 }
 
 const selectMemory = `SELECT id, blob_hash, original_filename, relative_path, full_path,
@@ -312,9 +383,21 @@ func scanMemory(row rowScanner) (Memory, error) {
 	var memory Memory
 	var id, state, importedAt string
 	var relativePath, fullPath, createdAt, modifiedAt, runID, completedAt sql.NullString
-	err := row.Scan(&id, &memory.BlobHash, &memory.OriginalFilename, &relativePath, &fullPath,
-		&createdAt, &modifiedAt, &memory.MediaType, &memory.ByteSize, &importedAt,
-		&state, &runID, &completedAt)
+	err := row.Scan(
+		&id,
+		&memory.BlobHash,
+		&memory.OriginalFilename,
+		&relativePath,
+		&fullPath,
+		&createdAt,
+		&modifiedAt,
+		&memory.MediaType,
+		&memory.ByteSize,
+		&importedAt,
+		&state,
+		&runID,
+		&completedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Memory{}, ErrMemoryNotFound
 	}
@@ -333,10 +416,14 @@ func scanMemory(row rowScanner) (Memory, error) {
 		return Memory{}, fmt.Errorf("read import time: %w", err)
 	}
 	memory.UnderstandingState = State(state)
-	if memory.FilesystemCreated, err = parseNullableTime(createdAt); err != nil {
+	if memory.FilesystemCreated, err = parseNullableTime(
+		createdAt,
+	); err != nil {
 		return Memory{}, err
 	}
-	if memory.FilesystemModified, err = parseNullableTime(modifiedAt); err != nil {
+	if memory.FilesystemModified, err = parseNullableTime(
+		modifiedAt,
+	); err != nil {
 		return Memory{}, err
 	}
 	if runID.Valid {
@@ -346,17 +433,25 @@ func scanMemory(row rowScanner) (Memory, error) {
 		}
 		memory.RunID = &value
 	}
-	if memory.UnderstandingCompleted, err = parseNullableTime(completedAt); err != nil {
+	if memory.UnderstandingCompleted, err = parseNullableTime(
+		completedAt,
+	); err != nil {
 		return Memory{}, err
 	}
 	return memory, nil
 }
 
 func (v *Vault) memoryByHash(ctx context.Context, hash string) (Memory, error) {
-	return scanMemory(v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, hash))
+	return scanMemory(
+		v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, hash),
+	)
 }
 
-func copyWithLimit(destination io.Writer, source io.Reader, limit int64) (int64, error) {
+func copyWithLimit(
+	destination io.Writer,
+	source io.Reader,
+	limit int64,
+) (int64, error) {
 	written, err := io.Copy(destination, io.LimitReader(source, limit))
 	if err != nil {
 		return written, fmt.Errorf("copy Blob: %w", err)
@@ -364,7 +459,7 @@ func copyWithLimit(destination io.Writer, source io.Reader, limit int64) (int64,
 	if written < limit {
 		return written, nil
 	}
-	var extra [1]byte
+	var extra [overflowProbeBytes]byte
 	n, err := source.Read(extra[:])
 	if err != nil && !errors.Is(err, io.EOF) {
 		return written, fmt.Errorf("check Blob size: %w", err)
@@ -381,18 +476,22 @@ func detectMediaType(path string) (string, error) {
 		return "", fmt.Errorf("inspect Blob content: %w", err)
 	}
 	defer content.Close()
-	header := make([]byte, 16)
+	header := make([]byte, mediaHeaderBytes)
 	n, err := io.ReadFull(content, header)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return "", fmt.Errorf("inspect Blob content: %w", err)
 	}
 	header = header[:n]
 	switch {
-	case len(header) >= 5 && string(header[:5]) == "%PDF-":
+	case len(header) >= pdfSignatureBytes &&
+		string(header[:pdfSignatureBytes]) == "%PDF-":
 		return "application/pdf", nil
-	case len(header) >= 3 && header[0] == 0xff && header[1] == 0xd8 && header[2] == 0xff:
+	case len(header) >= jpegSignatureBytes &&
+		header[0] == jpegStartByte && header[1] == jpegMarkerByte &&
+		header[2] == jpegStartByte:
 		return "image/jpeg", nil
-	case len(header) >= 8 && string(header[:8]) == "\x89PNG\r\n\x1a\n":
+	case len(header) >= pngSignatureBytes &&
+		string(header[:pngSignatureBytes]) == "\x89PNG\r\n\x1a\n":
 		return "image/png", nil
 	default:
 		return "", ErrUnsupportedContent
@@ -402,7 +501,7 @@ func detectMediaType(path string) (string, error) {
 func safeFilename(name string) string {
 	name = filepath.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if r < asciiControlLimit || r == asciiDelete {
 			return -1
 		}
 		return r

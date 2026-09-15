@@ -42,10 +42,12 @@ logging:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Server.Address != "[::1]:9090" || c.Server.ShutdownTimeout != 25*time.Second {
+	if c.Server.Address != "[::1]:9090" ||
+		c.Server.ShutdownTimeout != 25*time.Second {
 		t.Fatalf("server config = %#v", c.Server)
 	}
-	if c.Storage.DatabasePath != filepath.Join("vault", "memoryd.sqlite") || c.Storage.BlobDir != filepath.Join("vault", "blobs") {
+	if c.Storage.DatabasePath != filepath.Join("vault", "memoryd.sqlite") ||
+		c.Storage.BlobDir != filepath.Join("vault", "blobs") {
 		t.Fatalf("derived storage paths = %#v", c.Storage)
 	}
 	if c.Logging != (LoggingConfig{Level: "DEBUG"}) {
@@ -55,7 +57,11 @@ logging:
 
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memoryd.yaml")
-	if err := os.WriteFile(path, []byte("server:\n  address: 127.0.0.1:8080\n  typo: true\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("server:\n  address: 127.0.0.1:8080\n  typo: true\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)
@@ -74,14 +80,19 @@ func TestLoadMissingFileIsExplicit(t *testing.T) {
 func TestValidateRejectsNonLoopbackAddress(t *testing.T) {
 	c := Defaults()
 	c.Server.Address = "0.0.0.0:8080"
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "loopback") {
+	if err := c.Validate(); err == nil ||
+		!strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("non-loopback validation error = %v", err)
 	}
 }
 
 func TestLoadRejectsInvalidDuration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memoryd.yaml")
-	if err := os.WriteFile(path, []byte("server:\n  shutdown_timeout: soon\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("server:\n  shutdown_timeout: soon\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)

@@ -24,7 +24,11 @@ import (
 // The specification is validated and converted to JSON when the routes are
 // registered. The input bytes are copied, so callers may safely reuse or
 // mutate their input after this function returns.
-func RegisterDocumentationEndpoint(e *echo.Echo, urlPrefix string, yamlSpec []byte) error {
+func RegisterDocumentationEndpoint(
+	e *echo.Echo,
+	urlPrefix string,
+	yamlSpec []byte,
+) error {
 	if e == nil {
 		return errors.New("apidoc: nil Echo router")
 	}
@@ -55,7 +59,11 @@ func RegisterDocumentationEndpoint(e *echo.Echo, urlPrefix string, yamlSpec []by
 	// Keep the conventional .yml spelling as a harmless compatibility alias.
 	e.GET(openAPIYMLPath, yamlHandler)
 	e.GET(openAPIJSONPath, func(c echo.Context) error {
-		return c.Blob(http.StatusOK, "application/json; charset=utf-8", jsonSpec)
+		return c.Blob(
+			http.StatusOK,
+			"application/json; charset=utf-8",
+			jsonSpec,
+		)
 	})
 	e.GET(docsPath, func(c echo.Context) error {
 		return c.Redirect(http.StatusPermanentRedirect, docsBasePath)
@@ -77,18 +85,28 @@ func normalizePrefix(prefix string) (string, error) {
 		return "", nil
 	}
 	if !strings.HasPrefix(prefix, "/") {
-		return "", fmt.Errorf("apidoc: URL prefix %q must start with '/'", prefix)
+		return "", fmt.Errorf(
+			"apidoc: URL prefix %q must start with '/'",
+			prefix,
+		)
 	}
 	prefix = strings.TrimRight(prefix, "/")
 	if prefix == "" {
 		return "", nil
 	}
 	if strings.ContainsAny(prefix, "?#") {
-		return "", fmt.Errorf("apidoc: URL prefix %q must not contain a query or fragment", prefix)
+		return "", fmt.Errorf(
+			"apidoc: URL prefix %q must not contain a query or fragment",
+			prefix,
+		)
 	}
 	for _, segment := range strings.Split(strings.TrimPrefix(prefix, "/"), "/") {
-		if segment == "." || segment == ".." || strings.ContainsAny(segment, "{}") {
-			return "", fmt.Errorf("apidoc: URL prefix %q contains an invalid path segment", prefix)
+		if segment == "." || segment == ".." ||
+			strings.ContainsAny(segment, "{}") {
+			return "", fmt.Errorf(
+				"apidoc: URL prefix %q contains an invalid path segment",
+				prefix,
+			)
 		}
 	}
 	return prefix, nil
@@ -102,7 +120,10 @@ func prepareSpec(spec []byte, prefix string) ([]byte, string, error) {
 
 	var document map[string]any
 	if err := json.Unmarshal(jsonSpec, &document); err != nil {
-		return nil, "", fmt.Errorf("apidoc: OpenAPI document must be an object: %w", err)
+		return nil, "", fmt.Errorf(
+			"apidoc: OpenAPI document must be an object: %w",
+			err,
+		)
 	}
 	if document == nil {
 		return nil, "", errors.New("apidoc: OpenAPI document must be an object")
@@ -110,7 +131,8 @@ func prepareSpec(spec []byte, prefix string) ([]byte, string, error) {
 
 	title := prefix
 	if info, ok := document["info"].(map[string]any); ok {
-		if value, ok := info["title"].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := info["title"].(string); ok &&
+			strings.TrimSpace(value) != "" {
 			title = value
 		}
 	}
@@ -122,7 +144,10 @@ func prepareSpec(spec []byte, prefix string) ([]byte, string, error) {
 	// into the UI page as text.
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, jsonSpec); err != nil {
-		return nil, "", fmt.Errorf("apidoc: invalid converted OpenAPI JSON: %w", err)
+		return nil, "", fmt.Errorf(
+			"apidoc: invalid converted OpenAPI JSON: %w",
+			err,
+		)
 	}
 	return compact.Bytes(), title, nil
 }

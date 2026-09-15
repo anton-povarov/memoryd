@@ -23,7 +23,11 @@ type Server struct {
 	logger *slog.Logger
 }
 
-func New(cfg config.Config, logger *slog.Logger, handler api.StrictServerInterface) (*Server, error) {
+func New(
+	cfg config.Config,
+	logger *slog.Logger,
+	handler api.StrictServerInterface,
+) (*Server, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -41,10 +45,18 @@ func New(cfg config.Config, logger *slog.Logger, handler api.StrictServerInterfa
 	if err != nil {
 		return nil, err
 	}
-	if err := apidoc.RegisterDocumentationEndpoint(e, "", openAPIYAML); err != nil {
+	if err := apidoc.RegisterDocumentationEndpoint(
+		e,
+		"",
+		openAPIYAML,
+	); err != nil {
 		return nil, err
 	}
-	api.RegisterHandlersWithBaseURL(e, api.NewStrictHandler(handler, nil), api.ServerUrlLocalMemorydServer)
+	api.RegisterHandlersWithBaseURL(
+		e,
+		api.NewStrictHandler(handler, nil),
+		api.ServerUrlLocalMemorydServer,
+	)
 
 	return &Server{config: cfg.Server, echo: e, logger: logger}, nil
 }
@@ -74,8 +86,15 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	s.logger.Info("HTTP server shutting down", "timeout", s.config.ShutdownTimeout)
-	shutdownContext, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
+	s.logger.Info(
+		"HTTP server shutting down",
+		"timeout",
+		s.config.ShutdownTimeout,
+	)
+	shutdownContext, cancel := context.WithTimeout(
+		context.Background(),
+		s.config.ShutdownTimeout,
+	)
 	defer cancel()
 	if err := s.echo.Shutdown(shutdownContext); err != nil {
 		return err
@@ -120,7 +139,11 @@ func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
 			if values.Error != nil {
 				attrs = append(attrs, slog.Any("error", values.Error))
 			}
-			logger.LogAttrs(context.Background(), level, "HTTP request", attrs...)
+			logger.LogAttrs(
+				context.Background(),
+				level,
+				"HTTP request",
+				attrs...)
 			return nil
 		},
 	})
@@ -134,7 +157,11 @@ func requestLogContext(logger *slog.Logger) echo.MiddlewareFunc {
 			// client-supplied ID, it does not copy them into the request header.
 			requestID := c.Response().Header().Get(echo.HeaderXRequestID)
 			requestLogger := logger.With("request_id", requestID)
-			c.SetRequest(request.WithContext(logging.WithLogger(request.Context(), requestLogger)))
+			c.SetRequest(
+				request.WithContext(
+					logging.WithLogger(request.Context(), requestLogger),
+				),
+			)
 			return next(c)
 		}
 	}

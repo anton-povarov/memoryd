@@ -2,12 +2,18 @@ This is a Personal Memory Vault project. Store content and medatata, understand 
 
 Stage: MVP design, see `docs/MVP.md`.
 
+## Go coding standard
+
+See `GO_CODING_STANDARD.md`.
+
 ## Structure
 
 ```
 CONTEXT.md                - shared vocabulary
+api/                      - HTTP API contract as OpenAPI YAML
 docs/                     - documentation, ADRs, research, and design notes
-server/                   - main server code
+cli/                      - CLI for memoryd (Go)
+server/                   - main server code (Go)
   api/                    - HTTP API contract
   memoryd.example.yaml    - example server config
 ```

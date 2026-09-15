@@ -18,10 +18,12 @@ import (
 
 var version = "dev"
 
+const exitFailure = 1
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "memoryd:", err)
-		os.Exit(1)
+		os.Exit(exitFailure)
 	}
 }
 
@@ -44,11 +46,15 @@ func run() error {
 	}
 	slog.SetDefault(logger)
 
-	memoryVault, err := vault.Open(context.Background(), cfg.Storage.DatabasePath, cfg.Storage.BlobDir)
+	memoryVault, err := vault.Open(
+		context.Background(),
+		cfg.Storage.DatabasePath,
+		cfg.Storage.BlobDir,
+	)
 	if err != nil {
 		return err
 	}
-	defer memoryVault.Close()
+	defer memoryVault.Close() // nolint:errcheck
 
 	httpHandler := httpapi.NewHandler(version, cfg.Storage.DataDir, memoryVault)
 	httpServer, err := server.New(cfg, logger, httpHandler)

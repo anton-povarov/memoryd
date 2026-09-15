@@ -23,6 +23,14 @@ import (
 
 const DefaultServerURL = "http://127.0.0.1:8080"
 
+const (
+	initialEventBufferBytes = 4096
+	maxEventBufferBytes     = 1 << 20
+	maxPageSize             = 100
+	asciiControlLimit       = 0x20
+	asciiDelete             = 0x7f
+)
+
 func ServerURL(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -59,7 +67,9 @@ func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) 
 		_ = bodyReader.Close()
 		return fmt.Errorf("create memoryd client: %w", err)
 	}
-	response, requestErr := client.ImportMemoryWithBody(ctx, multipartWriter.FormDataContentType(), bodyReader)
+	response, requestErr := client.ImportMemoryWithBody(
+		ctx, multipartWriter.FormDataContentType(), bodyReader,
+	)
 	uploadErr := <-uploadErrors
 	if requestErr != nil {
 		return fmt.Errorf("import Memory: %w", requestErr)
@@ -77,7 +87,11 @@ func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) 
 		if parsed.JSON409 == nil || parsed.JSON409.ExistingMemory == nil {
 			return fmt.Errorf("duplicate response did not identify the existing Memory")
 		}
-		fmt.Fprintf(stderr, "duplicate: using existing Memory %s\n", parsed.JSON409.ExistingMemory.Id)
+		fmt.Fprintf(
+			stderr,
+			"duplicate: using existing Memory %s\n",
+			parsed.JSON409.ExistingMemory.Id,
+		)
 		_, err = fmt.Fprintln(stdout, parsed.JSON409.ExistingMemory.Id)
 		return err
 	}
@@ -98,7 +112,12 @@ func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) 
 	return err
 }
 
-func writeMultipart(pipe *io.PipeWriter, writer *multipart.Writer, absolutePath string, info os.FileInfo) (err error) {
+func writeMultipart(
+	pipe *io.PipeWriter,
+	writer *multipart.Writer,
+	absolutePath string,
+	info os.FileInfo,
+) (err error) {
 	defer func() {
 		if closeErr := writer.Close(); err == nil {
 			err = closeErr
@@ -108,7 +127,10 @@ func writeMultipart(pipe *io.PipeWriter, writer *multipart.Writer, absolutePath 
 	if err := writer.WriteField("full_path", absolutePath); err != nil {
 		return fmt.Errorf("write full path metadata: %w", err)
 	}
-	if err := writer.WriteField("filesystem_modified_at", info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")); err != nil {
+	if err := writer.WriteField(
+		"filesystem_modified_at",
+		info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+	); err != nil {
 		return fmt.Errorf("write modification metadata: %w", err)
 	}
 	part, err := writer.CreateFormFile("file", filepath.Base(absolutePath))
@@ -128,7 +150,7 @@ func writeMultipart(pipe *io.PipeWriter, writer *multipart.Writer, absolutePath 
 
 func decodeImportEvents(reader io.Reader, progress io.Writer) (uuid.UUID, error) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
+	scanner.Buffer(make([]byte, initialEventBufferBytes), maxEventBufferBytes)
 	var eventName string
 	var data []byte
 	dispatch := func() (uuid.UUID, bool, error) {
@@ -207,7 +229,14 @@ func responseError(response *api.ImportMemoryResponse) error {
 	return fmt.Errorf("import failed with HTTP %s", response.Status())
 }
 
-func Get(ctx context.Context, serverURL string, memoryID uuid.UUID, output string, force bool, stdout, stderr io.Writer) error {
+func Get(
+	ctx context.Context,
+	serverURL string,
+	memoryID uuid.UUID,
+	output string,
+	force bool,
+	stdout, stderr io.Writer,
+) error {
 	fmt.Fprintf(stderr, "downloading Memory %s\n", memoryID)
 	client, err := api.NewClient(apiBaseURL(serverURL))
 	if err != nil {
@@ -238,7 +267,10 @@ func Get(ctx context.Context, serverURL string, memoryID uuid.UUID, output strin
 		return err
 	}
 	if output == "" {
-		output = filenameFromDisposition(response.Header.Get("Content-Disposition"), memoryID.String())
+		output = filenameFromDisposition(
+			response.Header.Get("Content-Disposition"),
+			memoryID.String(),
+		)
 	}
 	fmt.Fprintf(stderr, "saving Blob to %s\n", output)
 	if !force {
@@ -299,7 +331,13 @@ func Info(ctx context.Context, serverURL string, memoryID uuid.UUID, stdout io.W
 	return err
 }
 
-func List(ctx context.Context, serverURL string, count int, all, short bool, stdout io.Writer) error {
+func List(
+	ctx context.Context,
+	serverURL string,
+	count int,
+	all, short bool,
+	stdout io.Writer,
+) error {
 	client, err := api.NewClient(apiBaseURL(serverURL))
 	if err != nil {
 		return fmt.Errorf("create memoryd client: %w", err)
@@ -307,12 +345,15 @@ func List(ctx context.Context, serverURL string, count int, all, short bool, std
 	items := make([]api.MemorySummary, 0)
 	var cursor *api.Cursor
 	for {
-		pageSize := 100
+		pageSize := maxPageSize
 		if !all && count-len(items) < pageSize {
 			pageSize = count - len(items)
 		}
 		limit := api.Limit(pageSize)
-		response, err := client.BrowseMemories(ctx, &api.BrowseMemoriesParams{Limit: &limit, Cursor: cursor})
+		response, err := client.BrowseMemories(ctx, &api.BrowseMemoriesParams{
+			Limit:  &limit,
+			Cursor: cursor,
+		})
 		if err != nil {
 			return fmt.Errorf("list Memories: %w", err)
 		}
@@ -362,7 +403,7 @@ func filenameFromDisposition(disposition, fallback string) string {
 func safeFilename(name string) string {
 	name = filepath.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if r < asciiControlLimit || r == asciiDelete {
 			return -1
 		}
 		return r

@@ -15,12 +15,15 @@ import (
 
 func TestRequestLogContextPropagatesGeneratedRequestID(t *testing.T) {
 	var output bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{
+		AddSource: false, Level: slog.LevelDebug, ReplaceAttr: nil,
+	}))
 	e := echo.New()
 	e.Use(middleware.RequestID())
 	e.Use(requestLogContext(logger))
 	e.GET("/", func(c echo.Context) error {
-		logging.FromContext(c.Request().Context()).DebugContext(c.Request().Context(), "inside request")
+		logging.FromContext(c.Request().Context()).
+			DebugContext(c.Request().Context(), "inside request")
 		return c.NoContent(http.StatusNoContent)
 	})
 
