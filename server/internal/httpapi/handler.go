@@ -155,7 +155,7 @@ func (h *Handler) GetMemoryContent(
 		return nil, err
 	}
 	disposition := mime.FormatMediaType("attachment", map[string]string{
-		"filename": memory.OriginalFilename,
+		"filename": memory.ImportContext.OriginalFilename,
 	})
 	etag := fmt.Sprintf("%q", memory.BlobRef.String())
 	logger.InfoContext(ctx, "Memory content download prepared",
@@ -188,11 +188,9 @@ func (h *Handler) ImportMemory(
 			"reason",
 			"missing multipart body",
 		)
-		return badImport(
-			"invalid_multipart",
-			"multipart request body is required",
-		), nil
+		return badImport("invalid_multipart", "multipart request body is required"), nil
 	}
+
 	form, err := request.Body.ReadForm(multipartFormMemoryBytes)
 	if err != nil {
 		logger.InfoContext(
@@ -203,16 +201,14 @@ func (h *Handler) ImportMemory(
 			"error",
 			err,
 		)
-		return badImport(
-			"invalid_multipart",
-			"could not parse multipart request",
-		), nil
+		return badImport("invalid_multipart", "could not parse multipart request"), nil
 	}
 	defer func() {
 		if err := form.RemoveAll(); err != nil {
 			logger.WarnContext(ctx, "Could not remove multipart files", "error", err)
 		}
 	}()
+
 	files := form.File["file"]
 	if len(files) != 1 {
 		logger.InfoContext(
@@ -221,34 +217,62 @@ func (h *Handler) ImportMemory(
 		)
 		return badImport("invalid_file", "exactly one Blob is required"), nil
 	}
-	content, err := files[0].Open()
+
+	formFile := files[0]
+	if strings.TrimSpace(formFile.Filename) == "" {
+		return badImport("invalid_file", "file part filename is required"), nil
+	}
+
+	// imported file content
+	content, err := formFile.Open()
 	if err != nil {
 		return importInternalError(ctx, err), nil
 	}
-	defer content.Close() // nolint:errcheck
+	defer func() { _ = content.Close() }()
+
+	// import_context from the client
+	contextValues := form.Value["import_context"]
+	if len(contextValues) > 1 {
+		return badImport(
+			"invalid_import_context",
+			"at most one import_context JSON part is allowed",
+		), nil
+	}
+	var input vault.ImportContextInput
+	if len(contextValues) == 1 {
+		decoder := json.NewDecoder(strings.NewReader(contextValues[0]))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			return badImport("invalid_import_context", "invalid import_context JSON"), nil
+		}
+	}
+	input.OriginalFilename = formFile.Filename
+	importContext, err := vault.ParseImportContext(input)
+	if err != nil {
+		return badImport("invalid_import_context", err.Error()), nil
+	}
+
+	// import the file and see what happens
 	candidate := vault.Import{
-		Content:            content,
-		DeclaredMediaType:  files[0].Header.Get("Content-Type"),
-		OriginalFilename:   files[0].Filename,
-		RelativePath:       formValue(form.Value, "relative_path"),
-		FullPath:           formValue(form.Value, "full_path"),
-		FilesystemCreated:  formTime(form.Value, "filesystem_created_at"),
-		FilesystemModified: formTime(form.Value, "filesystem_modified_at"),
+		Content:           content,
+		DeclaredMediaType: formFile.Header.Get("Content-Type"),
+		Context:           importContext,
 	}
 	memory, err := h.vault.Put(ctx, candidate)
+
 	var duplicate *vault.DuplicateError
 	switch {
 	case errors.As(err, &duplicate):
 		existing := api.DuplicateMemory{
 			Id: duplicate.Existing.ID,
-			UnderstandingState: api.UnderstandingState(
-				duplicate.Existing.UnderstandingState,
-			),
 		}
 		return api.ImportMemory409JSONResponse{
-			Code: "duplicate_memory", Details: nil,
-			Message: err.Error(), ExistingMemory: &existing,
+			Code:           "duplicate_memory",
+			Details:        nil,
+			Message:        err.Error(),
+			ExistingMemory: &existing,
 		}, nil
+
 	case errors.Is(err, vault.ErrBlobTooLarge):
 		logger.InfoContext(
 			ctx,
@@ -260,6 +284,7 @@ func (h *Handler) ImportMemory(
 			Code: "blob_too_large", Details: nil,
 			ExistingMemory: nil, Message: err.Error(),
 		}, nil
+
 	case errors.Is(err, vault.ErrInvalidMediaType):
 		logger.InfoContext(
 			ctx,
@@ -270,9 +295,11 @@ func (h *Handler) ImportMemory(
 			Code: "invalid_media_type", Details: nil,
 			ExistingMemory: nil, Message: err.Error(),
 		}, nil
+
 	case err != nil:
 		return importInternalError(ctx, err), nil
 	}
+
 	message := "Deterministic stub understanding completed"
 	percent := completedPercent
 	stream, err := eventStream(
@@ -433,12 +460,12 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 		BlobHash:           memory.BlobRef.String(),
 		MediaType:          memory.MediaType,
 		ByteSize:           memory.ByteSize,
-		OriginalFilename:   memory.OriginalFilename,
+		OriginalFilename:   memory.ImportContext.OriginalFilename,
 		UnderstandingState: api.UnderstandingState(memory.UnderstandingState),
 		ActiveRunId:        memory.RunID,
 		ImportedAt:         memory.ImportedAt,
-		OriginalCreatedAt:  memory.FilesystemCreated,
-		OriginalModifiedAt: memory.FilesystemModified,
+		OriginalCreatedAt:  memory.ImportContext.FilesystemCreated,
+		OriginalModifiedAt: memory.ImportContext.FilesystemModified,
 	}
 }
 
@@ -451,28 +478,41 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	context := api.ImportContext{
 		ByteSize:             &byteSize,
 		ContentHash:          &contentHash,
-		FilesystemCreatedAt:  memory.FilesystemCreated,
-		FilesystemModifiedAt: memory.FilesystemModified,
+		FilesystemCreatedAt:  memory.ImportContext.FilesystemCreated,
+		FilesystemModifiedAt: memory.ImportContext.FilesystemModified,
 		FullPath:             nil,
 		MediaType:            &mediaType,
-		OriginalFilename:     memory.OriginalFilename,
+		OriginalFilename:     memory.ImportContext.OriginalFilename,
 		RelativePath:         nil,
 	}
-	if memory.RelativePath != "" {
-		context.RelativePath = &memory.RelativePath
+	if memory.ImportContext.RelativePath != "" {
+		context.RelativePath = &memory.ImportContext.RelativePath
 	}
-	if memory.FullPath != "" {
-		context.FullPath = &memory.FullPath
+	if memory.ImportContext.FullPath != "" {
+		context.FullPath = &memory.ImportContext.FullPath
+	}
+	importFacts := memory.ImportContext.Facts()
+	facts := make([]api.Fact, 0, 1+len(importFacts))
+	facts = append(facts, api.Fact{
+		Confidence: nil, Namespace: "memoryd", Name: "stub",
+		Value: true, ValueType: api.Boolean, Origin: "memoryd-stub",
+	})
+	for _, fact := range importFacts {
+		facts = append(facts, api.Fact{
+			Confidence: nil,
+			Namespace:  fact.Namespace,
+			Name:       fact.Name,
+			Value:      fact.Value,
+			ValueType:  api.FactValueType(fact.ValueType),
+			Origin:     fact.Origin,
+		})
 	}
 	detail := api.MemoryDetail{
 		ActiveRun:     nil,
 		Memory:        memorySummary(memory),
 		ContentUrl:    &contentURL,
 		ImportContext: context,
-		Facts: []api.Fact{{
-			Confidence: nil, Namespace: "memoryd", Name: "stub",
-			Value: true, ValueType: api.Boolean, Origin: "memoryd-stub",
-		}},
+		Facts:         facts,
 		DerivedContent: []api.DerivedContent{{
 			Kind: "stub", Metadata: nil, Text: &text,
 		}},
@@ -513,25 +553,6 @@ func badImport(code, message string) api.ImportMemoryResponseObject {
 	return api.ImportMemory400JSONResponse{
 		Code: code, Details: nil, ExistingMemory: nil, Message: message,
 	}
-}
-
-func formValue(values map[string][]string, name string) string {
-	if items := values[name]; len(items) != 0 {
-		return items[0]
-	}
-	return ""
-}
-
-func formTime(values map[string][]string, name string) *time.Time {
-	value := formValue(values, name)
-	if value == "" {
-		return nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return nil
-	}
-	return &parsed
 }
 
 type browseCursor struct {

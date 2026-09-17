@@ -339,7 +339,8 @@ type ImportCompletedEvent struct {
 // ImportCompletedEventEvent defines model for ImportCompletedEvent.Event.
 type ImportCompletedEventEvent string
 
-// ImportContext defines model for ImportContext.
+// ImportContext Stored provenance from the first successful import. Available values
+// also appear as Facts in the import namespace with origin import-client.
 type ImportContext struct {
 	ByteSize             *int64     `json:"byte_size,omitempty"`
 	ContentHash          *string    `json:"content_hash,omitempty"`
@@ -351,6 +352,20 @@ type ImportContext struct {
 	RelativePath         *string    `json:"relative_path,omitempty"`
 }
 
+// ImportContextInput Optional client-observed provenance sent as one application/json multipart
+// part. The original filename comes from the file part. Omitted values
+// remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+type ImportContextInput struct {
+	FilesystemCreatedAt  *time.Time `json:"filesystem_created_at,omitempty"`
+	FilesystemModifiedAt *time.Time `json:"filesystem_modified_at,omitempty"`
+
+	// FullPath Original full path when the importing client can provide it.
+	FullPath *string `json:"full_path,omitempty"`
+
+	// RelativePath Browser-provided path relative to the selected directory.
+	RelativePath *string `json:"relative_path,omitempty"`
+}
+
 // ImportEvent One JSON payload carried by an SSE event.
 type ImportEvent struct {
 	union json.RawMessage
@@ -358,17 +373,15 @@ type ImportEvent struct {
 
 // ImportMultipart defines model for ImportMultipart.
 type ImportMultipart struct {
-	// File One Blob. The server detects its Media Type from content first.
-	// For inconclusive detection, the part's Content-Type is used if valid.
-	File                 openapi_types.File `json:"file"`
-	FilesystemCreatedAt  *time.Time         `json:"filesystem_created_at,omitempty"`
-	FilesystemModifiedAt *time.Time         `json:"filesystem_modified_at,omitempty"`
+	// File One Blob with a nonblank filename in Content-Disposition. The server
+	// detects its Media Type from content first. For inconclusive detection,
+	// the part's Content-Type is used if valid.
+	File openapi_types.File `json:"file"`
 
-	// FullPath Original full path when the importing client can provide it.
-	FullPath *string `json:"full_path,omitempty"`
-
-	// RelativePath Browser-provided path relative to the selected directory.
-	RelativePath *string `json:"relative_path,omitempty"`
+	// ImportContext Optional client-observed provenance sent as one application/json multipart
+	// part. The original filename comes from the file part. Omitted values
+	// remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+	ImportContext *ImportContextInput `json:"import_context,omitempty"`
 }
 
 // MemoryDetail defines model for MemoryDetail.
@@ -379,8 +392,11 @@ type MemoryDetail struct {
 	ContentUrl     *string          `json:"content_url,omitempty"`
 	DerivedContent []DerivedContent `json:"derived_content"`
 	Facts          []Fact           `json:"facts"`
-	ImportContext  ImportContext    `json:"import_context"`
-	Memory         MemorySummary    `json:"memory"`
+
+	// ImportContext Stored provenance from the first successful import. Available values
+	// also appear as Facts in the import namespace with origin import-client.
+	ImportContext ImportContext `json:"import_context"`
+	Memory        MemorySummary `json:"memory"`
 }
 
 // MemoryPage defines model for MemoryPage.

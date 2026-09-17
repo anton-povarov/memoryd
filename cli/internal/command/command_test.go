@@ -42,15 +42,23 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		}
 		defer file.Close()
 		got, _ := io.ReadAll(file)
+		var importContext struct {
+			FullPath             string `json:"full_path"`
+			FilesystemModifiedAt string `json:"filesystem_modified_at"`
+		}
+		if err := json.Unmarshal(
+			[]byte(r.FormValue("import_context")),
+			&importContext,
+		); err != nil {
+			t.Error(err)
+		}
 		if header.Filename != "upload.pdf" || !bytes.Equal(got, want) ||
 			header.Header.Get("Content-Type") != "application/pdf" ||
-			!filepath.IsAbs(
-				r.FormValue("full_path"),
-			) || r.FormValue("filesystem_modified_at") == "" {
+			!filepath.IsAbs(importContext.FullPath) || importContext.FilesystemModifiedAt == "" {
 			t.Errorf(
 				"multipart filename=%q bytes=%q full_path=%q modified=%q",
-				header.Filename, got, r.FormValue("full_path"),
-				r.FormValue("filesystem_modified_at"),
+				header.Filename, got, importContext.FullPath,
+				importContext.FilesystemModifiedAt,
 			)
 		}
 		if requests.Add(1) == 1 {

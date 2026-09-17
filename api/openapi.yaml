@@ -464,8 +464,20 @@ components:
           format: binary
           maxLength: 104857600
           description: |
-            One Blob. The server detects its Media Type from content first.
-            For inconclusive detection, the part's Content-Type is used if valid.
+            One Blob with a nonblank filename in Content-Disposition. The server
+            detects its Media Type from content first. For inconclusive detection,
+            the part's Content-Type is used if valid.
+        import_context:
+          $ref: "#/components/schemas/ImportContextInput"
+
+    ImportContextInput:
+      type: object
+      description: |
+        Optional client-observed provenance sent as one application/json multipart
+        part. The original filename comes from the file part. Omitted values
+        remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+      additionalProperties: false
+      properties:
         relative_path:
           type: string
           description: Browser-provided path relative to the selected directory.
@@ -649,6 +661,9 @@ components:
     ImportContext:
       type: object
       required: [original_filename]
+      description: |
+        Stored provenance from the first successful import. Available values
+        also appear as Facts in the import namespace with origin import-client.
       properties:
         original_filename:
           type: string

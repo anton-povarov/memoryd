@@ -60,6 +60,18 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 	return s.Handler()
 }
 
+func writeImportContextPart(writer *multipart.Writer, value string) error {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="import_context"`)
+	header.Set("Content-Type", "application/json")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(part, value)
+	return err
+}
+
 func TestImportReturnsServerErrorDetails(t *testing.T) {
 	root := t.TempDir()
 	handler := newTestServerAt(t, root)
@@ -92,6 +104,83 @@ func TestImportReturnsServerErrorDetails(t *testing.T) {
 	if problem.Code != "import_failed" ||
 		!strings.Contains(problem.Message, "create temporary Blob") {
 		t.Fatalf("import error = %#v", problem)
+	}
+}
+
+func TestImportRejectsMalformedContextTimestamp(t *testing.T) {
+	handler := newTestServer(t)
+	for _, field := range []string{"filesystem_created_at", "filesystem_modified_at"} {
+		t.Run(field, func(t *testing.T) {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			part, err := writer.CreateFormFile("file", "memory.pdf")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := part.Write([]byte("%PDF-1.7\ncontent\n%%EOF\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeImportContextPart(
+				writer,
+				fmt.Sprintf(`{%q:"not-a-time"}`, field),
+			); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v0/memories/import", &body)
+			request.Header.Set("Content-Type", writer.FormDataContentType())
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var problem api.Error
+			if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if problem.Code != "invalid_import_context" ||
+				!strings.Contains(problem.Message, field) {
+				t.Fatalf("import error = %#v", problem)
+			}
+		})
+	}
+}
+
+func TestImportRequiresFilePartFilename(t *testing.T) {
+	handler := newTestServer(t)
+	for _, test := range []struct {
+		name        string
+		disposition string
+	}{
+		{name: "missing", disposition: `form-data; name="file"`},
+		{name: "blank", disposition: `form-data; name="file"; filename="  "`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			header := make(textproto.MIMEHeader)
+			header.Set("Content-Disposition", test.disposition)
+			part, err := writer.CreatePart(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := part.Write([]byte("%PDF-1.7\ncontent\n%%EOF\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v0/memories/import", &body)
+			request.Header.Set("Content-Type", writer.FormDataContentType())
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest ||
+				!strings.Contains(response.Body.String(), "invalid_file") {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 
@@ -271,8 +360,14 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 	if _, err := part.Write(want); err != nil {
 		t.Fatal(err)
 	}
-	_ = writer.WriteField("full_path", "/original/example.pdf")
-	_ = writer.WriteField("filesystem_modified_at", "2026-09-15T10:11:12Z")
+	if err := writeImportContextPart(
+		writer,
+		`{"full_path":"/original/example.pdf",`+
+			`"relative_path":"folder/example.pdf",`+
+			`"filesystem_modified_at":"2026-09-15T10:11:12Z"}`,
+	); err != nil {
+		t.Fatal(err)
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +405,7 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 		MatchString(recorder.Body.String()) {
 		t.Fatalf("completion event has no canonical Blobref: %s", recorder.Body.String())
 	}
+	assertImportContextDetail(t, handler, match[1])
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(
 		recorder,
@@ -354,6 +450,50 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 		len(want),
 	) {
 		t.Fatalf("Content-Length = %q", got)
+	}
+}
+
+func assertImportContextDetail(t *testing.T, handler http.Handler, memoryID string) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/api/v0/memories/"+memoryID, nil),
+	)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("detail status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var detail api.MemoryDetail
+	if err := json.Unmarshal(recorder.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ImportContext.OriginalFilename != "example.pdf" ||
+		detail.ImportContext.FullPath == nil ||
+		*detail.ImportContext.FullPath != "/original/example.pdf" ||
+		detail.ImportContext.RelativePath == nil ||
+		*detail.ImportContext.RelativePath != "folder/example.pdf" ||
+		detail.ImportContext.FilesystemCreatedAt != nil ||
+		detail.ImportContext.FilesystemModifiedAt == nil {
+		t.Fatalf("Import Context = %#v", detail.ImportContext)
+	}
+	wantFacts := map[string]string{
+		"original_filename":      "example.pdf",
+		"relative_path":          "folder/example.pdf",
+		"full_path":              "/original/example.pdf",
+		"filesystem_modified_at": "2026-09-15T10:11:12Z",
+	}
+	for _, fact := range detail.Facts {
+		if fact.Namespace != "import" {
+			continue
+		}
+		want, ok := wantFacts[fact.Name]
+		if !ok || fact.Value != want || fact.Origin != "import-client" {
+			t.Fatalf("unexpected import Fact = %#v", fact)
+		}
+		delete(wantFacts, fact.Name)
+	}
+	if len(wantFacts) != 0 {
+		t.Fatalf("missing import Facts = %#v", wantFacts)
 	}
 }
 

@@ -125,16 +125,27 @@ func writeMultipart(
 		}
 		_ = pipe.CloseWithError(err)
 	}()
-	if err := writer.WriteField("full_path", absolutePath); err != nil {
-		return fmt.Errorf("write full path metadata: %w", err)
-	}
-	if err := writer.WriteField(
-		"filesystem_modified_at",
-		info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
-	); err != nil {
-		return fmt.Errorf("write modification metadata: %w", err)
-	}
 	filename := filepath.Base(absolutePath)
+	contextJSON, err := json.Marshal(struct {
+		FullPath             string `json:"full_path"`
+		FilesystemModifiedAt string `json:"filesystem_modified_at"`
+	}{
+		FullPath:             absolutePath,
+		FilesystemModifiedAt: info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+	})
+	if err != nil {
+		return fmt.Errorf("encode Import Context: %w", err)
+	}
+	contextHeader := make(textproto.MIMEHeader)
+	contextHeader.Set("Content-Disposition", `form-data; name="import_context"`)
+	contextHeader.Set("Content-Type", "application/json")
+	contextPart, err := writer.CreatePart(contextHeader)
+	if err != nil {
+		return fmt.Errorf("create Import Context part: %w", err)
+	}
+	if _, err := contextPart.Write(contextJSON); err != nil {
+		return fmt.Errorf("write Import Context: %w", err)
+	}
 	contentType := mime.TypeByExtension(filepath.Ext(filename))
 	switch strings.ToLower(filepath.Ext(filename)) {
 	case ".md", ".markdown":

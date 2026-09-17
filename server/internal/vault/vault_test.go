@@ -127,13 +127,15 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := v.Put(ctx, Import{
-		Content:            bytes.NewReader(wantBytes),
-		DeclaredMediaType:  "",
-		OriginalFilename:   "notes.pdf",
-		RelativePath:       "",
-		FullPath:           "/original/notes.pdf",
-		FilesystemCreated:  nil,
-		FilesystemModified: &modifiedAt,
+		Content:           bytes.NewReader(wantBytes),
+		DeclaredMediaType: "",
+		Context: ImportContext{
+			OriginalFilename:   "notes.pdf",
+			RelativePath:       "",
+			FullPath:           "/original/notes.pdf",
+			FilesystemCreated:  nil,
+			FilesystemModified: &modifiedAt,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -209,18 +211,29 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 		t.Fatalf("content = %q, want %q", gotBytes, wantBytes)
 	}
 	if opened.ID != created.ID || opened.BlobRef != created.BlobRef ||
-		opened.OriginalFilename != "notes.pdf" {
+		opened.ImportContext.OriginalFilename != "notes.pdf" {
 		t.Fatalf("reopened Memory = %#v, created = %#v", opened, created)
+	}
+	if opened.ImportContext.FullPath != "/original/notes.pdf" ||
+		opened.ImportContext.FilesystemCreated != nil ||
+		opened.ImportContext.FilesystemModified == nil ||
+		!opened.ImportContext.FilesystemModified.Equal(modifiedAt) {
+		t.Fatalf("reopened Import Context = %#v", opened.ImportContext)
+	}
+	if facts := opened.ImportContext.Facts(); len(facts) != 3 {
+		t.Fatalf("reopened provenance Facts = %#v", facts)
 	}
 
 	_, err = v.Put(ctx, Import{
-		Content:            bytes.NewReader(wantBytes),
-		DeclaredMediaType:  "",
-		OriginalFilename:   "renamed.pdf",
-		RelativePath:       "",
-		FullPath:           "",
-		FilesystemCreated:  nil,
-		FilesystemModified: nil,
+		Content:           bytes.NewReader(wantBytes),
+		DeclaredMediaType: "",
+		Context: ImportContext{
+			OriginalFilename:   "renamed.pdf",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
 	})
 	var duplicate *DuplicateError
 	if !errors.As(err, &duplicate) {
@@ -232,6 +245,9 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 			duplicate.Existing.ID,
 			created.ID,
 		)
+	}
+	if duplicate.Existing.ImportContext.OriginalFilename != "notes.pdf" {
+		t.Fatalf("Duplicate changed Import Context: %#v", duplicate.Existing.ImportContext)
 	}
 }
 

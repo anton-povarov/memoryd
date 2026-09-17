@@ -46,8 +46,14 @@ const (
 )
 
 type Import struct {
-	Content            io.Reader
-	DeclaredMediaType  string
+	Content           io.Reader
+	DeclaredMediaType string
+	Context           ImportContext
+}
+
+// ImportContext preserves metadata observed by the importing client. Missing
+// paths and timestamps remain absent; they are never inferred from the Blob.
+type ImportContext struct {
 	OriginalFilename   string
 	RelativePath       string
 	FullPath           string
@@ -58,11 +64,7 @@ type Import struct {
 type Memory struct {
 	ID                     uuid.UUID
 	BlobRef                Blobref
-	OriginalFilename       string
-	RelativePath           string
-	FullPath               string
-	FilesystemCreated      *time.Time
-	FilesystemModified     *time.Time
+	ImportContext          ImportContext
 	MediaType              string
 	ByteSize               int64
 	ImportedAt             time.Time
@@ -78,7 +80,9 @@ type ListCursor struct {
 	ID         uuid.UUID
 }
 
-type DuplicateError struct{ Existing Memory }
+type DuplicateError struct {
+	Existing Memory
+}
 
 func (e *DuplicateError) Error() string {
 	return "Duplicate Blob already belongs to Memory " + e.Existing.ID.String()
@@ -173,16 +177,21 @@ func (v *Vault) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (v *Vault) Close() error { return v.db.Close() }
+func (v *Vault) Close() error {
+	return v.db.Close()
+}
 
 func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if candidate.Content == nil {
 		return Memory{}, errors.New("blob content is required")
 	}
+	importContext, err := candidate.Context.normalized()
+	if err != nil {
+		return Memory{}, err
+	}
 	logger := logging.FromContext(ctx)
 	logger.DebugContext(
-		ctx, "Blob import staging started",
-		"original_filename", safeFilename(candidate.OriginalFilename),
+		ctx, "Blob import staging started", "original_filename", importContext.OriginalFilename,
 	)
 
 	temporary, err := os.CreateTemp(v.uploadDir, ".import-*")
@@ -238,11 +247,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	memory := Memory{
 		ID:                     uuid.New(),
 		BlobRef:                blobRef,
-		OriginalFilename:       safeFilename(candidate.OriginalFilename),
-		RelativePath:           candidate.RelativePath,
-		FullPath:               candidate.FullPath,
-		FilesystemCreated:      normalizeTime(candidate.FilesystemCreated),
-		FilesystemModified:     normalizeTime(candidate.FilesystemModified),
+		ImportContext:          importContext,
 		MediaType:              mediaType,
 		ByteSize:               byteSize,
 		ImportedAt:             now,
@@ -265,18 +270,14 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		insertSQL,
 		memory.ID.String(),
 		memory.BlobRef.String(),
-		memory.OriginalFilename,
-		nullableString(memory.RelativePath),
-		nullableString(memory.FullPath),
-		nullableTime(memory.FilesystemCreated),
-		nullableTime(
-			memory.FilesystemModified,
-		),
+		memory.ImportContext.OriginalFilename,
+		nullableString(memory.ImportContext.RelativePath),
+		nullableString(memory.ImportContext.FullPath),
+		nullableTime(memory.ImportContext.FilesystemCreated),
+		nullableTime(memory.ImportContext.FilesystemModified),
 		memory.MediaType,
 		memory.ByteSize,
-		memory.ImportedAt.Format(
-			time.RFC3339Nano,
-		),
+		memory.ImportedAt.Format(time.RFC3339Nano),
 		string(memory.UnderstandingState),
 	)
 	if err != nil {
@@ -294,26 +295,25 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		logger.InfoContext(durableContext, "Duplicate import rejected",
 			"memory_id", existing.ID,
 			"blob_hash", existing.BlobRef.String(),
-			"understanding_state", existing.UnderstandingState,
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
 	}
 
 	runID := uuid.New()
 	completed := time.Now().UTC()
-	if _, err := v.db.ExecContext(
+	_, err = v.db.ExecContext(
 		durableContext,
 		`UPDATE memories SET understanding_state = ?, run_id = ?, `+
 			`understanding_completed_at = ? WHERE id = ?`,
-		string(
-			StateDone,
-		),
+		string(StateDone),
 		runID.String(),
 		completed.Format(time.RFC3339Nano),
 		memory.ID.String(),
-	); err != nil {
+	)
+	if err != nil {
 		return Memory{}, fmt.Errorf("complete stub understanding: %w", err)
 	}
+
 	memory.UnderstandingState = StateDone
 	memory.RunID = &runID
 	memory.UnderstandingCompleted = &completed
@@ -465,7 +465,7 @@ func scanMemory(row rowScanner) (Memory, error) {
 	err := row.Scan(
 		&id,
 		&blobHash,
-		&memory.OriginalFilename,
+		&memory.ImportContext.OriginalFilename,
 		&relativePath,
 		&fullPath,
 		&createdAt,
@@ -492,19 +492,19 @@ func scanMemory(row rowScanner) (Memory, error) {
 		return Memory{}, fmt.Errorf("read Memory ID: %w", err)
 	}
 	memory.ID = parsedID
-	memory.RelativePath = relativePath.String
-	memory.FullPath = fullPath.String
+	memory.ImportContext.RelativePath = relativePath.String
+	memory.ImportContext.FullPath = fullPath.String
 	memory.ImportedAt, err = time.Parse(time.RFC3339Nano, importedAt)
 	if err != nil {
 		return Memory{}, fmt.Errorf("read import time: %w", err)
 	}
 	memory.UnderstandingState = State(state)
-	if memory.FilesystemCreated, err = parseNullableTime(
+	if memory.ImportContext.FilesystemCreated, err = parseNullableTime(
 		createdAt,
 	); err != nil {
 		return Memory{}, err
 	}
-	if memory.FilesystemModified, err = parseNullableTime(
+	if memory.ImportContext.FilesystemModified, err = parseNullableTime(
 		modifiedAt,
 	); err != nil {
 		return Memory{}, err
