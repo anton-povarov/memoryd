@@ -3,6 +3,7 @@ module github.com/anton-povarov/memoryd/server
 go 1.25.0
 
 require (
+	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/getkin/kin-openapi v0.135.0
 	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.15.4

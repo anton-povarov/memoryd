@@ -43,6 +43,7 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		defer file.Close()
 		got, _ := io.ReadAll(file)
 		if header.Filename != "upload.pdf" || !bytes.Equal(got, want) ||
+			header.Header.Get("Content-Type") != "application/pdf" ||
 			!filepath.IsAbs(
 				r.FormValue("full_path"),
 			) || r.FormValue("filesystem_modified_at") == "" {
@@ -89,6 +90,46 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		if attempt == 1 && !strings.Contains(stderr.String(), "stub") {
 			t.Fatalf("progress stderr = %q", stderr.String())
 		}
+	}
+}
+
+func TestPutDeclaresMarkdownMediaType(t *testing.T) {
+	memoryID := uuid.New()
+	path := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(path, []byte("# Notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer file.Close()
+		if got := header.Header.Get("Content-Type"); got != "text/markdown" {
+			t.Errorf("file Content-Type = %q, want text/markdown", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Code: "duplicate_memory", Details: nil, Message: "duplicate",
+			ExistingMemory: &api.DuplicateMemory{
+				Id: memoryID, UnderstandingState: api.Done,
+			},
+		})
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	if err := Put(t.Context(), server.URL, path, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != memoryID.String()+"\n" {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 

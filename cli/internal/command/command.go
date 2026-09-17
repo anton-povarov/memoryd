@@ -13,6 +13,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,7 +134,26 @@ func writeMultipart(
 	); err != nil {
 		return fmt.Errorf("write modification metadata: %w", err)
 	}
-	part, err := writer.CreateFormFile("file", filepath.Base(absolutePath))
+	filename := filepath.Base(absolutePath)
+	contentType := mime.TypeByExtension(filepath.Ext(filename))
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".md", ".markdown":
+		contentType = "text/markdown"
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	disposition := mime.FormatMediaType("form-data", map[string]string{
+		"name":     "file",
+		"filename": filename,
+	})
+	if disposition == "" {
+		return fmt.Errorf("format multipart filename %q", filename)
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", disposition)
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
 	if err != nil {
 		return fmt.Errorf("create multipart Blob: %w", err)
 	}
@@ -219,8 +239,6 @@ func responseError(response *api.ImportMemoryResponse) error {
 		problem = response.JSON400
 	case response.JSON413 != nil:
 		problem = response.JSON413
-	case response.JSON415 != nil:
-		problem = response.JSON415
 	case response.JSON500 != nil:
 		problem = response.JSON500
 	}

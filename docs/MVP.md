@@ -6,7 +6,7 @@ Status: authoritative snapshot of decisions from the current design interview. E
 
 Import personal files into a durable local Vault, understand them as well as currently available tools allow, and retrieve whole Memories using natural-language queries over structured Facts and extracted text.
 
-The first useful demonstration imports a directory, importing files of supported formats, then answers variations of:
+The first useful demonstration imports a directory, then answers variations of:
 
 - Find all Tasleem bills from 2026.
 - Find a particular person's passport photo when that person is named explicitly.
@@ -15,7 +15,7 @@ The first useful demonstration imports a directory, importing files of supported
 ## Explicit MVP boundaries
 
 - One imported file is one user-visible Memory. Internal pages, chunks, attachments, or sections are not separately returned.
-- Supported content formats are PDF, JPEG, PNG and MD.
+- Any Blob within the size limit can be imported. Initial General Extraction targets PDF, JPEG, PNG, and Markdown; other formats may receive only file metadata until an extractor exists.
 - Cross-language retrieval, embeddings, relevance ranking, query relaxation, user Fact corrections, deletion, and garbage collection are deferred.
 - Relationship aliases are not inferred. A query containing `my wife` is treated as literal full text and may return no results; the user must rephrase it with a name.
 - Results are reverse-sorted by the best available original filesystem creation timestamp, then modification timestamp, then import timestamp.
@@ -23,11 +23,12 @@ The first useful demonstration imports a directory, importing files of supported
 ## Import
 
 - The importing client recursively enumerates regular files in deterministic path order.
-- It skips hidden files and directories, `.git`, `.DS_Store`, symlinks, the Vault itself, and currently unsupported formats.
+- It skips hidden files and directories, `.git`, `.DS_Store`, symlinks, and the Vault itself.
 - The initial importing client is browser-based and uploads one file at a time. On failure it offers retry, skip, or abort; abort preserves earlier successes, stops later uploads, and does not cancel understanding already started for the current durable Memory.
 - Browser directory selection yields a flat file list with paths relative to the selected directory. The client filters and deterministically sorts that list, displays it, and manages sequential upload locally without creating a server-side batch.
 - The server hashes each candidate before creating a Memory. Existing content hashes are rejected as Duplicates and do not enrich the existing Memory. The duplicate response identifies the existing Memory and its Understanding State so a client can recover from an ambiguous interrupted upload.
 - Successful content is copied into content-addressed storage. The Memory never depends on the original path remaining valid.
+- The server detects Media Type from Blob content. When detection is generic, a valid, specific multipart part `Content-Type` supplies the type; absent or generic declarations leave the generic result. Blob storage does not depend on Media Type.
 - Original filename, browser-provided relative path, any available full import path, media type, byte size, content hash, and available filesystem timestamps are retained as Facts or provenance. Browsers may not expose absolute local paths.
 - The path may influence import-time understanding, but memoryd does not subsequently read through that path.
 

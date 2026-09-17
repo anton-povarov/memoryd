@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -362,7 +363,10 @@ func TestMarkdownImportDownloadAndDuplicate(t *testing.T) {
 	upload := func() *httptest.ResponseRecorder {
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
-		part, err := writer.CreateFormFile("file", "notes.md")
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="file"; filename="notes.md"`)
+		header.Set("Content-Type", "text/markdown")
+		part, err := writer.CreatePart(header)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -432,5 +436,73 @@ func TestMarkdownImportDownloadAndDuplicate(t *testing.T) {
 	if problem.Code != "duplicate_memory" ||
 		problem.ExistingMemory == nil || problem.ExistingMemory.Id.String() != match[1] {
 		t.Fatalf("duplicate response = %#v", problem)
+	}
+}
+
+func TestUnknownBlobUsesDeclaredMediaTypeAndRejectsMalformedFallback(t *testing.T) {
+	handler := newTestServer(t)
+	upload := func(content []byte, contentType string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", `form-data; name="file"; filename="notes.bin"`)
+		header.Set("Content-Type", contentType)
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(content); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v0/memories/import",
+			&body,
+		)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	content := []byte{0x00, 0x01, 0x02, 0xff}
+	imported := upload(content, "Application/X-Notebook; charset=UTF-8")
+	if imported.Code != http.StatusOK ||
+		!strings.Contains(imported.Body.String(), `"media_type":"application/x-notebook"`) {
+		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body.String())
+	}
+	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
+		FindStringSubmatch(imported.Body.String())
+	if len(match) != 2 {
+		t.Fatalf("completion event has no Memory ID: %s", imported.Body.String())
+	}
+
+	download := httptest.NewRecorder()
+	handler.ServeHTTP(
+		download,
+		httptest.NewRequest(
+			http.MethodGet,
+			"/api/v0/memories/"+match[1]+"/content",
+			nil,
+		),
+	)
+	if download.Code != http.StatusOK ||
+		!bytes.Equal(download.Body.Bytes(), content) ||
+		download.Header().Get("Content-Type") != "application/x-notebook" {
+		t.Fatalf(
+			"download status=%d type=%q body=%q",
+			download.Code,
+			download.Header().Get("Content-Type"),
+			download.Body.Bytes(),
+		)
+	}
+
+	invalid := upload([]byte{0x00, 0x01, 0x03, 0xff}, "nonsense")
+	if invalid.Code != http.StatusBadRequest ||
+		!strings.Contains(invalid.Body.String(), `"code":"invalid_media_type"`) {
+		t.Fatalf("invalid type status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
 }

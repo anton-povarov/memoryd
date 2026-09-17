@@ -168,30 +168,12 @@ func (h *Handler) GetMemoryContent(
 		ContentDisposition: &disposition,
 		ETag:               &etag,
 	}
-	switch memory.MediaType {
-	case "application/pdf":
-		return api.GetMemoryContent200ApplicationpdfResponse{
-			Body: content, Headers: headers, ContentLength: memory.ByteSize,
-		}, nil
-	case "image/jpeg":
-		return api.GetMemoryContent200ImagejpegResponse{
-			Body:          content,
-			Headers:       headers,
-			ContentLength: memory.ByteSize,
-		}, nil
-	case "image/png":
-		return api.GetMemoryContent200ImagepngResponse{
-			Body: content, Headers: headers, ContentLength: memory.ByteSize,
-		}, nil
-	case "text/markdown":
-		return api.GetMemoryContent200TextmarkdownResponse{
-			Body: content, Headers: headers, ContentLength: memory.ByteSize,
-		}, nil
-	default:
-		return api.GetMemoryContent200ApplicationoctetStreamResponse{
-			Body: content, Headers: headers, ContentLength: memory.ByteSize,
-		}, nil
-	}
+	return api.GetMemoryContent200AsteriskResponse{
+		Body:          content,
+		Headers:       headers,
+		ContentType:   memory.MediaType,
+		ContentLength: memory.ByteSize,
+	}, nil
 }
 
 func (h *Handler) ImportMemory(
@@ -246,6 +228,7 @@ func (h *Handler) ImportMemory(
 	defer content.Close() // nolint:errcheck
 	candidate := vault.Import{
 		Content:            content,
+		DeclaredMediaType:  files[0].Header.Get("Content-Type"),
 		OriginalFilename:   files[0].Filename,
 		RelativePath:       formValue(form.Value, "relative_path"),
 		FullPath:           formValue(form.Value, "full_path"),
@@ -277,15 +260,14 @@ func (h *Handler) ImportMemory(
 			Code: "blob_too_large", Details: nil,
 			ExistingMemory: nil, Message: err.Error(),
 		}, nil
-	case errors.Is(err, vault.ErrUnsupportedContent):
+	case errors.Is(err, vault.ErrInvalidMediaType):
 		logger.InfoContext(
 			ctx,
 			"Memory import rejected",
-			"reason",
-			"unsupported content",
+			"reason", "invalid multipart file Content-Type",
 		)
-		return api.ImportMemory415JSONResponse{
-			Code: "unsupported_content", Details: nil,
+		return api.ImportMemory400JSONResponse{
+			Code: "invalid_media_type", Details: nil,
 			ExistingMemory: nil, Message: err.Error(),
 		}, nil
 	case err != nil:

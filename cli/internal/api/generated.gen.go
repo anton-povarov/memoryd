@@ -358,16 +358,14 @@ type ImportEvent struct {
 
 // ImportMultipart defines model for ImportMultipart.
 type ImportMultipart struct {
-	// File One PDF, JPEG, PNG, or Markdown Blob.
+	// File One Blob. The server detects its Media Type from content first.
+	// For inconclusive detection, the part's Content-Type is used if valid.
 	File                 openapi_types.File `json:"file"`
 	FilesystemCreatedAt  *time.Time         `json:"filesystem_created_at,omitempty"`
 	FilesystemModifiedAt *time.Time         `json:"filesystem_modified_at,omitempty"`
 
 	// FullPath Original full path when the importing client can provide it.
 	FullPath *string `json:"full_path,omitempty"`
-
-	// MediaType Client-observed media type; the server validates the content.
-	MediaType *string `json:"media_type,omitempty"`
 
 	// RelativePath Browser-provided path relative to the selected directory.
 	RelativePath *string `json:"relative_path,omitempty"`
@@ -917,7 +915,7 @@ type ClientInterface interface {
 
 	// ImportMemoryWithBody Import one Blob and understand it
 	//
-	// Upload one supported Blob. The request remains open until the
+	// Upload one Blob. The request remains open until the
 	// understanding attempt reaches a terminal result. The response is an
 	// SSE stream; the client owns directory enumeration and uploads Blobs
 	// sequentially. Once the server has committed the Blob and InProgress
@@ -1051,7 +1049,7 @@ func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParam
 
 // ImportMemoryWithBody Import one Blob and understand it
 //
-// Upload one supported Blob. The request remains open until the
+// Upload one Blob. The request remains open until the
 // understanding attempt reaches a terminal result. The response is an
 // SSE stream; the client owns directory enumeration and uploads Blobs
 // sequentially. Once the server has committed the Blob and InProgress
@@ -1869,7 +1867,7 @@ type ClientWithResponsesInterface interface {
 
 	// ImportMemoryWithBodyWithResponse Import one Blob and understand it
 	//
-	// Upload one supported Blob. The request remains open until the
+	// Upload one Blob. The request remains open until the
 	// understanding attempt reaches a terminal result. The response is an
 	// SSE stream; the client owns directory enumeration and uploads Blobs
 	// sequentially. Once the server has committed the Blob and InProgress
@@ -2083,8 +2081,6 @@ type ImportMemoryResponse struct {
 	JSON409 *Error
 	// JSON413 the response for an HTTP 413 `application/json` response
 	JSON413 *Error
-	// JSON415 the response for an HTTP 415 `application/json` response
-	JSON415 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *Error
 }
@@ -2102,11 +2098,6 @@ func (r ImportMemoryResponse) GetJSON409() *Error {
 // GetJSON413 returns the response for an HTTP 413 `application/json` response
 func (r ImportMemoryResponse) GetJSON413() *Error {
 	return r.JSON413
-}
-
-// GetJSON415 returns the response for an HTTP 415 `application/json` response
-func (r ImportMemoryResponse) GetJSON415() *Error {
-	return r.JSON415
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -2661,7 +2652,7 @@ func (c *ClientWithResponses) BrowseMemoriesWithResponse(ctx context.Context, pa
 
 // ImportMemoryWithBodyWithResponse Import one Blob and understand it
 //
-// Upload one supported Blob. The request remains open until the
+// Upload one Blob. The request remains open until the
 // understanding attempt reaches a terminal result. The response is an
 // SSE stream; the client owns directory enumeration and uploads Blobs
 // sequentially. Once the server has committed the Blob and InProgress
@@ -2947,13 +2938,6 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 			return nil, err
 		}
 		response.JSON413 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error

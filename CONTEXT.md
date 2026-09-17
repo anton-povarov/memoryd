@@ -12,12 +12,15 @@ _Avoid_: Item, document, record
 The immutable bytes owned by the Vault and addressed by their content hash. A Memory references exactly one Blob.
 _Avoid_: File, source artifact
 
+**Media Type**:
+A format label attached to a Memory's Blob. It describes the content for transfer and General Extraction, and is distinct from the Memory's semantic Memory Kind.
+_Avoid_: File type, document type
+
 **Blobref**
 A reference to a blob, consisting of a cryptographic hash function name and that hash function's digest of the blob's bytes, in hex.
 Concatenating the two together with a hyphen is the common representation, with both parts in all lower case.
 Only sha256 is currently supported as a hash function.
 Examples of valid blobrefs:  sha256-b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c
-
 
 **Vault**:
 The durable collection of Memories owned by memoryd.

@@ -15,40 +15,79 @@ import (
 	"time"
 )
 
-func TestDetectMediaType(t *testing.T) {
+func TestResolveMediaType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		filename  string
-		content   []byte
-		mediaType string
+		name     string
+		content  []byte
+		declared string
+		want     string
+		invalid  bool
 	}{
-		{"pdf signature", "renamed.md", []byte("%PDF-1.7\n"), "application/pdf"},
-		{"jpeg signature", "photo.txt", []byte{0xff, 0xd8, 0xff, 0x00}, "image/jpeg"},
-		{"png signature", "photo.md", []byte("\x89PNG\r\n\x1a\n"), "image/png"},
-		{"markdown extension", "notes.MD", []byte("Ordinary UTF-8 prose.\n"), "text/markdown"},
-		{"long extension", "notes.markdown", []byte("Café\n"), "text/markdown"},
-		{"empty markdown", "empty.md", nil, "text/markdown"},
-		{"heading without extension", "notes", []byte("# Heading\nBody\n"), "text/markdown"},
-		{"fence without extension", "notes.txt", []byte("```go\ncode\n```\n"), "text/markdown"},
 		{
-			"link without extension",
-			"notes.txt",
-			[]byte("See [home](https://example.com).\n"),
-			"text/markdown",
+			name:     "detected PDF overrides conflicting declaration",
+			content:  []byte("%PDF-1.7\n"),
+			declared: "image/png",
+			want:     "application/pdf",
+			invalid:  false,
 		},
-		{"plain text", "notes.txt", []byte("Ordinary UTF-8 prose.\n"), ""},
-		{"list text", "notes.txt", []byte("- apples\n- pears\n"), ""},
-		{"invalid UTF-8", "notes.md", []byte{'#', ' ', 0xff}, ""},
 		{
-			"invalid UTF-8 after probe",
-			"notes.md",
-			append(bytes.Repeat([]byte("a"), markdownProbeBytes), 0xff),
-			"",
+			name:     "detected PDF ignores malformed declaration",
+			content:  []byte("%PDF-1.7\n"),
+			declared: "nonsense",
+			want:     "application/pdf",
+			invalid:  false,
 		},
-		{"NUL byte", "notes.md", []byte("# Heading\x00\n"), ""},
-		{"control byte", "notes.md", []byte("# Heading\x01\n"), ""},
+		{
+			name:     "library detects JSON beyond old format list",
+			content:  []byte(`{"answer":42}`),
+			declared: "application/octet-stream",
+			want:     "application/json",
+			invalid:  false,
+		},
+		{
+			name:     "specific Markdown declaration refines plain text",
+			content:  []byte("# Notes\nA café visit.\n"),
+			declared: "Text/Markdown; charset=UTF-8",
+			want:     "text/markdown",
+			invalid:  false,
+		},
+		{
+			name:     "generic declaration keeps detected plain text",
+			content:  []byte("Ordinary prose.\n"),
+			declared: "application/octet-stream",
+			want:     "text/plain",
+			invalid:  false,
+		},
+		{
+			name:     "unknown bytes use normalized client type",
+			content:  []byte{0x00, 0x01, 0x02, 0xff},
+			declared: "Application/X-Custom; version=1",
+			want:     "application/x-custom",
+			invalid:  false,
+		},
+		{
+			name:     "unknown bytes use octet stream without declaration",
+			content:  []byte{0x00, 0x01, 0x02, 0xff},
+			declared: "",
+			want:     "application/octet-stream",
+			invalid:  false,
+		},
+		{
+			name:     "malformed fallback declaration is rejected",
+			content:  []byte{0x00, 0x01, 0x02, 0xff},
+			declared: "nonsense",
+			want:     "",
+			invalid:  true,
+		},
+		{
+			name:     "media range is not a concrete fallback type",
+			content:  []byte{0x00, 0x01, 0x02, 0xff},
+			declared: "*/*",
+			want:     "",
+			invalid:  true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -58,15 +97,15 @@ func TestDetectMediaType(t *testing.T) {
 			if err := os.WriteFile(path, test.content, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			got, err := detectMediaType(path, test.filename)
-			if test.mediaType == "" {
-				if !errors.Is(err, ErrUnsupportedContent) {
-					t.Fatalf("detectMediaType() error = %v, want unsupported", err)
+			got, err := resolveMediaType(path, test.declared)
+			if test.invalid {
+				if !errors.Is(err, ErrInvalidMediaType) {
+					t.Fatalf("resolveMediaType() error = %v, want invalid media type", err)
 				}
 				return
 			}
-			if err != nil || got != test.mediaType {
-				t.Fatalf("detectMediaType() = %q, %v; want %q", got, err, test.mediaType)
+			if err != nil || got != test.want {
+				t.Fatalf("resolveMediaType() = %q, %v; want %q", got, err, test.want)
 			}
 		})
 	}
@@ -89,6 +128,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	}
 	created, err := v.Put(ctx, Import{
 		Content:            bytes.NewReader(wantBytes),
+		DeclaredMediaType:  "",
 		OriginalFilename:   "notes.pdf",
 		RelativePath:       "",
 		FullPath:           "/original/notes.pdf",
@@ -174,9 +214,13 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	}
 
 	_, err = v.Put(ctx, Import{
-		Content: bytes.NewReader(wantBytes), OriginalFilename: "renamed.pdf",
-		RelativePath: "", FullPath: "",
-		FilesystemCreated: nil, FilesystemModified: nil,
+		Content:            bytes.NewReader(wantBytes),
+		DeclaredMediaType:  "",
+		OriginalFilename:   "renamed.pdf",
+		RelativePath:       "",
+		FullPath:           "",
+		FilesystemCreated:  nil,
+		FilesystemModified: nil,
 	})
 	var duplicate *DuplicateError
 	if !errors.As(err, &duplicate) {

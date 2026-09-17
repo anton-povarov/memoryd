@@ -93,7 +93,9 @@ paths:
       summary: Download a Memory's immutable Blob
       responses:
         "200":
-          description: The original imported bytes.
+          description: |
+            The original imported bytes. Content-Type is the Memory's stored
+            Media Type, or application/octet-stream when no type is known.
           headers:
             Content-Disposition:
               schema:
@@ -104,23 +106,7 @@ paths:
                 type: string
               description: The content hash, quoted as an HTTP entity tag.
           content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            text/markdown:
+            "*/*":
               schema:
                 type: string
                 format: binary
@@ -137,7 +123,7 @@ paths:
       tags: [memories]
       summary: Import one Blob and understand it
       description: |
-        Upload one supported Blob. The request remains open until the
+        Upload one Blob. The request remains open until the
         understanding attempt reaches a terminal result. The response is an
         SSE stream; the client owns directory enumeration and uploads Blobs
         sequentially. Once the server has committed the Blob and InProgress
@@ -150,9 +136,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: "#/components/schemas/ImportMultipart"
-            encoding:
-              file:
-                contentType: application/pdf, image/jpeg, image/png, text/markdown
       responses:
         "200":
           description: Progress events followed by exactly one terminal event.
@@ -187,12 +170,6 @@ paths:
                 $ref: "#/components/schemas/Error"
         "413":
           description: The request exceeds the server's upload limit.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "415":
-          description: The Blob format is not supported by the MVP.
           content:
             application/json:
               schema:
@@ -486,16 +463,15 @@ components:
           type: string
           format: binary
           maxLength: 104857600
-          description: One PDF, JPEG, PNG, or Markdown Blob.
+          description: |
+            One Blob. The server detects its Media Type from content first.
+            For inconclusive detection, the part's Content-Type is used if valid.
         relative_path:
           type: string
           description: Browser-provided path relative to the selected directory.
         full_path:
           type: string
           description: Original full path when the importing client can provide it.
-        media_type:
-          type: string
-          description: Client-observed media type; the server validates the content.
         filesystem_created_at:
           type: string
           format: date-time
