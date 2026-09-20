@@ -2,6 +2,12 @@ This is a Personal Memory Vault project. Store content and medatata, understand 
 
 Stage: MVP design, see `docs/MVP.md`.
 
+## Structure
+/api: OpenAPI specification
+/cli: cli programs
+/server: server
+	/internal/webui: web UI
+
 ## Go
 
 Coding standard: see `GO_CODING_STANDARD.md`.
@@ -10,8 +16,6 @@ Coding standard: see `GO_CODING_STANDARD.md`.
 When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
 These commands would already perform `go fmt`, `go vet` so no need to run them separately.
 Fix issues. If you need to ignore a warning with `nolint` comment, explicitly report it to the user.
-
-
 
 ## Agents
 

@@ -830,6 +830,47 @@ p {
   line-height: 1.45;
 }
 
+.memoryid-block {
+  padding-top: 18px;
+}
+
+.memoryid-block > span {
+  display: block;
+}
+
+.memoryid-block button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #e2ddd3;
+  border-radius: 9px;
+  color: var(--color-ink-soft);
+  background: #f4f1eb;
+  cursor: pointer;
+}
+
+.memoryid-block button:hover {
+  background: #efebe4;
+}
+
+.memoryid-block code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.memoryid-block button span {
+  font-size: 9px;
+  font-weight: 750;
+}
+
+/*  */
 .hash-block {
   padding-top: 18px;
 }
