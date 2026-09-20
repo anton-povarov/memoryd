@@ -234,6 +234,13 @@ func TestHealthAndDocumentation(t *testing.T) {
 		{path: "/openapi.yaml", status: http.StatusOK, contentType: "text/yaml"},
 		{path: "/openapi.json", status: http.StatusOK, contentType: "application/json"},
 		{path: "/docs/", status: http.StatusOK, contentType: "text/html"},
+		{path: "/", status: http.StatusOK, contentType: "text/html"},
+		{path: "/assets/app.css", status: http.StatusOK, contentType: "text/css"},
+		{
+			path:        "/assets/app.js",
+			status:      http.StatusOK,
+			contentType: "text/javascript",
+		},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(

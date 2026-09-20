@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f4f0e8">
+  <title>memoryd — personal memory vault</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="memoryd home">
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <span>memory<span class="brand-slash">/</span>d</span>
+      </a>
+
+      <div class="topbar-actions">
+        <div class="vault-status" id="vault-status" title="Server connection status">
+          <span class="status-dot"></span>
+          <span id="vault-status-label">Connecting</span>
+        </div>
+        <a class="quiet-link" href="/docs/">API</a>
+        <button class="button button-primary" id="open-import" type="button">
+          <span aria-hidden="true">＋</span>
+          Add memory
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="library-panel" aria-label="Memory library">
+        <div class="library-heading">
+          <div>
+            <h1>Your memories</h1>
+          </div>
+          <span class="count-badge" id="memory-count" aria-label="Memory count">—</span>
+        </div>
+
+        <label class="filter-field" for="memory-filter">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5"></circle>
+            <path d="m16 16 4 4"></path>
+          </svg>
+          <input
+            id="memory-filter"
+            type="search"
+            placeholder="Filter loaded memories"
+            autocomplete="off"
+          >
+          <kbd>/</kbd>
+        </label>
+
+        <div class="memory-list" id="memory-list" aria-live="polite">
+          <div class="list-loading" aria-label="Loading memories">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <button class="load-more" id="load-more" type="button" hidden>
+          Load older memories
+        </button>
+      </aside>
+
+      <section class="detail-panel" id="detail-panel">
+        <div class="welcome-state" id="welcome-state">
+          <div class="welcome-art" aria-hidden="true">
+            <div class="paper paper-back"></div>
+            <div class="paper paper-middle"></div>
+            <div class="paper paper-front">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="memory-spark">✦</div>
+          </div>
+          <p class="eyebrow">Personal memory vault</p>
+          <h2>Your memory, kept close.</h2>
+          <p class="welcome-copy">
+            Import the things worth keeping. memoryd preserves the original
+            and makes its provenance easy to inspect.
+          </p>
+          <button class="button button-dark" id="welcome-import" type="button">
+            Add your first memory
+          </button>
+          <p class="welcome-note">Stored locally · Original bytes preserved</p>
+        </div>
+
+        <article class="memory-detail" id="memory-detail" hidden>
+          <div class="detail-header">
+            <div class="detail-title-block">
+              <button class="back-button" id="back-to-list" type="button">
+                <span aria-hidden="true">←</span> Memories
+              </button>
+              <h2 id="detail-title"></h2>
+              <div class="detail-pills" id="detail-pills"></div>
+            </div>
+            <a class="button button-dark" id="download-memory" href="#" download>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path>
+              </svg>
+              Download
+            </a>
+          </div>
+
+          <div class="detail-grid">
+            <section class="preview-card">
+              <div class="preview-stage" id="preview-stage"></div>
+            </section>
+
+            <aside class="metadata-card">
+              <div class="section-heading">
+                <div>
+                  <h3>Import context</h3>
+                </div>
+              </div>
+              <dl class="metadata-list" id="metadata-list"></dl>
+
+              <div class="hash-block">
+                <span class="metadata-label">Content identity</span>
+                <button id="copy-hash" type="button" title="Copy content hash">
+                  <code id="detail-hash"></code>
+                  <span>Copy</span>
+                </button>
+              </div>
+            </aside>
+          </div>
+        </article>
+
+        <div class="detail-loading" id="detail-loading" hidden>
+          <span class="large-spinner"></span>
+          <p>Opening memory…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="import-dialog" id="import-dialog">
+    <form method="dialog" class="dialog-shell" id="import-form">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Bring something in</p>
+          <h2>Add a memory</h2>
+        </div>
+        <button class="icon-button" id="close-import" type="button" aria-label="Close">
+          ×
+        </button>
+      </div>
+
+      <input class="file-input" id="file-input" type="file" name="file" multiple>
+      <label class="drop-zone" id="drop-zone" for="file-input">
+        <span class="drop-icon" aria-hidden="true">↑</span>
+        <strong>Choose files or drop them here</strong>
+        <span>Any format, up to 100 MiB each</span>
+      </label>
+
+      <section class="file-queue" id="file-queue" hidden>
+        <div class="file-queue-heading">
+          <strong id="file-queue-title"></strong>
+          <button id="clear-files" type="button">Clear all</button>
+        </div>
+        <div class="file-queue-list" id="file-queue-list"></div>
+        <label class="add-more-files" id="add-more-files" for="file-input">
+          ＋ Add more files
+        </label>
+      </section>
+
+      <div class="upload-progress" id="upload-progress" hidden>
+        <div class="progress-copy">
+          <span id="progress-label">Uploading…</span>
+          <span id="progress-value">0%</span>
+        </div>
+        <div class="progress-track"><span id="progress-bar"></span></div>
+      </div>
+
+      <div class="import-message" id="import-message" hidden></div>
+
+      <div class="dialog-actions">
+        <span>Original bytes are copied into your Vault.</span>
+        <button class="button button-primary" id="submit-import" type="submit" disabled>
+          Add to vault
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+</body>
+</html>

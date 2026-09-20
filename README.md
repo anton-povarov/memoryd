@@ -32,6 +32,10 @@ go run ./cmd/memoryd -c memoryd.example.yaml
 
 The server binds to `http://127.0.0.1:8080/` by default.
 
+Open <http://127.0.0.1:8080/> for the browser interface. It supports importing,
+browsing, previewing, inspecting, and downloading the currently implemented
+Memory data.
+
 Import, inspect, and restore one Memory from another terminal:
 
 ```sh

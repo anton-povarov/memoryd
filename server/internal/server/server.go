@@ -14,6 +14,7 @@ import (
 	"github.com/anton-povarov/memoryd/server/internal/config"
 	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
+	"github.com/anton-povarov/memoryd/server/internal/webui"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -52,6 +53,9 @@ func New(
 		"",
 		openAPIYAML,
 	); err != nil {
+		return nil, err
+	}
+	if err := webui.Register(e); err != nil {
 		return nil, err
 	}
 	api.RegisterHandlersWithBaseURL(
