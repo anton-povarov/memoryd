@@ -13,7 +13,7 @@ The immutable bytes owned by the Vault and addressed by their content hash. A Me
 _Avoid_: File, source artifact
 
 **Media Type**:
-A format label attached to a Memory's Blob. It describes the content for transfer and General Extraction, and is distinct from the Memory's semantic Memory Kind.
+A format label attached to a Memory's Blob. It describes the content for transfer and Document Understanding, and is distinct from the Memory's semantic Memory Kind.
 _Avoid_: File type, document type
 
 **Blobref**
@@ -43,20 +43,16 @@ A searchable value asserted about a Memory. A Fact has a name, category, origin,
 Available Fact value types are: number, string, datetime (more can be added over time).
 _Avoid_: Attribute, property, tag
 
-**General Extraction**:
-Best-effort understanding applicable to a broad content format, such as extracting text from a PDF or EXIF data from an image.
-_Avoid_: Generic parser, fallback parser
-
-**Specialized Enrichment**:
-Understanding specific to a detected Memory Kind that adds domain Facts beyond General Extraction. Deferred beyond the MVP.
-_Avoid_: Specialized extraction, custom parsing
+**Document Understanding**:
+The process of interpreting a Memory from its Blob and available Import Context, producing Derived Content and asserting Facts. It applies to anything memoryd can import and may use deterministic tools, models, or other means.
+_Avoid_: General Extraction, Specialized Enrichment
 
 **Duplicate**:
 An import candidate whose content is byte-for-byte identical to an existing Memory. A Duplicate is rejected rather than creating or enriching a Memory.
 _Avoid_: Copy, repeated file
 
 **Rebuild**:
-Replacement of a Memory's Derived Content and Facts using current extractors and enrichers while preserving its original content and identity.
+Replacement of a Memory's Derived Content and Facts using current Document Understanding methods while preserving its original content and identity.
 _Avoid_: Re-import, migration
 
 **Understanding Run**:

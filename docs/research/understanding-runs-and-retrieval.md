@@ -10,7 +10,7 @@ The experiment supports a layered interpretation of a Memory:
 
 1. **Derived Content** preserves source-shaped output: OCR or native text, page and section boundaries, tables, and layout cues. It can include a settlement PDF's `Schedule A` as a named section/table even when no fields from it are promoted.
 2. **Facts** are selective, typed assertions with evidence, scope, and temporal context. Promote a value when it has clear query utility and can be validated reliably. The source text remains evidence, not world truth.
-3. **Memory Kinds** should start as a sparse, open hierarchy. Unknown or mixed content is valid; the initial kinds are capabilities for specialized enrichment, not an exhaustive taxonomy.
+3. **Memory Kinds** should start as a sparse, open hierarchy. Unknown or mixed content is valid; the initial kinds are not an exhaustive taxonomy.
 4. **Retrieval** should combine cheap extraction, typed Fact filters, and full-text search (FTS). Embeddings are a later search projection over useful text, not a replacement for typed Facts or source evidence.
 5. **Understanding Runs** should be immutable and versioned. Each Run records the extractor/model provenance, coverage, warnings, partial results, and explicit unknowns before it becomes the active search projection.
 

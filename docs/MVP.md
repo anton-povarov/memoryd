@@ -16,8 +16,8 @@ The first useful demonstration imports personal files, then answers variations o
 
 - One imported file is one user-visible Memory. Internal pages, chunks, attachments, or sections are not separately returned.
 - Any Blob within the size limit can be imported.
-- The MVP includes General Extraction. Its supported formats, behavior, tools, and limits remain to be designed.
-- Specialized Enrichment, Understanding Plugins, Codex enhancement, cross-language retrieval, embeddings, relevance ranking, query relaxation, user Fact corrections, deletion, and garbage collection are deferred.
+- The MVP includes Document Understanding. Its supported formats, behavior, methods, and limits remain to be designed.
+- Understanding Plugins, Codex enhancement, cross-language retrieval, embeddings, relevance ranking, query relaxation, user Fact corrections, deletion, and garbage collection are deferred.
 - Relationship aliases are not inferred. A query containing `my wife` is treated as literal full text and may return no results; the user must rephrase it with a name.
 
 ## Import
@@ -33,7 +33,7 @@ The first useful demonstration imports personal files, then answers variations o
 ## Storage and understanding
 
 - A Memory references one immutable Blob addressed by its content hash.
-- General Extraction produces the MVP's Derived Content and Facts. Its implementation is an open design question.
+- Document Understanding produces the MVP's Derived Content and Facts. Its implementation is an open design question.
 - Each successful interpretation creates an immutable Understanding Run. A Rebuild stages a complete new Run and atomically activates it; earlier successful Runs remain inspectable but only the active Run participates in search.
 - Failed understanding attempts do not create Runs. They produce informative execution logs and leave the previous active Run unchanged.
 - An Understanding Run may complete with explicit warnings when a coherent, usable result can still be committed. `Failed` is reserved for an attempt that cannot commit such a Run.
@@ -76,7 +76,7 @@ The first useful demonstration imports personal files, then answers variations o
 
 ## Open implementation details
 
-- General Extraction inputs, outputs, implementation, supported formats, limits, and failure behavior
+- Document Understanding inputs, outputs, implementation, supported formats, limits, and failure behavior
 - Exact OpenAPI event schemas for the single streaming import request, browsing, detail, Rebuild, and search
 - SQLite schema and FTS5 projection design
 - CAS layout, hashing algorithm, atomic writes, and integrity verification
