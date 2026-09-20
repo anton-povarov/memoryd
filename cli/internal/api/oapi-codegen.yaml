@@ -4,7 +4,3 @@ output: generated.gen.go
 generate:
   models: true
   client: true
-
-output-options:
-  # Keep the typed SSE payload models used by the CLI decoder.
-  skip-prune: true

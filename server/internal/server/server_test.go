@@ -184,6 +184,44 @@ func TestImportRequiresFilePartFilename(t *testing.T) {
 	}
 }
 
+func TestImportRejectsRequestBeyondBoundBeforeReadingBody(t *testing.T) {
+	handler := newTestServer(t)
+	body := &trackingReader{content: strings.NewReader("must not be read")}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v0/memories/import",
+		body,
+	)
+	request.ContentLength = httpapi.MaxImportRequestBytes + 1
+	request.Header.Set("Content-Type", "multipart/form-data; boundary=unused")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if body.read {
+		t.Fatal("oversized request body was read")
+	}
+	var problem api.Error
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "blob_too_large" ||
+		!strings.Contains(problem.Message, "100 MiB") {
+		t.Fatalf("problem = %#v", problem)
+	}
+}
+
+type trackingReader struct {
+	content io.Reader
+	read    bool
+}
+
+func (reader *trackingReader) Read(destination []byte) (int, error) {
+	reader.read = true
+	return reader.content.Read(destination)
+}
+
 func TestHealthAndDocumentation(t *testing.T) {
 	handler := newTestServer(t)
 	for _, test := range []struct {
@@ -222,7 +260,7 @@ func TestHealthAndDocumentation(t *testing.T) {
 	}
 }
 
-func TestBrowseStartsEmptyAndSearchStubEchoesQuery(t *testing.T) {
+func TestBrowseStartsEmptyAndUnsupportedSearchIsAbsent(t *testing.T) {
 	handler := newTestServer(t)
 
 	recorder := httptest.NewRecorder()
@@ -247,19 +285,8 @@ func TestBrowseStartsEmptyAndSearchStubEchoesQuery(t *testing.T) {
 	)
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf(
-			"search response: status=%d body=%s",
-			recorder.Code,
-			recorder.Body.String(),
-		)
-	}
-	var response struct {
-		Query string `json:"query"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil ||
-		response.Query != "Tasleem 2026" {
-		t.Fatalf("search body = %s, error = %v", recorder.Body.String(), err)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("search status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -287,7 +314,7 @@ func TestBrowseUsesNextCursorWithoutRepeatingMemories(t *testing.T) {
 		request.Header.Set("Content-Type", writer.FormDataContentType())
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusOK {
+		if response.Code != http.StatusCreated {
 			t.Fatalf(
 				"import %d: status=%d body=%s",
 				index,
@@ -348,7 +375,7 @@ func browsePage(
 	return page
 }
 
-func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
+func TestImportReturnsCommittedMemoryThenDownloadsExactBlob(t *testing.T) {
 	handler := newTestServer(t)
 	want := []byte("%PDF-1.7\nHTTP vertical slice\n%%EOF\n")
 	var body bytes.Buffer
@@ -380,24 +407,18 @@ func TestImportStreamsCompletionThenDownloadsExactBlob(t *testing.T) {
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(
-		recorder.Header().Get("Content-Type"),
-		"text/event-stream",
-	) ||
-		!strings.Contains(recorder.Body.String(), "event: import_started") ||
-		!strings.Contains(recorder.Body.String(), "event: understanding_progress") ||
-		!strings.Contains(recorder.Body.String(), "event: import_completed") {
-		t.Fatalf("unexpected event stream: %s", recorder.Body.String())
+	if !strings.Contains(recorder.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("unexpected Content-Type: %s", recorder.Header().Get("Content-Type"))
 	}
 
 	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
 		FindStringSubmatch(recorder.Body.String())
 	if len(match) != 2 {
 		t.Fatalf(
-			"completion event has no Memory ID: %s",
+			"response has no Memory ID: %s",
 			recorder.Body.String(),
 		)
 	}
@@ -476,25 +497,6 @@ func assertImportContextDetail(t *testing.T, handler http.Handler, memoryID stri
 		detail.ImportContext.FilesystemModifiedAt == nil {
 		t.Fatalf("Import Context = %#v", detail.ImportContext)
 	}
-	wantFacts := map[string]string{
-		"original_filename":      "example.pdf",
-		"relative_path":          "folder/example.pdf",
-		"full_path":              "/original/example.pdf",
-		"filesystem_modified_at": "2026-09-15T10:11:12Z",
-	}
-	for _, fact := range detail.Facts {
-		if fact.Category != "import" {
-			continue
-		}
-		want, ok := wantFacts[fact.Name]
-		if !ok || fact.Value != want || fact.Origin != "import-client" {
-			t.Fatalf("unexpected import Fact = %#v", fact)
-		}
-		delete(wantFacts, fact.Name)
-	}
-	if len(wantFacts) != 0 {
-		t.Fatalf("missing import Facts = %#v", wantFacts)
-	}
 }
 
 func TestMarkdownImportDownloadAndDuplicate(t *testing.T) {
@@ -528,14 +530,14 @@ func TestMarkdownImportDownloadAndDuplicate(t *testing.T) {
 	}
 
 	imported := upload()
-	if imported.Code != http.StatusOK ||
+	if imported.Code != http.StatusCreated ||
 		!strings.Contains(imported.Body.String(), `"media_type":"text/markdown"`) {
 		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body.String())
 	}
 	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
 		FindStringSubmatch(imported.Body.String())
 	if len(match) != 2 {
-		t.Fatalf("completion event has no Memory ID: %s", imported.Body.String())
+		t.Fatalf("response has no Memory ID: %s", imported.Body.String())
 	}
 
 	download := httptest.NewRecorder()
@@ -610,14 +612,14 @@ func TestUnknownBlobUsesDeclaredMediaTypeAndRejectsMalformedFallback(t *testing.
 
 	content := []byte{0x00, 0x01, 0x02, 0xff}
 	imported := upload(content, "Application/X-Notebook; charset=UTF-8")
-	if imported.Code != http.StatusOK ||
+	if imported.Code != http.StatusCreated ||
 		!strings.Contains(imported.Body.String(), `"media_type":"application/x-notebook"`) {
 		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body.String())
 	}
 	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
 		FindStringSubmatch(imported.Body.String())
 	if len(match) != 2 {
-		t.Fatalf("completion event has no Memory ID: %s", imported.Body.String())
+		t.Fatalf("response has no Memory ID: %s", imported.Body.String())
 	}
 
 	download := httptest.NewRecorder()

@@ -23,25 +23,22 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v0/memories/import":
-			w.Header().Set("Content-Type", "text/event-stream")
-			event := api.ImportCompletedEvent{
-				Event:  api.ImportCompleted,
-				Memory: testSummary(memoryID, int64(len(content)), "memory.pdf"),
-			}
-			encoded, _ := json.Marshal(event)
-			fmt.Fprintf(w, "event: import_completed\ndata: %s\n\n", encoded)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(
+				testSummary(memoryID, int64(len(content)), "memory.pdf"),
+			)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v0/memories/"+memoryID.String():
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(api.MemoryDetail{
-				ActiveRun: nil, ContentUrl: nil,
-				Memory: testSummary(memoryID, int64(len(content)), "memory.pdf"),
+				ContentUrl: nil,
+				Memory:     testSummary(memoryID, int64(len(content)), "memory.pdf"),
 				ImportContext: api.ImportContext{
 					ByteSize: nil, ContentHash: nil,
 					FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
 					FullPath: nil, MediaType: nil,
 					OriginalFilename: "memory.pdf", RelativePath: nil,
 				},
-				Facts: []api.Fact{}, DerivedContent: []api.DerivedContent{},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v0/memories/"+memoryID.String()+"/content":
 			w.Header().Set("Content-Type", "application/pdf")
@@ -207,10 +204,9 @@ func TestListPaginationAndOutput(t *testing.T) {
 
 func testSummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
 	return api.MemorySummary{
-		ActiveRunId: nil, BlobHash: "sha256-" + strings.Repeat("a", 64),
+		BlobHash: "sha256-" + strings.Repeat("a", 64),
 		ByteSize: size, Id: id, ImportedAt: time.Time{},
 		MediaType: "application/pdf", OriginalCreatedAt: nil,
 		OriginalFilename: filename, OriginalModifiedAt: nil,
-		UnderstandingState: api.Done,
 	}
 }

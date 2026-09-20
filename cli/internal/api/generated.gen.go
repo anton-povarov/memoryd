@@ -4,10 +4,8 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,57 +16,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
-
-// Defines values for FactValueType.
-const (
-	Datetime FactValueType = "datetime"
-	Number   FactValueType = "number"
-	String   FactValueType = "string"
-)
-
-// Valid indicates whether the value is a known member of the FactValueType enum.
-func (e FactValueType) Valid() bool {
-	switch e {
-	case Datetime:
-		return true
-	case Number:
-		return true
-	case String:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for FactFilterOperator.
-const (
-	Contains           FactFilterOperator = "contains"
-	Equals             FactFilterOperator = "equals"
-	GreaterThan        FactFilterOperator = "greater_than"
-	GreaterThanOrEqual FactFilterOperator = "greater_than_or_equal"
-	LessThan           FactFilterOperator = "less_than"
-	LessThanOrEqual    FactFilterOperator = "less_than_or_equal"
-)
-
-// Valid indicates whether the value is a known member of the FactFilterOperator enum.
-func (e FactFilterOperator) Valid() bool {
-	switch e {
-	case Contains:
-		return true
-	case Equals:
-		return true
-	case GreaterThan:
-		return true
-	case GreaterThanOrEqual:
-		return true
-	case LessThan:
-		return true
-	case LessThanOrEqual:
-		return true
-	default:
-		return false
-	}
-}
 
 // Defines values for HealthResponseStatus.
 const (
@@ -85,159 +32,9 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for ImportCompletedEventEvent.
-const (
-	ImportCompleted ImportCompletedEventEvent = "import_completed"
-)
-
-// Valid indicates whether the value is a known member of the ImportCompletedEventEvent enum.
-func (e ImportCompletedEventEvent) Valid() bool {
-	switch e {
-	case ImportCompleted:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ProcessingLogKind.
-const (
-	ProcessingLogKindError            ProcessingLogKind = "error"
-	ProcessingLogKindLifecycle        ProcessingLogKind = "lifecycle"
-	ProcessingLogKindModelOutput      ProcessingLogKind = "model_output"
-	ProcessingLogKindStderr           ProcessingLogKind = "stderr"
-	ProcessingLogKindStdout           ProcessingLogKind = "stdout"
-	ProcessingLogKindStructuredResult ProcessingLogKind = "structured_result"
-	ProcessingLogKindTool             ProcessingLogKind = "tool"
-	ProcessingLogKindUsage            ProcessingLogKind = "usage"
-)
-
-// Valid indicates whether the value is a known member of the ProcessingLogKind enum.
-func (e ProcessingLogKind) Valid() bool {
-	switch e {
-	case ProcessingLogKindError:
-		return true
-	case ProcessingLogKindLifecycle:
-		return true
-	case ProcessingLogKindModelOutput:
-		return true
-	case ProcessingLogKindStderr:
-		return true
-	case ProcessingLogKindStdout:
-		return true
-	case ProcessingLogKindStructuredResult:
-		return true
-	case ProcessingLogKindTool:
-		return true
-	case ProcessingLogKindUsage:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UnderstandingCompletedEventEvent.
-const (
-	RebuildCompleted UnderstandingCompletedEventEvent = "rebuild_completed"
-)
-
-// Valid indicates whether the value is a known member of the UnderstandingCompletedEventEvent enum.
-func (e UnderstandingCompletedEventEvent) Valid() bool {
-	switch e {
-	case RebuildCompleted:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UnderstandingFailedEventEvent.
-const (
-	ImportFailed  UnderstandingFailedEventEvent = "import_failed"
-	RebuildFailed UnderstandingFailedEventEvent = "rebuild_failed"
-)
-
-// Valid indicates whether the value is a known member of the UnderstandingFailedEventEvent enum.
-func (e UnderstandingFailedEventEvent) Valid() bool {
-	switch e {
-	case ImportFailed:
-		return true
-	case RebuildFailed:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UnderstandingProgressEventEvent.
-const (
-	ImportStarted         UnderstandingProgressEventEvent = "import_started"
-	UnderstandingProgress UnderstandingProgressEventEvent = "understanding_progress"
-	UnderstandingStarted  UnderstandingProgressEventEvent = "understanding_started"
-)
-
-// Valid indicates whether the value is a known member of the UnderstandingProgressEventEvent enum.
-func (e UnderstandingProgressEventEvent) Valid() bool {
-	switch e {
-	case ImportStarted:
-		return true
-	case UnderstandingProgress:
-		return true
-	case UnderstandingStarted:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UnderstandingRunPipeline.
-const (
-	Regular UnderstandingRunPipeline = "regular"
-)
-
-// Valid indicates whether the value is a known member of the UnderstandingRunPipeline enum.
-func (e UnderstandingRunPipeline) Valid() bool {
-	switch e {
-	case Regular:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for UnderstandingState.
-const (
-	Done       UnderstandingState = "Done"
-	Failed     UnderstandingState = "Failed"
-	InProgress UnderstandingState = "InProgress"
-)
-
-// Valid indicates whether the value is a known member of the UnderstandingState enum.
-func (e UnderstandingState) Valid() bool {
-	switch e {
-	case Done:
-		return true
-	case Failed:
-		return true
-	case InProgress:
-		return true
-	default:
-		return false
-	}
-}
-
-// DerivedContent defines model for DerivedContent.
-type DerivedContent struct {
-	// Kind Example: extracted_text
-	Kind     string                  `json:"kind"`
-	Metadata *map[string]interface{} `json:"metadata,omitempty"`
-	Text     *string                 `json:"text,omitempty"`
-}
-
 // DuplicateMemory defines model for DuplicateMemory.
 type DuplicateMemory struct {
-	Id                 openapi_types.UUID `json:"id"`
-	UnderstandingState UnderstandingState `json:"understanding_state"`
+	Id openapi_types.UUID `json:"id"`
 }
 
 // Error defines model for Error.
@@ -251,41 +48,6 @@ type Error struct {
 	Message        string           `json:"message"`
 }
 
-// Fact defines model for Fact.
-type Fact struct {
-	// Category Example: bill
-	Category   string   `json:"category"`
-	Confidence *float64 `json:"confidence,omitempty"`
-
-	// Name Example: issue_date
-	Name string `json:"name"`
-
-	// Origin Extraction or import provenance that asserted the Fact.
-	Origin string `json:"origin"`
-
-	// Value Value asserted by the Fact. Must match value_type: string, JSON
-	// number, or an RFC 3339 string for datetime.
-	Value     interface{}   `json:"value"`
-	ValueType FactValueType `json:"value_type"`
-}
-
-// FactValueType defines model for Fact.ValueType.
-type FactValueType string
-
-// FactFilter defines model for FactFilter.
-type FactFilter struct {
-	Category string             `json:"category"`
-	Name     string             `json:"name"`
-	Operator FactFilterOperator `json:"operator"`
-
-	// Value String, JSON number, or RFC 3339 datetime string used for exact
-	// Fact filtering.
-	Value interface{} `json:"value"`
-}
-
-// FactFilterOperator defines model for FactFilter.Operator.
-type FactFilterOperator string
-
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -298,17 +60,7 @@ type HealthResponse struct {
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
 
-// ImportCompletedEvent defines model for ImportCompletedEvent.
-type ImportCompletedEvent struct {
-	Event  ImportCompletedEventEvent `json:"event"`
-	Memory MemorySummary             `json:"memory"`
-}
-
-// ImportCompletedEventEvent defines model for ImportCompletedEvent.Event.
-type ImportCompletedEventEvent string
-
-// ImportContext Stored provenance from the first successful import. Available values
-// also appear as Facts in the import category with origin import-client.
+// ImportContext Stored provenance from the first successful import.
 type ImportContext struct {
 	ByteSize             *int64     `json:"byte_size,omitempty"`
 	ContentHash          *string    `json:"content_hash,omitempty"`
@@ -320,49 +72,35 @@ type ImportContext struct {
 	RelativePath         *string    `json:"relative_path,omitempty"`
 }
 
-// ImportContextInput Optional client-observed provenance sent as one application/json multipart
-// part. The original filename comes from the file part. Omitted values
-// remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+// ImportContextInput Optional client-observed provenance sent as one application/json
+// multipart part. The original filename comes from the Blob part. Omitted
+// values remain unknown; malformed timestamps reject the import.
 type ImportContextInput struct {
 	FilesystemCreatedAt  *time.Time `json:"filesystem_created_at,omitempty"`
 	FilesystemModifiedAt *time.Time `json:"filesystem_modified_at,omitempty"`
-
-	// FullPath Original full path when the importing client can provide it.
-	FullPath *string `json:"full_path,omitempty"`
-
-	// RelativePath Client-provided relative import path, when available.
-	RelativePath *string `json:"relative_path,omitempty"`
-}
-
-// ImportEvent One JSON payload carried by an SSE event.
-type ImportEvent struct {
-	union json.RawMessage
+	FullPath             *string    `json:"full_path,omitempty"`
+	RelativePath         *string    `json:"relative_path,omitempty"`
 }
 
 // ImportMultipart defines model for ImportMultipart.
 type ImportMultipart struct {
-	// File One Blob with a nonblank filename in Content-Disposition. The server
-	// detects its Media Type from content first. For inconclusive detection,
-	// the part's Content-Type is used if valid.
+	// File One Blob of at most 100 MiB with a nonblank filename in
+	// Content-Disposition. The server detects its Media Type from content
+	// first and may fall back to a valid, specific part Content-Type.
 	File openapi_types.File `json:"file"`
 
-	// ImportContext Optional client-observed provenance sent as one application/json multipart
-	// part. The original filename comes from the file part. Omitted values
-	// remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+	// ImportContext Optional client-observed provenance sent as one application/json
+	// multipart part. The original filename comes from the Blob part. Omitted
+	// values remain unknown; malformed timestamps reject the import.
 	ImportContext *ImportContextInput `json:"import_context,omitempty"`
 }
 
 // MemoryDetail defines model for MemoryDetail.
 type MemoryDetail struct {
-	ActiveRun *UnderstandingRun `json:"active_run,omitempty"`
-
 	// ContentUrl Relative URL of the content download endpoint.
-	ContentUrl     *string          `json:"content_url,omitempty"`
-	DerivedContent []DerivedContent `json:"derived_content"`
-	Facts          []Fact           `json:"facts"`
+	ContentUrl *string `json:"content_url,omitempty"`
 
-	// ImportContext Stored provenance from the first successful import. Available values
-	// also appear as Facts in the import category with origin import-client.
+	// ImportContext Stored provenance from the first successful import.
 	ImportContext ImportContext `json:"import_context"`
 	Memory        MemorySummary `json:"memory"`
 }
@@ -375,8 +113,6 @@ type MemoryPage struct {
 
 // MemorySummary defines model for MemorySummary.
 type MemorySummary struct {
-	ActiveRunId *openapi_types.UUID `json:"active_run_id,omitempty"`
-
 	// BlobHash Canonical SHA-256 Blobref of the immutable Blob.
 	BlobHash           string             `json:"blob_hash"`
 	ByteSize           int64              `json:"byte_size"`
@@ -386,122 +122,7 @@ type MemorySummary struct {
 	OriginalCreatedAt  *time.Time         `json:"original_created_at,omitempty"`
 	OriginalFilename   string             `json:"original_filename"`
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
-	UnderstandingState UnderstandingState `json:"understanding_state"`
 }
-
-// ProcessingLog defines model for ProcessingLog.
-type ProcessingLog struct {
-	AttemptId openapi_types.UUID      `json:"attempt_id"`
-	Id        openapi_types.UUID      `json:"id"`
-	Kind      ProcessingLogKind       `json:"kind"`
-	MemoryId  openapi_types.UUID      `json:"memory_id"`
-	Message   string                  `json:"message"`
-	Metadata  *map[string]interface{} `json:"metadata,omitempty"`
-	RunId     *openapi_types.UUID     `json:"run_id,omitempty"`
-	Timestamp time.Time               `json:"timestamp"`
-	Truncated *bool                   `json:"truncated,omitempty"`
-}
-
-// ProcessingLogKind defines model for ProcessingLog.Kind.
-type ProcessingLogKind string
-
-// ProcessingLogPage defines model for ProcessingLogPage.
-type ProcessingLogPage struct {
-	Items      []ProcessingLog `json:"items"`
-	NextCursor *string         `json:"next_cursor,omitempty"`
-}
-
-// QueryPlan defines model for QueryPlan.
-type QueryPlan struct {
-	Explanation   *string      `json:"explanation,omitempty"`
-	FactFilters   []FactFilter `json:"fact_filters"`
-	FullTextTerms []string     `json:"full_text_terms"`
-}
-
-// RunPage defines model for RunPage.
-type RunPage struct {
-	Items      []UnderstandingRun `json:"items"`
-	NextCursor *string            `json:"next_cursor,omitempty"`
-}
-
-// SearchRequest defines model for SearchRequest.
-type SearchRequest struct {
-	Cursor *string `json:"cursor,omitempty"`
-	Limit  *int32  `json:"limit,omitempty"`
-	Query  string  `json:"query"`
-}
-
-// SearchResponse defines model for SearchResponse.
-type SearchResponse struct {
-	Items      []SearchResult `json:"items"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
-	Plan       QueryPlan      `json:"plan"`
-	Query      string         `json:"query"`
-}
-
-// SearchResult defines model for SearchResult.
-type SearchResult struct {
-	MatchedFacts []Fact        `json:"matched_facts"`
-	MatchedTerms []string      `json:"matched_terms"`
-	Memory       MemorySummary `json:"memory"`
-}
-
-// UnderstandingCompletedEvent defines model for UnderstandingCompletedEvent.
-type UnderstandingCompletedEvent struct {
-	Event  UnderstandingCompletedEventEvent `json:"event"`
-	Memory MemorySummary                    `json:"memory"`
-	Run    UnderstandingRun                 `json:"run"`
-}
-
-// UnderstandingCompletedEventEvent defines model for UnderstandingCompletedEvent.Event.
-type UnderstandingCompletedEventEvent string
-
-// UnderstandingEvent One JSON payload carried by a rebuild SSE event.
-type UnderstandingEvent struct {
-	union json.RawMessage
-}
-
-// UnderstandingFailedEvent defines model for UnderstandingFailedEvent.
-type UnderstandingFailedEvent struct {
-	Error    Error                         `json:"error"`
-	Event    UnderstandingFailedEventEvent `json:"event"`
-	MemoryId openapi_types.UUID            `json:"memory_id"`
-}
-
-// UnderstandingFailedEventEvent defines model for UnderstandingFailedEvent.Event.
-type UnderstandingFailedEventEvent string
-
-// UnderstandingProgressEvent defines model for UnderstandingProgressEvent.
-type UnderstandingProgressEvent struct {
-	Event    UnderstandingProgressEventEvent `json:"event"`
-	MemoryId openapi_types.UUID              `json:"memory_id"`
-	Message  *string                         `json:"message,omitempty"`
-	Percent  *float64                        `json:"percent,omitempty"`
-
-	// Phase Current understanding phase.
-	Phase string `json:"phase"`
-}
-
-// UnderstandingProgressEventEvent defines model for UnderstandingProgressEvent.Event.
-type UnderstandingProgressEventEvent string
-
-// UnderstandingRun defines model for UnderstandingRun.
-type UnderstandingRun struct {
-	Active            bool                     `json:"active"`
-	CompletedAt       time.Time                `json:"completed_at"`
-	CreatedAt         time.Time                `json:"created_at"`
-	ExtractorVersions *map[string]string       `json:"extractor_versions,omitempty"`
-	Id                openapi_types.UUID       `json:"id"`
-	MemoryId          openapi_types.UUID       `json:"memory_id"`
-	Pipeline          UnderstandingRunPipeline `json:"pipeline"`
-	Warnings          *[]string                `json:"warnings,omitempty"`
-}
-
-// UnderstandingRunPipeline defines model for UnderstandingRun.Pipeline.
-type UnderstandingRunPipeline string
-
-// UnderstandingState defines model for UnderstandingState.
-type UnderstandingState string
 
 // Cursor defines model for Cursor.
 type Cursor = string
@@ -512,300 +133,14 @@ type Limit = int32
 // MemoryId defines model for MemoryId.
 type MemoryId = openapi_types.UUID
 
-// RunId defines model for RunId.
-type RunId = openapi_types.UUID
-
 // BrowseMemoriesParams defines parameters for BrowseMemories.
 type BrowseMemoriesParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// ListProcessingLogsParams defines parameters for ListProcessingLogs.
-type ListProcessingLogsParams struct {
-	AttemptId *openapi_types.UUID `form:"attempt_id,omitempty" json:"attempt_id,omitempty"`
-	Limit     *int32              `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
 type ImportMemoryMultipartRequestBody = ImportMultipart
-
-// SearchMemoriesJSONRequestBody defines body for SearchMemories for application/json ContentType.
-type SearchMemoriesJSONRequestBody = SearchRequest
-
-// AsUnderstandingProgressEvent returns the union data inside the ImportEvent as a UnderstandingProgressEvent
-func (t ImportEvent) AsUnderstandingProgressEvent() (UnderstandingProgressEvent, error) {
-	var body UnderstandingProgressEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUnderstandingProgressEvent overwrites any union data inside the ImportEvent as the provided UnderstandingProgressEvent
-func (t *ImportEvent) FromUnderstandingProgressEvent(v UnderstandingProgressEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingProgressEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeUnderstandingProgressEvent performs a merge with any union data inside the ImportEvent, using the provided UnderstandingProgressEvent
-func (t *ImportEvent) MergeUnderstandingProgressEvent(v UnderstandingProgressEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingProgressEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsImportCompletedEvent returns the union data inside the ImportEvent as a ImportCompletedEvent
-func (t ImportEvent) AsImportCompletedEvent() (ImportCompletedEvent, error) {
-	var body ImportCompletedEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromImportCompletedEvent overwrites any union data inside the ImportEvent as the provided ImportCompletedEvent
-func (t *ImportEvent) FromImportCompletedEvent(v ImportCompletedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"ImportCompletedEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeImportCompletedEvent performs a merge with any union data inside the ImportEvent, using the provided ImportCompletedEvent
-func (t *ImportEvent) MergeImportCompletedEvent(v ImportCompletedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"ImportCompletedEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUnderstandingFailedEvent returns the union data inside the ImportEvent as a UnderstandingFailedEvent
-func (t ImportEvent) AsUnderstandingFailedEvent() (UnderstandingFailedEvent, error) {
-	var body UnderstandingFailedEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUnderstandingFailedEvent overwrites any union data inside the ImportEvent as the provided UnderstandingFailedEvent
-func (t *ImportEvent) FromUnderstandingFailedEvent(v UnderstandingFailedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingFailedEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeUnderstandingFailedEvent performs a merge with any union data inside the ImportEvent, using the provided UnderstandingFailedEvent
-func (t *ImportEvent) MergeUnderstandingFailedEvent(v UnderstandingFailedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingFailedEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t ImportEvent) Discriminator() (string, error) {
-	var discriminator struct {
-		Discriminator string `json:"event"`
-	}
-	err := json.Unmarshal(t.union, &discriminator)
-	return discriminator.Discriminator, err
-}
-
-func (t ImportEvent) ValueByDiscriminator() (interface{}, error) {
-	discriminator, err := t.Discriminator()
-	if err != nil {
-		return nil, err
-	}
-	switch discriminator {
-	case "ImportCompletedEvent":
-		return t.AsImportCompletedEvent()
-	case "UnderstandingFailedEvent":
-		return t.AsUnderstandingFailedEvent()
-	case "UnderstandingProgressEvent":
-		return t.AsUnderstandingProgressEvent()
-	default:
-		return nil, errors.New("unknown discriminator value: " + discriminator)
-	}
-}
-
-func (t ImportEvent) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *ImportEvent) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsUnderstandingProgressEvent returns the union data inside the UnderstandingEvent as a UnderstandingProgressEvent
-func (t UnderstandingEvent) AsUnderstandingProgressEvent() (UnderstandingProgressEvent, error) {
-	var body UnderstandingProgressEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUnderstandingProgressEvent overwrites any union data inside the UnderstandingEvent as the provided UnderstandingProgressEvent
-func (t *UnderstandingEvent) FromUnderstandingProgressEvent(v UnderstandingProgressEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingProgressEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeUnderstandingProgressEvent performs a merge with any union data inside the UnderstandingEvent, using the provided UnderstandingProgressEvent
-func (t *UnderstandingEvent) MergeUnderstandingProgressEvent(v UnderstandingProgressEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingProgressEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUnderstandingCompletedEvent returns the union data inside the UnderstandingEvent as a UnderstandingCompletedEvent
-func (t UnderstandingEvent) AsUnderstandingCompletedEvent() (UnderstandingCompletedEvent, error) {
-	var body UnderstandingCompletedEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUnderstandingCompletedEvent overwrites any union data inside the UnderstandingEvent as the provided UnderstandingCompletedEvent
-func (t *UnderstandingEvent) FromUnderstandingCompletedEvent(v UnderstandingCompletedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingCompletedEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeUnderstandingCompletedEvent performs a merge with any union data inside the UnderstandingEvent, using the provided UnderstandingCompletedEvent
-func (t *UnderstandingEvent) MergeUnderstandingCompletedEvent(v UnderstandingCompletedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingCompletedEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUnderstandingFailedEvent returns the union data inside the UnderstandingEvent as a UnderstandingFailedEvent
-func (t UnderstandingEvent) AsUnderstandingFailedEvent() (UnderstandingFailedEvent, error) {
-	var body UnderstandingFailedEvent
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUnderstandingFailedEvent overwrites any union data inside the UnderstandingEvent as the provided UnderstandingFailedEvent
-func (t *UnderstandingEvent) FromUnderstandingFailedEvent(v UnderstandingFailedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingFailedEvent"}`))
-	t.union = b
-	return err
-}
-
-// MergeUnderstandingFailedEvent performs a merge with any union data inside the UnderstandingEvent, using the provided UnderstandingFailedEvent
-func (t *UnderstandingEvent) MergeUnderstandingFailedEvent(v UnderstandingFailedEvent) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	b, err = runtime.JSONMerge(b, []byte(`{"event":"UnderstandingFailedEvent"}`))
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t UnderstandingEvent) Discriminator() (string, error) {
-	var discriminator struct {
-		Discriminator string `json:"event"`
-	}
-	err := json.Unmarshal(t.union, &discriminator)
-	return discriminator.Discriminator, err
-}
-
-func (t UnderstandingEvent) ValueByDiscriminator() (interface{}, error) {
-	discriminator, err := t.Discriminator()
-	if err != nil {
-		return nil, err
-	}
-	switch discriminator {
-	case "UnderstandingCompletedEvent":
-		return t.AsUnderstandingCompletedEvent()
-	case "UnderstandingFailedEvent":
-		return t.AsUnderstandingFailedEvent()
-	case "UnderstandingProgressEvent":
-		return t.AsUnderstandingProgressEvent()
-	default:
-		return nil, errors.New("unknown discriminator value: " + discriminator)
-	}
-}
-
-func (t UnderstandingEvent) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *UnderstandingEvent) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -886,90 +221,38 @@ type ClientInterface interface {
 	// Corresponds with GET /livez (the `GetLiveness` operationId).
 	GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// BrowseMemories Browse Memories
-	//
-	// Returns whole Memories.
+	// BrowseMemories Browse committed Memories
 	//
 	// Corresponds with GET /memories (the `BrowseMemories` operationId).
 	BrowseMemories(ctx context.Context, params *BrowseMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ImportMemoryWithBody Import one Blob and understand it
+	// ImportMemoryWithBody Durably import one Blob as a Memory
 	//
-	// Upload one Blob. The request remains open until the
-	// understanding attempt reaches a terminal result. The response is an
-	// SSE stream. Once the server has committed the Blob and InProgress
-	// Memory, disconnecting does not cancel server-side understanding.
-	// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
-	// 409 before an SSE response begins.
+	// Upload one Blob and return after its bytes are durably published and
+	// the Memory is committed. A Blob may contain at most 100 MiB
+	// (104857600 bytes). The server permits bounded multipart protocol
+	// overhead in addition to that Blob limit. Duplicate content is rejected
+	// with HTTP 409. Document Understanding is not performed by this request.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetMemory Get Memory details
+	// GetMemory Get committed Memory details
 	//
 	// Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 	GetMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetMemoryContent Download a Memory's immutable Blob
+	// GetMemoryContent Download and verify a Memory's immutable Blob
 	//
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListProcessingLogs List processing logs for a Memory
-	//
-	// Includes logs for failed attempts that did not create a Run.
-	//
-	// Corresponds with GET /memories/{memoryId}/logs (the `ListProcessingLogs` operationId).
-	ListProcessingLogs(ctx context.Context, memoryId MemoryId, params *ListProcessingLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RebuildMemory Rebuild a Memory's understanding
-	//
-	// Stages a complete new Run and activates it atomically on success.
-	//
-	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-	RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListUnderstandingRuns List successful Understanding Runs
-	//
-	// Corresponds with GET /memories/{memoryId}/runs (the `ListUnderstandingRuns` operationId).
-	ListUnderstandingRuns(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetUnderstandingRun Get one Understanding Run
-	//
-	// Corresponds with GET /memories/{memoryId}/runs/{runId} (the `GetUnderstandingRun` operationId).
-	GetUnderstandingRun(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListRunLogs List logs associated with an Understanding Run
-	//
-	// Corresponds with GET /memories/{memoryId}/runs/{runId}/logs (the `ListRunLogs` operationId).
-	ListRunLogs(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Check whether the server can accept requests
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SearchMemoriesWithBody Search Memories with a natural-language query
-	//
-	// Interprets the query into a visible Query Plan and immediately executes
-	// exact Fact filters plus mandatory residual full-text terms.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /search (the `SearchMemories` operationId).
-	SearchMemoriesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SearchMemories Search Memories with a natural-language query
-	//
-	// Interprets the query into a visible Query Plan and immediately executes
-	// exact Fact filters plus mandatory residual full-text terms.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /search (the `SearchMemories` operationId).
-	SearchMemories(ctx context.Context, body SearchMemoriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetLiveness Check whether the process is alive
@@ -987,9 +270,7 @@ func (c *Client) GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// BrowseMemories Browse Memories
-//
-// Returns whole Memories.
+// BrowseMemories Browse committed Memories
 //
 // Corresponds with GET /memories (the `BrowseMemories` operationId).
 func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1004,14 +285,13 @@ func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParam
 	return c.Client.Do(req)
 }
 
-// ImportMemoryWithBody Import one Blob and understand it
+// ImportMemoryWithBody Durably import one Blob as a Memory
 //
-// Upload one Blob. The request remains open until the
-// understanding attempt reaches a terminal result. The response is an
-// SSE stream. Once the server has committed the Blob and InProgress
-// Memory, disconnecting does not cancel server-side understanding.
-// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
-// 409 before an SSE response begins.
+// Upload one Blob and return after its bytes are durably published and
+// the Memory is committed. A Blob may contain at most 100 MiB
+// (104857600 bytes). The server permits bounded multipart protocol
+// overhead in addition to that Blob limit. Duplicate content is rejected
+// with HTTP 409. Document Understanding is not performed by this request.
 //
 // Takes any type of body and a specified content type.
 //
@@ -1028,7 +308,7 @@ func (c *Client) ImportMemoryWithBody(ctx context.Context, contentType string, b
 	return c.Client.Do(req)
 }
 
-// GetMemory Get Memory details
+// GetMemory Get committed Memory details
 //
 // Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 func (c *Client) GetMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1043,90 +323,11 @@ func (c *Client) GetMemory(ctx context.Context, memoryId MemoryId, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// GetMemoryContent Download a Memory's immutable Blob
+// GetMemoryContent Download and verify a Memory's immutable Blob
 //
 // Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 func (c *Client) GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetMemoryContentRequest(c.Server, memoryId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListProcessingLogs List processing logs for a Memory
-//
-// Includes logs for failed attempts that did not create a Run.
-//
-// Corresponds with GET /memories/{memoryId}/logs (the `ListProcessingLogs` operationId).
-func (c *Client) ListProcessingLogs(ctx context.Context, memoryId MemoryId, params *ListProcessingLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListProcessingLogsRequest(c.Server, memoryId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RebuildMemory Rebuild a Memory's understanding
-//
-// Stages a complete new Run and activates it atomically on success.
-//
-// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-func (c *Client) RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRebuildMemoryRequest(c.Server, memoryId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListUnderstandingRuns List successful Understanding Runs
-//
-// Corresponds with GET /memories/{memoryId}/runs (the `ListUnderstandingRuns` operationId).
-func (c *Client) ListUnderstandingRuns(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListUnderstandingRunsRequest(c.Server, memoryId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetUnderstandingRun Get one Understanding Run
-//
-// Corresponds with GET /memories/{memoryId}/runs/{runId} (the `GetUnderstandingRun` operationId).
-func (c *Client) GetUnderstandingRun(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetUnderstandingRunRequest(c.Server, memoryId, runId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListRunLogs List logs associated with an Understanding Run
-//
-// Corresponds with GET /memories/{memoryId}/runs/{runId}/logs (the `ListRunLogs` operationId).
-func (c *Client) ListRunLogs(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListRunLogsRequest(c.Server, memoryId, runId)
 	if err != nil {
 		return nil, err
 	}
@@ -1142,46 +343,6 @@ func (c *Client) ListRunLogs(ctx context.Context, memoryId MemoryId, runId RunId
 // Corresponds with GET /readyz (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SearchMemoriesWithBody Search Memories with a natural-language query
-//
-// Interprets the query into a visible Query Plan and immediately executes
-// exact Fact filters plus mandatory residual full-text terms.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /search (the `SearchMemories` operationId).
-func (c *Client) SearchMemoriesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchMemoriesRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SearchMemories Search Memories with a natural-language query
-//
-// Interprets the query into a visible Query Plan and immediately executes
-// exact Fact filters plus mandatory residual full-text terms.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /search (the `SearchMemories` operationId).
-func (c *Client) SearchMemories(ctx context.Context, body SearchMemoriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchMemoriesRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1382,229 +543,6 @@ func NewGetMemoryContentRequest(server string, memoryId MemoryId) (*http.Request
 	return req, nil
 }
 
-// NewListProcessingLogsRequest constructs an http.Request for the ListProcessingLogs method
-func NewListProcessingLogsRequest(server string, memoryId MemoryId, params *ListProcessingLogsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/logs", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.AttemptId != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "attempt_id", *params.AttemptId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "uuid"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRebuildMemoryRequest constructs an http.Request for the RebuildMemory method
-func NewRebuildMemoryRequest(server string, memoryId MemoryId) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/rebuild", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListUnderstandingRunsRequest constructs an http.Request for the ListUnderstandingRuns method
-func NewListUnderstandingRunsRequest(server string, memoryId MemoryId) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/runs", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetUnderstandingRunRequest constructs an http.Request for the GetUnderstandingRun method
-func NewGetUnderstandingRunRequest(server string, memoryId MemoryId, runId RunId) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runId", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/runs/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListRunLogsRequest constructs an http.Request for the ListRunLogs method
-func NewListRunLogsRequest(server string, memoryId MemoryId, runId RunId) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "runId", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/runs/%s/logs", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewGetReadinessRequest constructs an http.Request for the GetReadiness method
 func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
@@ -1628,46 +566,6 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewSearchMemoriesRequest calls the generic SearchMemories builder with application/json body
-func NewSearchMemoriesRequest(server string, body SearchMemoriesJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSearchMemoriesRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewSearchMemoriesRequestWithBody constructs an http.Request for the SearchMemories method, with any body, and a specified content type
-func NewSearchMemoriesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/search")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1723,81 +621,39 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /livez (the `GetLiveness` operationId).
 	GetLivenessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetLivenessResponse, error)
 
-	// BrowseMemoriesWithResponse Browse Memories
-	//
-	// Returns whole Memories.
+	// BrowseMemoriesWithResponse Browse committed Memories
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /memories (the `BrowseMemories` operationId).
 	BrowseMemoriesWithResponse(ctx context.Context, params *BrowseMemoriesParams, reqEditors ...RequestEditorFn) (*BrowseMemoriesResponse, error)
 
-	// ImportMemoryWithBodyWithResponse Import one Blob and understand it
+	// ImportMemoryWithBodyWithResponse Durably import one Blob as a Memory
 	//
-	// Upload one Blob. The request remains open until the
-	// understanding attempt reaches a terminal result. The response is an
-	// SSE stream. Once the server has committed the Blob and InProgress
-	// Memory, disconnecting does not cancel server-side understanding.
-	// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
-	// 409 before an SSE response begins.
+	// Upload one Blob and return after its bytes are durably published and
+	// the Memory is committed. A Blob may contain at most 100 MiB
+	// (104857600 bytes). The server permits bounded multipart protocol
+	// overhead in addition to that Blob limit. Duplicate content is rejected
+	// with HTTP 409. Document Understanding is not performed by this request.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportMemoryResponse, error)
 
-	// GetMemoryWithResponse Get Memory details
+	// GetMemoryWithResponse Get committed Memory details
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 	GetMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*GetMemoryResponse, error)
 
-	// GetMemoryContentWithResponse Download a Memory's immutable Blob
+	// GetMemoryContentWithResponse Download and verify a Memory's immutable Blob
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContentWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*GetMemoryContentResponse, error)
-
-	// ListProcessingLogsWithResponse List processing logs for a Memory
-	//
-	// Includes logs for failed attempts that did not create a Run.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /memories/{memoryId}/logs (the `ListProcessingLogs` operationId).
-	ListProcessingLogsWithResponse(ctx context.Context, memoryId MemoryId, params *ListProcessingLogsParams, reqEditors ...RequestEditorFn) (*ListProcessingLogsResponse, error)
-
-	// RebuildMemoryWithResponse Rebuild a Memory's understanding
-	//
-	// Stages a complete new Run and activates it atomically on success.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-	RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error)
-
-	// ListUnderstandingRunsWithResponse List successful Understanding Runs
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /memories/{memoryId}/runs (the `ListUnderstandingRuns` operationId).
-	ListUnderstandingRunsWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*ListUnderstandingRunsResponse, error)
-
-	// GetUnderstandingRunWithResponse Get one Understanding Run
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /memories/{memoryId}/runs/{runId} (the `GetUnderstandingRun` operationId).
-	GetUnderstandingRunWithResponse(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*GetUnderstandingRunResponse, error)
-
-	// ListRunLogsWithResponse List logs associated with an Understanding Run
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /memories/{memoryId}/runs/{runId}/logs (the `ListRunLogs` operationId).
-	ListRunLogsWithResponse(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*ListRunLogsResponse, error)
 
 	// GetReadinessWithResponse Check whether the server can accept requests
 	//
@@ -1805,26 +661,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
-
-	// SearchMemoriesWithBodyWithResponse Search Memories with a natural-language query
-	//
-	// Interprets the query into a visible Query Plan and immediately executes
-	// exact Fact filters plus mandatory residual full-text terms.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /search (the `SearchMemories` operationId).
-	SearchMemoriesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error)
-
-	// SearchMemoriesWithResponse Search Memories with a natural-language query
-	//
-	// Interprets the query into a visible Query Plan and immediately executes
-	// exact Fact filters plus mandatory residual full-text terms.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /search (the `SearchMemories` operationId).
-	SearchMemoriesWithResponse(ctx context.Context, body SearchMemoriesJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error)
 }
 
 type GetLivenessResponse struct {
@@ -1919,6 +755,8 @@ func (r BrowseMemoriesResponse) ContentType() string {
 type ImportMemoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MemorySummary
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
@@ -1927,6 +765,11 @@ type ImportMemoryResponse struct {
 	JSON413 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ImportMemoryResponse) GetJSON201() *MemorySummary {
+	return r.JSON201
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -2037,6 +880,8 @@ type GetMemoryContentResponse struct {
 	HTTPResponse *http.Response
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *Error
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *Error
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetMemoryContentResponse200Headers
 }
@@ -2044,6 +889,11 @@ type GetMemoryContentResponse struct {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetMemoryContentResponse) GetJSON404() *Error {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetMemoryContentResponse) GetJSON500() *Error {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -2069,246 +919,6 @@ func (r GetMemoryContentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetMemoryContentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListProcessingLogsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ProcessingLogPage
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListProcessingLogsResponse) GetJSON200() *ProcessingLogPage {
-	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListProcessingLogsResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetBody returns the raw response body bytes
-func (r ListProcessingLogsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListProcessingLogsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListProcessingLogsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListProcessingLogsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RebuildMemoryResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *Error
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r RebuildMemoryResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r RebuildMemoryResponse) GetJSON409() *Error {
-	return r.JSON409
-}
-
-// GetBody returns the raw response body bytes
-func (r RebuildMemoryResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RebuildMemoryResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RebuildMemoryResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RebuildMemoryResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListUnderstandingRunsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RunPage
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListUnderstandingRunsResponse) GetJSON200() *RunPage {
-	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListUnderstandingRunsResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetBody returns the raw response body bytes
-func (r ListUnderstandingRunsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListUnderstandingRunsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListUnderstandingRunsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListUnderstandingRunsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetUnderstandingRunResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *UnderstandingRun
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetUnderstandingRunResponse) GetJSON200() *UnderstandingRun {
-	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetUnderstandingRunResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetBody returns the raw response body bytes
-func (r GetUnderstandingRunResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetUnderstandingRunResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetUnderstandingRunResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetUnderstandingRunResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ListRunLogsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ProcessingLogPage
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListRunLogsResponse) GetJSON200() *ProcessingLogPage {
-	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListRunLogsResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetBody returns the raw response body bytes
-func (r ListRunLogsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListRunLogsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListRunLogsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListRunLogsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2356,61 +966,6 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
-type SearchMemoriesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *SearchResponse
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *Error
-	// JSON422 the response for an HTTP 422 `application/json` response
-	JSON422 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SearchMemoriesResponse) GetJSON200() *SearchResponse {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SearchMemoriesResponse) GetJSON400() *Error {
-	return r.JSON400
-}
-
-// GetJSON422 returns the response for an HTTP 422 `application/json` response
-func (r SearchMemoriesResponse) GetJSON422() *Error {
-	return r.JSON422
-}
-
-// GetBody returns the raw response body bytes
-func (r SearchMemoriesResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SearchMemoriesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SearchMemoriesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SearchMemoriesResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetLivenessWithResponse Check whether the process is alive
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2424,9 +979,7 @@ func (c *ClientWithResponses) GetLivenessWithResponse(ctx context.Context, reqEd
 	return ParseGetLivenessResponse(rsp)
 }
 
-// BrowseMemoriesWithResponse Browse Memories
-//
-// Returns whole Memories.
+// BrowseMemoriesWithResponse Browse committed Memories
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -2439,14 +992,13 @@ func (c *ClientWithResponses) BrowseMemoriesWithResponse(ctx context.Context, pa
 	return ParseBrowseMemoriesResponse(rsp)
 }
 
-// ImportMemoryWithBodyWithResponse Import one Blob and understand it
+// ImportMemoryWithBodyWithResponse Durably import one Blob as a Memory
 //
-// Upload one Blob. The request remains open until the
-// understanding attempt reaches a terminal result. The response is an
-// SSE stream. Once the server has committed the Blob and InProgress
-// Memory, disconnecting does not cancel server-side understanding.
-// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
-// 409 before an SSE response begins.
+// Upload one Blob and return after its bytes are durably published and
+// the Memory is committed. A Blob may contain at most 100 MiB
+// (104857600 bytes). The server permits bounded multipart protocol
+// overhead in addition to that Blob limit. Duplicate content is rejected
+// with HTTP 409. Document Understanding is not performed by this request.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -2459,7 +1011,7 @@ func (c *ClientWithResponses) ImportMemoryWithBodyWithResponse(ctx context.Conte
 	return ParseImportMemoryResponse(rsp)
 }
 
-// GetMemoryWithResponse Get Memory details
+// GetMemoryWithResponse Get committed Memory details
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -2472,7 +1024,7 @@ func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, memoryI
 	return ParseGetMemoryResponse(rsp)
 }
 
-// GetMemoryContentWithResponse Download a Memory's immutable Blob
+// GetMemoryContentWithResponse Download and verify a Memory's immutable Blob
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -2483,75 +1035,6 @@ func (c *ClientWithResponses) GetMemoryContentWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseGetMemoryContentResponse(rsp)
-}
-
-// ListProcessingLogsWithResponse List processing logs for a Memory
-//
-// Includes logs for failed attempts that did not create a Run.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /memories/{memoryId}/logs (the `ListProcessingLogs` operationId).
-func (c *ClientWithResponses) ListProcessingLogsWithResponse(ctx context.Context, memoryId MemoryId, params *ListProcessingLogsParams, reqEditors ...RequestEditorFn) (*ListProcessingLogsResponse, error) {
-	rsp, err := c.ListProcessingLogs(ctx, memoryId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListProcessingLogsResponse(rsp)
-}
-
-// RebuildMemoryWithResponse Rebuild a Memory's understanding
-//
-// Stages a complete new Run and activates it atomically on success.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-func (c *ClientWithResponses) RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error) {
-	rsp, err := c.RebuildMemory(ctx, memoryId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRebuildMemoryResponse(rsp)
-}
-
-// ListUnderstandingRunsWithResponse List successful Understanding Runs
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /memories/{memoryId}/runs (the `ListUnderstandingRuns` operationId).
-func (c *ClientWithResponses) ListUnderstandingRunsWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*ListUnderstandingRunsResponse, error) {
-	rsp, err := c.ListUnderstandingRuns(ctx, memoryId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListUnderstandingRunsResponse(rsp)
-}
-
-// GetUnderstandingRunWithResponse Get one Understanding Run
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /memories/{memoryId}/runs/{runId} (the `GetUnderstandingRun` operationId).
-func (c *ClientWithResponses) GetUnderstandingRunWithResponse(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*GetUnderstandingRunResponse, error) {
-	rsp, err := c.GetUnderstandingRun(ctx, memoryId, runId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetUnderstandingRunResponse(rsp)
-}
-
-// ListRunLogsWithResponse List logs associated with an Understanding Run
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /memories/{memoryId}/runs/{runId}/logs (the `ListRunLogs` operationId).
-func (c *ClientWithResponses) ListRunLogsWithResponse(ctx context.Context, memoryId MemoryId, runId RunId, reqEditors ...RequestEditorFn) (*ListRunLogsResponse, error) {
-	rsp, err := c.ListRunLogs(ctx, memoryId, runId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListRunLogsResponse(rsp)
 }
 
 // GetReadinessWithResponse Check whether the server can accept requests
@@ -2565,38 +1048,6 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetReadinessResponse(rsp)
-}
-
-// SearchMemoriesWithBodyWithResponse Search Memories with a natural-language query
-//
-// Interprets the query into a visible Query Plan and immediately executes
-// exact Fact filters plus mandatory residual full-text terms.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /search (the `SearchMemories` operationId).
-func (c *ClientWithResponses) SearchMemoriesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error) {
-	rsp, err := c.SearchMemoriesWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSearchMemoriesResponse(rsp)
-}
-
-// SearchMemoriesWithResponse Search Memories with a natural-language query
-//
-// Interprets the query into a visible Query Plan and immediately executes
-// exact Fact filters plus mandatory residual full-text terms.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /search (the `SearchMemories` operationId).
-func (c *ClientWithResponses) SearchMemoriesWithResponse(ctx context.Context, body SearchMemoriesJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error) {
-	rsp, err := c.SearchMemories(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSearchMemoriesResponse(rsp)
 }
 
 // ParseGetLivenessResponse parses an HTTP response from a GetLivenessWithResponse call
@@ -2672,6 +1123,13 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MemorySummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2759,6 +1217,13 @@ func ParseGetMemoryContentResponse(rsp *http.Response) (*GetMemoryContentRespons
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	switch {
@@ -2784,171 +1249,6 @@ func ParseGetMemoryContentResponse(rsp *http.Response) (*GetMemoryContentRespons
 	return response, nil
 }
 
-// ParseListProcessingLogsResponse parses an HTTP response from a ListProcessingLogsWithResponse call
-func ParseListProcessingLogsResponse(rsp *http.Response) (*ListProcessingLogsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListProcessingLogsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProcessingLogPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRebuildMemoryResponse parses an HTTP response from a RebuildMemoryWithResponse call
-func ParseRebuildMemoryResponse(rsp *http.Response) (*RebuildMemoryResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RebuildMemoryResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListUnderstandingRunsResponse parses an HTTP response from a ListUnderstandingRunsWithResponse call
-func ParseListUnderstandingRunsResponse(rsp *http.Response) (*ListUnderstandingRunsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListUnderstandingRunsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RunPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetUnderstandingRunResponse parses an HTTP response from a GetUnderstandingRunWithResponse call
-func ParseGetUnderstandingRunResponse(rsp *http.Response) (*GetUnderstandingRunResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetUnderstandingRunResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UnderstandingRun
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListRunLogsResponse parses an HTTP response from a ListRunLogsWithResponse call
-func ParseListRunLogsResponse(rsp *http.Response) (*ListRunLogsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListRunLogsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProcessingLogPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
 func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2969,46 +1269,6 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSearchMemoriesResponse parses an HTTP response from a SearchMemoriesWithResponse call
-func ParseSearchMemoriesResponse(rsp *http.Response) (*SearchMemoriesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SearchMemoriesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SearchResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
 
 	}
 

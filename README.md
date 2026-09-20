@@ -2,6 +2,16 @@
 
 Personal Memory Vault. The current vertical slice durably imports and restores any Blob up to 100 MiB through an OpenAPI-first Go server and CLI.
 
+The implemented slice supports import, browse, detail, and download. It ends a
+successful import after the Blob is durably published and its Memory is
+committed. Document Understanding, search, processing history, and Rebuild are
+not exposed yet; `docs/MVP.md` describes the target product rather than the
+current implementation.
+
+The development database has no migration path yet. If its schema is
+incompatible, recreate the SQLite database and reimport from the original
+content.
+
 The server detects a Blob's Media Type from its content. When detection yields only generic binary or plain text, a specific multipart part `Content-Type` supplies the type; unknown content remains importable. The CLI supplies a type based on the filename extension, including `text/markdown` for `.md` and `.markdown` files.
 
 The language-neutral contract is `api/openapi.yaml`. The `server/` and `cli/` directories are independent Go modules with their own generated bindings; future web and integration clients can remain independent siblings too.

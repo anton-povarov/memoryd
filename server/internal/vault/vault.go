@@ -8,10 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
@@ -33,16 +34,9 @@ const (
 )
 
 var (
-	ErrBlobTooLarge   = errors.New("blob exceeds the 100 MiB limit")
-	ErrMemoryNotFound = errors.New("memory not found")
-)
-
-type State string
-
-const (
-	StateInProgress State = "InProgress"
-	StateDone       State = "Done"
-	StateFailed     State = "Failed"
+	ErrBlobTooLarge    = errors.New("blob exceeds the 100 MiB limit")
+	ErrBlobUnavailable = errors.New("blob is missing or corrupt")
+	ErrMemoryNotFound  = errors.New("memory not found")
 )
 
 type Import struct {
@@ -62,15 +56,12 @@ type ImportContext struct {
 }
 
 type Memory struct {
-	ID                     uuid.UUID
-	BlobRef                Blobref
-	ImportContext          ImportContext
-	MediaType              string
-	ByteSize               int64
-	ImportedAt             time.Time
-	UnderstandingState     State
-	RunID                  *uuid.UUID
-	UnderstandingCompleted *time.Time
+	ID            uuid.UUID
+	BlobRef       Blobref
+	ImportContext ImportContext
+	MediaType     string
+	ByteSize      int64
+	ImportedAt    time.Time
 }
 
 // ListCursor identifies the last Memory observed by a caller. It is kept
@@ -105,6 +96,9 @@ func Open(ctx context.Context, databasePath, blobDir, uploadDir string) (*Vault,
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create Blob upload directory: %w", err)
 	}
+	if err := removeAbandonedTemporaryFiles(uploadDir, contentDir); err != nil {
+		return nil, err
+	}
 
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
@@ -124,6 +118,10 @@ func Open(ctx context.Context, databasePath, blobDir, uploadDir string) (*Vault,
 }
 
 func (v *Vault) initialize(ctx context.Context) error {
+	if _, err := v.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("enable Vault foreign keys: %w", err)
+	}
+
 	const schema = `CREATE TABLE IF NOT EXISTS memories (
 		id TEXT PRIMARY KEY,
 		blob_hash TEXT NOT NULL UNIQUE CHECK (
@@ -138,10 +136,33 @@ func (v *Vault) initialize(ctx context.Context) error {
 		filesystem_modified_at TEXT,
 		media_type TEXT NOT NULL,
 		byte_size INTEGER NOT NULL,
-		imported_at TEXT NOT NULL,
-		understanding_state TEXT NOT NULL,
-		run_id TEXT,
-		understanding_completed_at TEXT
+		imported_at TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS understanding_runs (
+		id TEXT PRIMARY KEY,
+		memory_id TEXT NOT NULL,
+		pipeline TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		completed_at TEXT NOT NULL,
+		extractor_versions_json TEXT NOT NULL DEFAULT '{}'
+			CHECK (
+				json_valid(extractor_versions_json) AND
+				json_type(extractor_versions_json) = 'object'
+			),
+		warnings_json TEXT NOT NULL DEFAULT '[]'
+			CHECK (
+				json_valid(warnings_json) AND
+				json_type(warnings_json) = 'array'
+			),
+		UNIQUE (id, memory_id),
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS active_understanding_runs (
+		memory_id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL UNIQUE,
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+		FOREIGN KEY (run_id, memory_id)
+			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
 	)`
 	if _, err := v.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize Vault database: %w", err)
@@ -174,7 +195,79 @@ func (v *Vault) initialize(ctx context.Context) error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close stored Blobref rows: %w", err)
 	}
+	if err := v.validateSchema(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (v *Vault) validateSchema(ctx context.Context) error {
+	wantColumns := map[string][]string{
+		"memories": {
+			"id",
+			"blob_hash",
+			"original_filename",
+			"relative_path",
+			"full_path",
+			"filesystem_created_at",
+			"filesystem_modified_at",
+			"media_type",
+			"byte_size",
+			"imported_at",
+		},
+		"understanding_runs": {
+			"id",
+			"memory_id",
+			"pipeline",
+			"created_at",
+			"completed_at",
+			"extractor_versions_json",
+			"warnings_json",
+		},
+		"active_understanding_runs": {"memory_id", "run_id"},
+	}
+	for table, want := range wantColumns {
+		got, err := tableColumns(ctx, v.db, table)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(got, want) {
+			return fmt.Errorf(
+				"vault schema is incompatible: table %s has columns %v; "+
+					"recreate the database and reimport content",
+				table,
+				got,
+			)
+		}
+	}
+	return nil
+}
+
+func tableColumns(ctx context.Context, database *sql.DB, table string) ([]string, error) {
+	rows, err := database.QueryContext(
+		ctx,
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`,
+		table,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return nil, fmt.Errorf("read %s schema: %w", table, err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s schema: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close %s schema rows: %w", table, err)
+	}
+	return columns, nil
 }
 
 func (v *Vault) Close() error {
@@ -209,9 +302,13 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	byteSize, copyErr := copyWithLimit(
 		io.MultiWriter(temporary, hash), candidate.Content, MaxBlobBytes,
 	)
+	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if copyErr != nil {
 		return Memory{}, copyErr
+	}
+	if syncErr != nil {
+		return Memory{}, fmt.Errorf("flush temporary Blob: %w", syncErr)
 	}
 	if closeErr != nil {
 		return Memory{}, fmt.Errorf("close temporary Blob: %w", closeErr)
@@ -231,38 +328,31 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"temporary_path", temporaryPath,
 	)
 	finalPath := v.blobPath(blobRef)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+	if err := v.ensureBlobDirectory(finalPath); err != nil {
 		return Memory{}, fmt.Errorf("create Blob shard directory: %w", err)
 	}
-	if _, err := os.Stat(finalPath); errors.Is(err, os.ErrNotExist) {
-		if err := publishBlob(temporaryPath, finalPath); err != nil {
-			return Memory{}, fmt.Errorf("publish Blob: %w", err)
-		}
-		logger.DebugContext(ctx, "Blob published", "blob_hash", blobRef.String())
-	} else if err != nil {
-		return Memory{}, fmt.Errorf("inspect Blob destination: %w", err)
+	if err := publishBlob(temporaryPath, finalPath, blobRef, byteSize); err != nil {
+		return Memory{}, fmt.Errorf("publish Blob: %w", err)
 	}
+	logger.DebugContext(ctx, "Blob published or verified", "blob_hash", blobRef.String())
 
 	now := time.Now().UTC()
 	memory := Memory{
-		ID:                     uuid.New(),
-		BlobRef:                blobRef,
-		ImportContext:          importContext,
-		MediaType:              mediaType,
-		ByteSize:               byteSize,
-		ImportedAt:             now,
-		UnderstandingState:     StateInProgress,
-		RunID:                  nil,
-		UnderstandingCompleted: nil,
+		ID:            uuid.New(),
+		BlobRef:       blobRef,
+		ImportContext: importContext,
+		MediaType:     mediaType,
+		ByteSize:      byteSize,
+		ImportedAt:    now,
 	}
 
-	// The Blob upload is complete now. Committing the Memory and finishing the
-	// deterministic understanding stub must survive client disconnection.
+	// The Blob is durable now. The Memory commit must survive client
+	// disconnection so successful storage is never reported as a failed import.
 	insertSQL := `INSERT INTO memories (
 		id, blob_hash, original_filename, relative_path, full_path,
 		filesystem_created_at, filesystem_modified_at, media_type, byte_size,
-		imported_at, understanding_state
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`
+		imported_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`
 
 	durableContext := context.WithoutCancel(ctx)
 	result, err := v.db.ExecContext(
@@ -278,7 +368,6 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		memory.MediaType,
 		memory.ByteSize,
 		memory.ImportedAt.Format(time.RFC3339Nano),
-		string(memory.UnderstandingState),
 	)
 	if err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
@@ -299,31 +388,11 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, &DuplicateError{Existing: existing}
 	}
 
-	runID := uuid.New()
-	completed := time.Now().UTC()
-	_, err = v.db.ExecContext(
-		durableContext,
-		`UPDATE memories SET understanding_state = ?, run_id = ?, `+
-			`understanding_completed_at = ? WHERE id = ?`,
-		string(StateDone),
-		runID.String(),
-		completed.Format(time.RFC3339Nano),
-		memory.ID.String(),
-	)
-	if err != nil {
-		return Memory{}, fmt.Errorf("complete stub understanding: %w", err)
-	}
-
-	memory.UnderstandingState = StateDone
-	memory.RunID = &runID
-	memory.UnderstandingCompleted = &completed
 	logger.InfoContext(durableContext, "Memory imported",
 		"memory_id", memory.ID,
 		"blob_hash", memory.BlobRef.String(),
 		"byte_size", memory.ByteSize,
 		"media_type", memory.MediaType,
-		"understanding_state", memory.UnderstandingState,
-		"run_id", runID,
 	)
 	return memory, nil
 }
@@ -394,9 +463,13 @@ func (v *Vault) OpenContent(
 	if err != nil {
 		return Memory{}, nil, err
 	}
-	content, err := os.Open(v.blobPath(memory.BlobRef))
+	blobPath := v.blobPath(memory.BlobRef)
+	if err := verifyBlob(blobPath, memory.BlobRef, memory.ByteSize); err != nil {
+		return Memory{}, nil, err
+	}
+	content, err := os.Open(blobPath)
 	if err != nil {
-		return Memory{}, nil, fmt.Errorf("open Blob content: %w", err)
+		return Memory{}, nil, fmt.Errorf("%w: open %s: %v", ErrBlobUnavailable, memory.BlobRef, err)
 	}
 	logger.DebugContext(ctx, "Memory Blob opened",
 		"memory_id", memory.ID,
@@ -407,14 +480,15 @@ func (v *Vault) OpenContent(
 	return memory, content, nil
 }
 
-// publishBlob keeps the final path on its content-addressed filesystem when
-// the configured upload directory is on another filesystem.
-func publishBlob(sourcePath, finalPath string) error {
-	err := os.Rename(sourcePath, finalPath)
-	if !errors.Is(err, syscall.EXDEV) {
-		return err
+// publishBlob copies into the content-addressed filesystem and uses a hard
+// link for atomic no-replace publication. This has identical semantics when
+// upload staging and content storage are on different filesystems.
+func publishBlob(sourcePath, finalPath string, ref Blobref, expectedSize int64) error {
+	if _, err := os.Stat(finalPath); err == nil {
+		return verifyBlob(finalPath, ref, expectedSize)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Blob destination: %w", err)
 	}
-
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("open staged Blob: %w", err)
@@ -427,8 +501,9 @@ func publishBlob(sourcePath, finalPath string) error {
 	stagedPath := staged.Name()
 	defer func() { _ = os.Remove(stagedPath) }()
 
-	_, copyErr := io.Copy(staged, source)
+	written, copyErr := io.Copy(staged, source)
 	sourceCloseErr := source.Close()
+	syncErr := staged.Sync()
 	stagedCloseErr := staged.Close()
 	if copyErr != nil {
 		return fmt.Errorf("copy staged Blob: %w", copyErr)
@@ -436,10 +511,116 @@ func publishBlob(sourcePath, finalPath string) error {
 	if sourceCloseErr != nil {
 		return fmt.Errorf("close staged Blob: %w", sourceCloseErr)
 	}
+	if syncErr != nil {
+		return fmt.Errorf("flush publishing Blob: %w", syncErr)
+	}
 	if stagedCloseErr != nil {
 		return fmt.Errorf("close publishing Blob: %w", stagedCloseErr)
 	}
-	return os.Rename(stagedPath, finalPath)
+	if written != expectedSize {
+		return fmt.Errorf("copy staged Blob: wrote %d bytes, expected %d", written, expectedSize)
+	}
+	if err := verifyBlob(stagedPath, ref, expectedSize); err != nil {
+		return err
+	}
+	if err := os.Link(stagedPath, finalPath); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return verifyBlob(finalPath, ref, expectedSize)
+		}
+		return fmt.Errorf("atomically publish Blob: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(finalPath)); err != nil {
+		return fmt.Errorf("flush Blob directory: %w", err)
+	}
+	return nil
+}
+
+func verifyBlob(path string, ref Blobref, expectedSize int64) error {
+	content, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("%w: open %s: %v", ErrBlobUnavailable, ref, err)
+	}
+	hash := sha256.New()
+	actualSize, copyErr := io.Copy(hash, content)
+	closeErr := content.Close()
+	if copyErr != nil {
+		return fmt.Errorf("%w: read %s: %v", ErrBlobUnavailable, ref, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("%w: close %s: %v", ErrBlobUnavailable, ref, closeErr)
+	}
+	actualRef, err := ParseBlobref("sha256-" + fmt.Sprintf("%x", hash.Sum(nil)))
+	if err != nil {
+		return fmt.Errorf("calculate Blobref: %w", err)
+	}
+	if actualSize != expectedSize || actualRef != ref {
+		return fmt.Errorf(
+			"%w: %s has size %d and digest %s; expected size %d and digest %s",
+			ErrBlobUnavailable,
+			ref,
+			actualSize,
+			actualRef,
+			expectedSize,
+			ref,
+		)
+	}
+	return nil
+}
+
+func (v *Vault) ensureBlobDirectory(finalPath string) error {
+	directory := filepath.Dir(finalPath)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	for _, path := range []string{
+		v.blobDir,
+		filepath.Join(v.blobDir, filepath.Base(filepath.Dir(directory))),
+		directory,
+	} {
+		if err := syncDirectory(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func removeAbandonedTemporaryFiles(uploadDir, contentDir string) error {
+	entries, err := os.ReadDir(uploadDir)
+	if err != nil {
+		return fmt.Errorf("scan Blob upload directory: %w", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".import-") {
+			if err := os.Remove(filepath.Join(uploadDir, entry.Name())); err != nil {
+				return fmt.Errorf("remove abandoned import staging: %w", err)
+			}
+		}
+	}
+	return filepath.WalkDir(contentDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".publish-") {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove abandoned publication staging: %w", err)
+		}
+		return nil
+	})
 }
 
 func (v *Vault) blobPath(ref Blobref) string {
@@ -453,15 +634,15 @@ func (v *Vault) blobPath(ref Blobref) string {
 }
 
 const selectMemory = `SELECT id, blob_hash, original_filename, relative_path, full_path,
-	filesystem_created_at, filesystem_modified_at, media_type, byte_size, imported_at,
-	understanding_state, run_id, understanding_completed_at FROM memories`
+	filesystem_created_at, filesystem_modified_at, media_type, byte_size, imported_at
+	FROM memories`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanMemory(row rowScanner) (Memory, error) {
 	var memory Memory
-	var id, state, importedAt, blobHash string
-	var relativePath, fullPath, createdAt, modifiedAt, runID, completedAt sql.NullString
+	var id, importedAt, blobHash string
+	var relativePath, fullPath, createdAt, modifiedAt sql.NullString
 	err := row.Scan(
 		&id,
 		&blobHash,
@@ -473,9 +654,6 @@ func scanMemory(row rowScanner) (Memory, error) {
 		&memory.MediaType,
 		&memory.ByteSize,
 		&importedAt,
-		&state,
-		&runID,
-		&completedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Memory{}, ErrMemoryNotFound
@@ -498,7 +676,6 @@ func scanMemory(row rowScanner) (Memory, error) {
 	if err != nil {
 		return Memory{}, fmt.Errorf("read import time: %w", err)
 	}
-	memory.UnderstandingState = State(state)
 	if memory.ImportContext.FilesystemCreated, err = parseNullableTime(
 		createdAt,
 	); err != nil {
@@ -506,18 +683,6 @@ func scanMemory(row rowScanner) (Memory, error) {
 	}
 	if memory.ImportContext.FilesystemModified, err = parseNullableTime(
 		modifiedAt,
-	); err != nil {
-		return Memory{}, err
-	}
-	if runID.Valid {
-		value, parseErr := uuid.Parse(runID.String)
-		if parseErr != nil {
-			return Memory{}, fmt.Errorf("read Run ID: %w", parseErr)
-		}
-		memory.RunID = &value
-	}
-	if memory.UnderstandingCompleted, err = parseNullableTime(
-		completedAt,
 	); err != nil {
 		return Memory{}, err
 	}

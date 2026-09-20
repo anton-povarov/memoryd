@@ -11,7 +11,7 @@ Import personal files into a durable local Vault, understand them as well as cur
 ### In scope
 
 - Run a single-user Vault on a trusted local machine.
-- Import individual Blobs up to 100 MB through the CLI or web UI.
+- Import individual Blobs up to 100 MiB (104857600 bytes) through the CLI or web UI.
 - Preserve each imported Blob durably as a Memory with its Import Context.
 - Perform best-effort Document Understanding in the background.
 - Browse Memories and inspect their metadata, Derived Content, Facts, and Understanding Run.

@@ -1,5 +1,8 @@
 # Local multilingual Search Planning
 
+Status: research for the target product in `docs/MVP.md`. Search and Query Plan
+types are not present in the active OpenAPI contract or current server slice.
+
 Status: research note, not product specification  
 Date: 2026-09-20  
 Scope: practical local approaches for converting a multilingual natural-language search query into memoryd's visible Query Plan. The target fields are residual full-text terms, Media Type, Memory Kind, a date range, and an optional location. This note compares deterministic parsers, compact generative models, multilingual NER, and embedding retrieval. It does not claim an accuracy level that has not been measured on a memoryd fixture corpus.
@@ -8,7 +11,7 @@ Scope: practical local approaches for converting a multilingual natural-language
 
 The domain vocabulary is important here. A **Media Type** is a format label on a Blob, used for transfer and Document Understanding; it is explicitly distinct from a **Memory Kind**, which is a semantic category such as an AC bill or identity document ([`CONTEXT.md`](../../CONTEXT.md), “Media Type” and “Memory Kind”). The import boundary reinforces this distinction: Media Type is detected from Blob bytes and may remain generic, while storage is format-independent ([ADR 0008](../adr/0008-media-type-resolution-is-handled-by-the-server.md)). A query saying “PDF bills” therefore contains two different possible constraints: a format constraint and a semantic kind constraint. A model must not collapse them into one “document type” field.
 
-The current Query Plan is the visible interpretation of a query as exact Fact filters and residual full-text terms; unresolved terms remain mandatory terms ([`CONTEXT.md`](../../CONTEXT.md), “Query Plan”). The OpenAPI contract currently exposes:
+The target Query Plan is the visible interpretation of a query as exact Fact filters and residual full-text terms; unresolved terms remain mandatory terms ([`CONTEXT.md`](../../CONTEXT.md), “Query Plan”). A prior proposed contract used this shape:
 
 ```yaml
 QueryPlan:
@@ -17,7 +20,11 @@ QueryPlan:
   explanation: string
 ```
 
-`FactFilter` carries a category, name, comparison operator, and typed value ([`api/openapi.yaml`](../../api/openapi.yaml), `QueryPlan` and `FactFilter`, around lines 873–907). The search endpoint says that the plan is displayed and immediately executes exact Fact filters plus mandatory residual FTS terms ([`api/openapi.yaml`](../../api/openapi.yaml), `searchMemories`). This means Search Planning is not merely an internal ranking hint: dropping a phrase or inventing a filter changes the user-visible search semantics.
+In that proposal, `FactFilter` carried a category, name, comparison operator,
+and typed value, and the plan was displayed before executing exact Fact filters
+plus mandatory residual FTS terms. This means future Search Planning is not
+merely an internal ranking hint: dropping a phrase or inventing a filter changes
+the user-visible search semantics.
 
 The authoritative MVP adds four constraints:
 

@@ -3,16 +3,15 @@ info:
   title: memoryd API
   version: 0.1.0
   description: |
-    HTTP contract for the local Memory Vault. A Memory is one user-visible
-    thing preserved by the Vault and is identified by the content of its Blob.
+    HTTP contract for the currently implemented local Memory Vault slice. A
+    Memory is one user-visible thing preserved by the Vault and is identified
+    by the content of its Blob.
 servers:
   - url: /api/v0
     description: Local memoryd server
 tags:
   - name: health
   - name: memories
-  - name: understanding
-  - name: search
 paths:
   /livez:
     get:
@@ -44,8 +43,7 @@ paths:
     get:
       operationId: browseMemories
       tags: [memories]
-      summary: Browse Memories
-      description: Returns whole Memories.
+      summary: Browse committed Memories
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -69,16 +67,16 @@ paths:
     get:
       operationId: getMemory
       tags: [memories]
-      summary: Get Memory details
+      summary: Get committed Memory details
       responses:
         "200":
-          description: The Memory, its Facts, Derived Content, and active Run.
+          description: The Memory and its stored Import Context.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryDetail"
         "404":
-          description: The requested Memory or Run does not exist.
+          description: The requested Memory does not exist.
           content:
             application/json:
               schema:
@@ -90,12 +88,12 @@ paths:
     get:
       operationId: getMemoryContent
       tags: [memories]
-      summary: Download a Memory's immutable Blob
+      summary: Download and verify a Memory's immutable Blob
       responses:
         "200":
           description: |
-            The original imported bytes. Content-Type is the Memory's stored
-            Media Type, or application/octet-stream when no type is known.
+            The original imported bytes after their size and content digest
+            have been verified against the committed Memory.
           headers:
             Content-Disposition:
               schema:
@@ -111,7 +109,13 @@ paths:
                 type: string
                 format: binary
         "404":
-          description: The requested Memory or Run does not exist.
+          description: The requested Memory does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: The committed Memory's Blob is missing or corrupt.
           content:
             application/json:
               schema:
@@ -121,14 +125,13 @@ paths:
     post:
       operationId: importMemory
       tags: [memories]
-      summary: Import one Blob and understand it
+      summary: Durably import one Blob as a Memory
       description: |
-        Upload one Blob. The request remains open until the
-        understanding attempt reaches a terminal result. The response is an
-        SSE stream. Once the server has committed the Blob and InProgress
-        Memory, disconnecting does not cancel server-side understanding.
-        Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
-        409 before an SSE response begins.
+        Upload one Blob and return after its bytes are durably published and
+        the Memory is committed. A Blob may contain at most 100 MiB
+        (104857600 bytes). The server permits bounded multipart protocol
+        overhead in addition to that Blob limit. Duplicate content is rejected
+        with HTTP 409. Document Understanding is not performed by this request.
       requestBody:
         required: true
         content:
@@ -136,25 +139,12 @@ paths:
             schema:
               $ref: "#/components/schemas/ImportMultipart"
       responses:
-        "200":
-          description: Progress events followed by exactly one terminal event.
+        "201":
+          description: The committed Memory.
           content:
-            text/event-stream:
+            application/json:
               schema:
-                type: string
-                description: UTF-8 Server-Sent Events. Each data field is JSON.
-              examples:
-                progress:
-                  summary: Understanding progress
-                  value: |-
-                    event: understanding_progress
-                    data: {"memory_id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","phase":"general_extraction","message":"Extracting text"}
-
-                completed:
-                  summary: Successful terminal event
-                  value: |-
-                    event: import_completed
-                    data: {"memory":{"id":"2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2","blob_hash":"sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","media_type":"application/pdf","byte_size":1234,"original_filename":"bill.pdf","understanding_state":"Done","imported_at":"2026-01-01T00:00:00Z"}}
+                $ref: "#/components/schemas/MemorySummary"
         "400":
           description: The request is invalid.
           content:
@@ -162,180 +152,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: The candidate is a duplicate or an import cannot start.
+          description: The candidate is a Duplicate.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "413":
-          description: The request exceeds the server's upload limit.
+          description: The Blob or bounded multipart request is too large.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "500":
-          description: The import failed inside the server before streaming began.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /memories/{memoryId}/runs:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-    get:
-      operationId: listUnderstandingRuns
-      tags: [understanding]
-      summary: List successful Understanding Runs
-      responses:
-        "200":
-          description: Runs for the Memory, newest first.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RunPage"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /memories/{memoryId}/runs/{runId}:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-      - $ref: "#/components/parameters/RunId"
-    get:
-      operationId: getUnderstandingRun
-      tags: [understanding]
-      summary: Get one Understanding Run
-      responses:
-        "200":
-          description: An immutable successful interpretation.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UnderstandingRun"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /memories/{memoryId}/logs:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-    get:
-      operationId: listProcessingLogs
-      tags: [understanding]
-      summary: List processing logs for a Memory
-      description: Includes logs for failed attempts that did not create a Run.
-      parameters:
-        - name: attempt_id
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-            minimum: 1
-            maximum: 1000
-            default: 200
-      responses:
-        "200":
-          description: Processing log entries in lifecycle order.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessingLogPage"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /memories/{memoryId}/runs/{runId}/logs:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-      - $ref: "#/components/parameters/RunId"
-    get:
-      operationId: listRunLogs
-      tags: [understanding]
-      summary: List logs associated with an Understanding Run
-      responses:
-        "200":
-          description: Processing logs associated with the Run.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessingLogPage"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /memories/{memoryId}/rebuild:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-    post:
-      operationId: rebuildMemory
-      tags: [understanding]
-      summary: Rebuild a Memory's understanding
-      description: Stages a complete new Run and activates it atomically on success.
-      responses:
-        "200":
-          $ref: "#/components/responses/UnderstandingEventStream"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "409":
-          description: A rebuild is already in progress.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /search:
-    post:
-      operationId: searchMemories
-      tags: [search]
-      summary: Search Memories with a natural-language query
-      description: |
-        Interprets the query into a visible Query Plan and immediately executes
-        exact Fact filters plus mandatory residual full-text terms.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SearchRequest"
-      responses:
-        "200":
-          description: Query Plan and whole-Memory search results.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SearchResponse"
-        "400":
-          description: The request is invalid.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "422":
-          description: The query could not be interpreted into a valid Query Plan.
+          description: The import failed before the Memory committed.
           content:
             application/json:
               schema:
@@ -345,13 +174,6 @@ components:
   parameters:
     MemoryId:
       name: memoryId
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    RunId:
-      name: runId
       in: path
       required: true
       schema:
@@ -373,15 +195,6 @@ components:
       required: false
       schema:
         type: string
-
-  responses:
-    UnderstandingEventStream:
-      description: Progress events followed by one terminal rebuild or enhancement event.
-      content:
-        text/event-stream:
-          schema:
-            type: string
-            description: UTF-8 Server-Sent Events. Each data field is JSON.
 
   schemas:
     HealthResponse:
@@ -424,26 +237,24 @@ components:
           format: binary
           maxLength: 104857600
           description: |
-            One Blob with a nonblank filename in Content-Disposition. The server
-            detects its Media Type from content first. For inconclusive detection,
-            the part's Content-Type is used if valid.
+            One Blob of at most 100 MiB with a nonblank filename in
+            Content-Disposition. The server detects its Media Type from content
+            first and may fall back to a valid, specific part Content-Type.
         import_context:
           $ref: "#/components/schemas/ImportContextInput"
 
     ImportContextInput:
       type: object
       description: |
-        Optional client-observed provenance sent as one application/json multipart
-        part. The original filename comes from the file part. Omitted values
-        remain unknown; malformed supplied timestamps reject the import with HTTP 400.
+        Optional client-observed provenance sent as one application/json
+        multipart part. The original filename comes from the Blob part. Omitted
+        values remain unknown; malformed timestamps reject the import.
       additionalProperties: false
       properties:
         relative_path:
           type: string
-          description: Client-provided relative import path, when available.
         full_path:
           type: string
-          description: Original full path when the importing client can provide it.
         filesystem_created_at:
           type: string
           format: date-time
@@ -451,88 +262,13 @@ components:
           type: string
           format: date-time
 
-    ImportEvent:
-      description: One JSON payload carried by an SSE event.
-      oneOf:
-        - $ref: "#/components/schemas/UnderstandingProgressEvent"
-        - $ref: "#/components/schemas/ImportCompletedEvent"
-        - $ref: "#/components/schemas/UnderstandingFailedEvent"
-      discriminator:
-        propertyName: event
-    UnderstandingEvent:
-      description: One JSON payload carried by a rebuild SSE event.
-      oneOf:
-        - $ref: "#/components/schemas/UnderstandingProgressEvent"
-        - $ref: "#/components/schemas/UnderstandingCompletedEvent"
-        - $ref: "#/components/schemas/UnderstandingFailedEvent"
-      discriminator:
-        propertyName: event
-
-    UnderstandingProgressEvent:
-      type: object
-      required: [event, memory_id, phase]
-      properties:
-        event:
-          type: string
-          enum: [import_started, understanding_started, understanding_progress]
-        memory_id:
-          type: string
-          format: uuid
-        phase:
-          type: string
-          description: Current understanding phase.
-        message:
-          type: string
-        percent:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 100
-
-    ImportCompletedEvent:
-      type: object
-      required: [event, memory]
-      properties:
-        event:
-          type: string
-          enum: [import_completed]
-        memory:
-          $ref: "#/components/schemas/MemorySummary"
-
-    UnderstandingCompletedEvent:
-      type: object
-      required: [event, memory, run]
-      properties:
-        event:
-          type: string
-          enum: [rebuild_completed]
-        memory:
-          $ref: "#/components/schemas/MemorySummary"
-        run:
-          $ref: "#/components/schemas/UnderstandingRun"
-
-    UnderstandingFailedEvent:
-      type: object
-      required: [event, memory_id, error]
-      properties:
-        event:
-          type: string
-          enum: [import_failed, rebuild_failed]
-        memory_id:
-          type: string
-          format: uuid
-        error:
-          $ref: "#/components/schemas/Error"
-
     DuplicateMemory:
       type: object
-      required: [id, understanding_state]
+      required: [id]
       properties:
         id:
           type: string
           format: uuid
-        understanding_state:
-          $ref: "#/components/schemas/UnderstandingState"
 
     MemorySummary:
       type: object
@@ -542,7 +278,6 @@ components:
         - media_type
         - byte_size
         - original_filename
-        - understanding_state
         - imported_at
       properties:
         id:
@@ -560,12 +295,6 @@ components:
           minimum: 0
         original_filename:
           type: string
-        understanding_state:
-          $ref: "#/components/schemas/UnderstandingState"
-        active_run_id:
-          type: string
-          format: uuid
-          nullable: true
         imported_at:
           type: string
           format: date-time
@@ -577,10 +306,6 @@ components:
           type: string
           format: date-time
           nullable: true
-
-    UnderstandingState:
-      type: string
-      enum: [InProgress, Done, Failed]
 
     MemoryPage:
       type: object
@@ -596,7 +321,7 @@ components:
 
     MemoryDetail:
       type: object
-      required: [memory, import_context, facts, derived_content]
+      required: [memory, import_context]
       properties:
         memory:
           $ref: "#/components/schemas/MemorySummary"
@@ -605,25 +330,11 @@ components:
           description: Relative URL of the content download endpoint.
         import_context:
           $ref: "#/components/schemas/ImportContext"
-        facts:
-          type: array
-          items:
-            $ref: "#/components/schemas/Fact"
-        derived_content:
-          type: array
-          items:
-            $ref: "#/components/schemas/DerivedContent"
-        active_run:
-          allOf:
-            - $ref: "#/components/schemas/UnderstandingRun"
-          nullable: true
 
     ImportContext:
       type: object
       required: [original_filename]
-      description: |
-        Stored provenance from the first successful import. Available values
-        also appear as Facts in the import category with origin import-client.
+      description: Stored provenance from the first successful import.
       properties:
         original_filename:
           type: string
@@ -648,224 +359,3 @@ components:
           type: string
           format: date-time
           nullable: true
-
-    Fact:
-      type: object
-      required: [category, name, value, value_type, origin]
-      properties:
-        category:
-          type: string
-          example: bill
-        name:
-          type: string
-          example: issue_date
-        value:
-          description: |
-            Value asserted by the Fact. Must match value_type: string, JSON
-            number, or an RFC 3339 string for datetime.
-        value_type:
-          type: string
-          enum: [string, number, datetime]
-        origin:
-          type: string
-          description: Extraction or import provenance that asserted the Fact.
-        confidence:
-          type: number
-          format: double
-          minimum: 0
-          maximum: 1
-
-    DerivedContent:
-      type: object
-      required: [kind]
-      properties:
-        kind:
-          type: string
-          example: extracted_text
-        text:
-          type: string
-        metadata:
-          type: object
-          additionalProperties: true
-
-    UnderstandingRun:
-      type: object
-      required: [id, memory_id, pipeline, created_at, completed_at, active]
-      properties:
-        id:
-          type: string
-          format: uuid
-        memory_id:
-          type: string
-          format: uuid
-        pipeline:
-          type: string
-          enum: [regular]
-        created_at:
-          type: string
-          format: date-time
-        completed_at:
-          type: string
-          format: date-time
-        active:
-          type: boolean
-        extractor_versions:
-          type: object
-          additionalProperties:
-            type: string
-        warnings:
-          type: array
-          items:
-            type: string
-
-    RunPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/UnderstandingRun"
-        next_cursor:
-          type: string
-          nullable: true
-
-    ProcessingLog:
-      type: object
-      required: [id, memory_id, attempt_id, timestamp, kind, message]
-      properties:
-        id:
-          type: string
-          format: uuid
-        memory_id:
-          type: string
-          format: uuid
-        run_id:
-          type: string
-          format: uuid
-          nullable: true
-        attempt_id:
-          type: string
-          format: uuid
-        timestamp:
-          type: string
-          format: date-time
-        kind:
-          type: string
-          enum:
-            [
-              lifecycle,
-              tool,
-              stdout,
-              stderr,
-              model_output,
-              structured_result,
-              usage,
-              error,
-            ]
-        message:
-          type: string
-        truncated:
-          type: boolean
-          default: false
-        metadata:
-          type: object
-          additionalProperties: true
-
-    ProcessingLogPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/ProcessingLog"
-        next_cursor:
-          type: string
-          nullable: true
-
-    SearchRequest:
-      type: object
-      required: [query]
-      properties:
-        query:
-          type: string
-          minLength: 1
-        limit:
-          type: integer
-          format: int32
-          minimum: 1
-          maximum: 100
-          default: 50
-        cursor:
-          type: string
-
-    SearchResponse:
-      type: object
-      required: [query, plan, items]
-      properties:
-        query:
-          type: string
-        plan:
-          $ref: "#/components/schemas/QueryPlan"
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/SearchResult"
-        next_cursor:
-          type: string
-          nullable: true
-
-    QueryPlan:
-      type: object
-      required: [fact_filters, full_text_terms]
-      properties:
-        fact_filters:
-          type: array
-          items:
-            $ref: "#/components/schemas/FactFilter"
-        full_text_terms:
-          type: array
-          items:
-            type: string
-        explanation:
-          type: string
-
-    FactFilter:
-      type: object
-      required: [category, name, operator, value]
-      properties:
-        category:
-          type: string
-        name:
-          type: string
-        operator:
-          type: string
-          enum:
-            [
-              equals,
-              contains,
-              greater_than,
-              greater_than_or_equal,
-              less_than,
-              less_than_or_equal,
-            ]
-        value:
-          description: |
-            String, JSON number, or RFC 3339 datetime string used for exact
-            Fact filtering.
-
-    SearchResult:
-      type: object
-      required: [memory, matched_facts, matched_terms]
-      properties:
-        memory:
-          $ref: "#/components/schemas/MemorySummary"
-        matched_facts:
-          type: array
-          items:
-            $ref: "#/components/schemas/Fact"
-        matched_terms:
-          type: array
-          items:
-            type: string

@@ -3,7 +3,6 @@
 package command
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -25,11 +24,9 @@ import (
 const DefaultServerURL = "http://127.0.0.1:8080"
 
 const (
-	initialEventBufferBytes = 4096
-	maxEventBufferBytes     = 1 << 20
-	maxPageSize             = 100
-	asciiControlLimit       = 0x20
-	asciiDelete             = 0x7f
+	maxPageSize       = 100
+	asciiControlLimit = 0x20
+	asciiDelete       = 0x7f
 )
 
 func ServerURL(explicit string) string {
@@ -79,6 +76,7 @@ func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) 
 		response.Body.Close()
 		return uploadErr
 	}
+	defer response.Body.Close()
 
 	if response.StatusCode == http.StatusConflict {
 		parsed, err := api.ParseImportMemoryResponse(response)
@@ -96,20 +94,21 @@ func Put(ctx context.Context, serverURL, path string, stdout, stderr io.Writer) 
 		_, err = fmt.Fprintln(stdout, parsed.JSON409.ExistingMemory.Id)
 		return err
 	}
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusCreated {
 		parsed, err := api.ParseImportMemoryResponse(response)
 		if err != nil {
 			return fmt.Errorf("import failed with HTTP %s", response.Status)
 		}
 		return responseError(parsed)
 	}
-	defer response.Body.Close()
-
-	memoryID, err := decodeImportEvents(response.Body, stderr)
+	parsed, err := api.ParseImportMemoryResponse(response)
 	if err != nil {
-		return err
+		return fmt.Errorf("decode committed Memory: %w", err)
 	}
-	_, err = fmt.Fprintln(stdout, memoryID)
+	if parsed.JSON201 == nil {
+		return errors.New("successful import response did not contain a Memory")
+	}
+	_, err = fmt.Fprintln(stdout, parsed.JSON201.Id)
 	return err
 }
 
@@ -177,70 +176,6 @@ func writeMultipart(
 		return fmt.Errorf("stream import candidate: %w", err)
 	}
 	return nil
-}
-
-func decodeImportEvents(reader io.Reader, progress io.Writer) (uuid.UUID, error) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, initialEventBufferBytes), maxEventBufferBytes)
-	var eventName string
-	var data []byte
-	dispatch := func() (uuid.UUID, bool, error) {
-		if eventName == "" && len(data) == 0 {
-			return uuid.Nil, false, nil
-		}
-		switch eventName {
-		case "import_started", "understanding_progress":
-			var event api.UnderstandingProgressEvent
-			if err := json.Unmarshal(data, &event); err != nil {
-				return uuid.Nil, false, fmt.Errorf("decode %s event: %w", eventName, err)
-			}
-			message := ""
-			if event.Message != nil {
-				message = ": " + *event.Message
-			}
-			fmt.Fprintf(progress, "%s%s\n", event.Phase, message)
-		case "import_completed":
-			var event api.ImportCompletedEvent
-			if err := json.Unmarshal(data, &event); err != nil {
-				return uuid.Nil, false, fmt.Errorf("decode import_completed event: %w", err)
-			}
-			return event.Memory.Id, true, nil
-		case "import_failed":
-			var event api.UnderstandingFailedEvent
-			if err := json.Unmarshal(data, &event); err != nil {
-				return uuid.Nil, false, fmt.Errorf("decode import_failed event: %w", err)
-			}
-			return uuid.Nil, false, fmt.Errorf("%s: %s", event.Error.Code, event.Error.Message)
-		}
-		return uuid.Nil, false, nil
-	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			id, done, err := dispatch()
-			if err != nil || done {
-				return id, err
-			}
-			eventName, data = "", nil
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, "event:"); ok {
-			eventName = strings.TrimSpace(value)
-		}
-		if value, ok := strings.CutPrefix(line, "data:"); ok {
-			if len(data) != 0 {
-				data = append(data, '\n')
-			}
-			data = append(data, strings.TrimSpace(value)...)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return uuid.Nil, fmt.Errorf("read import event stream: %w", err)
-	}
-	if id, done, err := dispatch(); err != nil || done {
-		return id, err
-	}
-	return uuid.Nil, errors.New("import event stream ended without import_completed")
 }
 
 func responseError(response *api.ImportMemoryResponse) error {

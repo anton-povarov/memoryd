@@ -12,6 +12,7 @@ import (
 	"github.com/anton-povarov/memoryd/server/api"
 	"github.com/anton-povarov/memoryd/server/internal/apidoc"
 	"github.com/anton-povarov/memoryd/server/internal/config"
+	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -40,6 +41,7 @@ func New(
 	e.Use(middleware.RequestID())
 	e.Use(requestLogContext(logger))
 	e.Use(requestLogger(logger))
+	e.Use(limitImportRequestBody())
 
 	openAPIYAML, err := api.OpenAPIYAML()
 	if err != nil {
@@ -59,6 +61,31 @@ func New(
 	)
 
 	return &Server{config: cfg.Server, echo: e, logger: logger}, nil
+}
+
+func limitImportRequestBody() echo.MiddlewareFunc {
+	const importPath = api.ServerUrlLocalMemorydServer + "/memories/import"
+
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			request := c.Request()
+			if request.Method == http.MethodPost && request.URL.Path == importPath {
+				if request.ContentLength > httpapi.MaxImportRequestBytes {
+					return c.JSON(http.StatusRequestEntityTooLarge, api.Error{
+						Code: "blob_too_large", Details: nil,
+						ExistingMemory: nil,
+						Message:        "blob exceeds the 100 MiB limit",
+					})
+				}
+				request.Body = http.MaxBytesReader(
+					c.Response().Writer,
+					request.Body,
+					httpapi.MaxImportRequestBytes,
+				)
+			}
+			return next(c)
+		}
+	}
 }
 
 // Handler exposes the complete HTTP surface for black-box tests and embedding.

@@ -7,7 +7,3 @@ generate:
   strict-server: true
   embedded-spec: true
   server-urls: true
-
-output-options:
-  # Keep the SSE payload models even though the wire response is a text/event-stream.
-  skip-prune: true

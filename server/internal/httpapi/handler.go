@@ -1,17 +1,14 @@
 // Package httpapi adapts the generated OpenAPI interface to Vault behavior.
-// Deferred operations retain deterministic stubs while Memory import, detail,
-// Run lookup, browse, and content download use durable state.
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
+	"net/http"
 	"strings"
 	"time"
 
@@ -22,24 +19,16 @@ import (
 )
 
 const (
-	stubMemoryID             = "2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2"
-	stubRunID                = "7eb97a66-59ad-4771-bfc2-0d5a62c55f56"
-	stubLogID                = "450369c7-37cf-4322-bbbb-32091834cb88"
-	stubHash                 = "sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	multipartFormMemoryBytes = 1 << 20
-	completedPercent         = 100.0
-	stubByteSize             = 1234
+	multipartFormMemoryBytes        = 1 << 20
+	multipartProtocolOverhead       = 1 << 20
+	MaxImportRequestBytes     int64 = vault.MaxBlobBytes + multipartProtocolOverhead
 )
-
-var stubTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 type Handler struct {
 	version   string
 	vaultPath string
 	vault     *vault.Vault
 }
-
-type understandingEventStream = api.UnderstandingEventStreamTexteventStreamResponse
 
 func NewHandler(version, vaultPath string, memoryVault *vault.Vault) *Handler {
 	return &Handler{
@@ -151,6 +140,20 @@ func (h *Handler) GetMemoryContent(
 		)
 		return api.GetMemoryContent404JSONResponse(notFoundError()), nil
 	}
+	if errors.Is(err, vault.ErrBlobUnavailable) {
+		logger.ErrorContext(
+			ctx,
+			"Memory Blob is unavailable",
+			"memory_id",
+			request.MemoryId,
+			"error",
+			err,
+		)
+		return api.GetMemoryContent500JSONResponse{
+			Code: "blob_unavailable", Details: nil,
+			ExistingMemory: nil, Message: err.Error(),
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +196,13 @@ func (h *Handler) ImportMemory(
 
 	form, err := request.Body.ReadForm(multipartFormMemoryBytes)
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return api.ImportMemory413JSONResponse{
+				Code: "blob_too_large", Details: nil,
+				ExistingMemory: nil, Message: vault.ErrBlobTooLarge.Error(),
+			}, nil
+		}
 		logger.InfoContext(
 			ctx,
 			"Memory import rejected",
@@ -300,34 +310,7 @@ func (h *Handler) ImportMemory(
 		return importInternalError(ctx, err), nil
 	}
 
-	message := "Deterministic stub understanding completed"
-	percent := completedPercent
-	stream, err := eventStream(
-		event{
-			name: "import_started",
-			data: api.UnderstandingProgressEvent{
-				Event: api.ImportStarted, MemoryId: memory.ID,
-				Message: nil, Percent: nil, Phase: "accepted",
-			},
-		},
-		event{
-			name: "understanding_progress",
-			data: api.UnderstandingProgressEvent{
-				Event: api.UnderstandingProgress, MemoryId: memory.ID,
-				Message: &message, Percent: &percent, Phase: "stub",
-			},
-		},
-		event{
-			name: "import_completed",
-			data: api.ImportCompletedEvent{
-				Event: api.ImportCompleted, Memory: memorySummary(memory),
-			},
-		},
-	)
-	if err != nil {
-		return importInternalError(ctx, err), nil
-	}
-	return api.ImportMemory200TexteventStreamResponse{Body: stream}, nil
+	return api.ImportMemory201JSONResponse(memorySummary(memory)), nil
 }
 
 func importInternalError(ctx context.Context, err error) api.ImportMemoryResponseObject {
@@ -336,98 +319,6 @@ func importInternalError(ctx context.Context, err error) api.ImportMemoryRespons
 		Code: "import_failed", Details: nil,
 		ExistingMemory: nil, Message: err.Error(),
 	}
-}
-
-func (h *Handler) RebuildMemory(
-	_ context.Context, request api.RebuildMemoryRequestObject,
-) (api.RebuildMemoryResponseObject, error) {
-	stream, err := understandingStream(
-		request.MemoryId,
-		"rebuild_completed",
-		api.RebuildCompleted,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return api.RebuildMemory200TexteventStreamResponse{
-		UnderstandingEventStreamTexteventStreamResponse: understandingEventStream{
-			Body: stream,
-		},
-	}, nil
-}
-
-func (h *Handler) ListUnderstandingRuns(
-	ctx context.Context, request api.ListUnderstandingRunsRequestObject,
-) (api.ListUnderstandingRunsResponseObject, error) {
-	memory, err := h.vault.Memory(ctx, request.MemoryId)
-	if errors.Is(err, vault.ErrMemoryNotFound) {
-		return api.ListUnderstandingRuns404JSONResponse(notFoundError()), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	items := []api.UnderstandingRun{}
-	if memory.RunID != nil {
-		items = append(items, understandingRun(memory))
-	}
-	return api.ListUnderstandingRuns200JSONResponse{
-		Items: items, NextCursor: nil,
-	}, nil
-}
-
-func (h *Handler) GetUnderstandingRun(
-	ctx context.Context, request api.GetUnderstandingRunRequestObject,
-) (api.GetUnderstandingRunResponseObject, error) {
-	memory, err := h.vault.Memory(ctx, request.MemoryId)
-	if errors.Is(err, vault.ErrMemoryNotFound) ||
-		err == nil && (memory.RunID == nil || *memory.RunID != request.RunId) {
-		return api.GetUnderstandingRun404JSONResponse(notFoundError()), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return api.GetUnderstandingRun200JSONResponse(understandingRun(memory)), nil
-}
-
-func (h *Handler) ListProcessingLogs(
-	_ context.Context, request api.ListProcessingLogsRequestObject,
-) (api.ListProcessingLogsResponseObject, error) {
-	return api.ListProcessingLogs200JSONResponse{
-		Items:      []api.ProcessingLog{sampleLog(request.MemoryId, nil)},
-		NextCursor: nil,
-	}, nil
-}
-
-func (h *Handler) ListRunLogs(
-	_ context.Context, request api.ListRunLogsRequestObject,
-) (api.ListRunLogsResponseObject, error) {
-	return api.ListRunLogs200JSONResponse{
-		Items: []api.ProcessingLog{
-			sampleLog(request.MemoryId, &request.RunId),
-		},
-		NextCursor: nil,
-	}, nil
-}
-
-func (h *Handler) SearchMemories(
-	_ context.Context, request api.SearchMemoriesRequestObject,
-) (api.SearchMemoriesResponseObject, error) {
-	query := ""
-	if request.Body != nil {
-		query = request.Body.Query
-	}
-	return api.SearchMemories200JSONResponse{
-		Query: query,
-		Plan: api.QueryPlan{
-			Explanation: nil, FactFilters: []api.FactFilter{},
-			FullTextTerms: strings.Fields(query),
-		},
-		Items: []api.SearchResult{{
-			Memory:       sampleMemory(uuid.MustParse(stubMemoryID)),
-			MatchedFacts: []api.Fact{}, MatchedTerms: strings.Fields(query),
-		}},
-		NextCursor: nil,
-	}, nil
 }
 
 func (h *Handler) health() api.HealthResponse {
@@ -443,8 +334,6 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 		MediaType:          memory.MediaType,
 		ByteSize:           memory.ByteSize,
 		OriginalFilename:   memory.ImportContext.OriginalFilename,
-		UnderstandingState: api.UnderstandingState(memory.UnderstandingState),
-		ActiveRunId:        memory.RunID,
 		ImportedAt:         memory.ImportedAt,
 		OriginalCreatedAt:  memory.ImportContext.FilesystemCreated,
 		OriginalModifiedAt: memory.ImportContext.FilesystemModified,
@@ -456,7 +345,6 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	mediaType := memory.MediaType
 	byteSize := memory.ByteSize
 	contentHash := memory.BlobRef.String()
-	text := "Understanding is not implemented; this is deterministic stub Derived Content."
 	context := api.ImportContext{
 		ByteSize:             &byteSize,
 		ContentHash:          &contentHash,
@@ -473,53 +361,10 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	if memory.ImportContext.FullPath != "" {
 		context.FullPath = &memory.ImportContext.FullPath
 	}
-	importFacts := memory.ImportContext.Facts()
-	facts := make([]api.Fact, 0, 1+len(importFacts))
-	facts = append(facts, api.Fact{
-		Confidence: nil, Category: "memoryd", Name: "stub",
-		Value: 1, ValueType: api.Number, Origin: "memoryd-stub",
-	})
-	for _, fact := range importFacts {
-		facts = append(facts, api.Fact{
-			Confidence: nil,
-			Category:   fact.Category,
-			Name:       fact.Name,
-			Value:      fact.Value,
-			ValueType:  api.FactValueType(fact.ValueType),
-			Origin:     fact.Origin,
-		})
-	}
-	detail := api.MemoryDetail{
-		ActiveRun:     nil,
+	return api.MemoryDetail{
 		Memory:        memorySummary(memory),
 		ContentUrl:    &contentURL,
 		ImportContext: context,
-		Facts:         facts,
-		DerivedContent: []api.DerivedContent{{
-			Kind: "stub", Metadata: nil, Text: &text,
-		}},
-	}
-	if memory.RunID != nil {
-		run := understandingRun(memory)
-		detail.ActiveRun = &run
-	}
-	return detail
-}
-
-func understandingRun(memory vault.Memory) api.UnderstandingRun {
-	completedAt := memory.ImportedAt
-	if memory.UnderstandingCompleted != nil {
-		completedAt = *memory.UnderstandingCompleted
-	}
-	return api.UnderstandingRun{
-		Id:                *memory.RunID,
-		MemoryId:          memory.ID,
-		Pipeline:          api.Regular,
-		CreatedAt:         memory.ImportedAt,
-		CompletedAt:       completedAt,
-		Active:            true,
-		ExtractorVersions: nil,
-		Warnings:          nil,
 	}
 }
 
@@ -564,91 +409,6 @@ func decodeBrowseCursor(value string) (vault.ListCursor, error) {
 		return vault.ListCursor{}, errors.New("cursor is incomplete")
 	}
 	return vault.ListCursor{ImportedAt: cursor.ImportedAt, ID: cursor.ID}, nil
-}
-
-func sampleMemory(id uuid.UUID) api.MemorySummary {
-	runID := uuid.MustParse(stubRunID)
-	return api.MemorySummary{
-		Id: id, BlobHash: stubHash, MediaType: "application/pdf",
-		ByteSize: stubByteSize, OriginalFilename: "memoryd-v0-example.pdf",
-		UnderstandingState: api.Done, ActiveRunId: &runID,
-		ImportedAt: stubTime, OriginalCreatedAt: &stubTime,
-		OriginalModifiedAt: nil,
-	}
-}
-
-func sampleRun(memoryID uuid.UUID) api.UnderstandingRun {
-	return api.UnderstandingRun{
-		Id:                uuid.MustParse(stubRunID),
-		MemoryId:          memoryID,
-		Pipeline:          api.Regular,
-		CreatedAt:         stubTime,
-		CompletedAt:       stubTime.Add(time.Second),
-		Active:            true,
-		ExtractorVersions: nil,
-		Warnings:          nil,
-	}
-}
-
-func sampleLog(memoryID uuid.UUID, runID *uuid.UUID) api.ProcessingLog {
-	return api.ProcessingLog{
-		Id:        uuid.MustParse(stubLogID),
-		MemoryId:  memoryID,
-		RunId:     runID,
-		AttemptId: uuid.MustParse(stubRunID),
-		Timestamp: stubTime,
-		Kind:      api.ProcessingLogKindLifecycle,
-		Message:   "memoryd v0 stub completed",
-		Metadata:  nil,
-		Truncated: nil,
-	}
-}
-
-type event struct {
-	name string
-	data any
-}
-
-func eventStream(events ...event) (io.Reader, error) {
-	var output bytes.Buffer
-	encoder := json.NewEncoder(&output)
-	for _, item := range events {
-		fmt.Fprintf(&output, "event: %s\ndata: ", item.name)
-		if err := encoder.Encode(item.data); err != nil {
-			return nil, err
-		}
-		output.WriteByte('\n')
-	}
-	return bytes.NewReader(output.Bytes()), nil
-}
-
-func understandingStream(
-	memoryID uuid.UUID,
-	eventName string,
-	completed api.UnderstandingCompletedEventEvent,
-) (io.Reader, error) {
-	memory := sampleMemory(memoryID)
-	run := sampleRun(memoryID)
-	return eventStream(
-		event{
-			name: "understanding_started",
-			data: api.UnderstandingProgressEvent{
-				Event:    api.UnderstandingStarted,
-				MemoryId: memoryID,
-				Message:  nil,
-				Percent:  nil,
-				Phase:    "started",
-			},
-		},
-		event{
-			name: eventName,
-			data: api.UnderstandingCompletedEvent{
-				Event:  completed,
-				Memory: memory,
-				Run:    run,
-			},
-		},
-	)
 }
 
 var _ api.StrictServerInterface = (*Handler)(nil)

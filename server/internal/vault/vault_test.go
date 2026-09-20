@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -140,8 +141,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.UnderstandingState != StateDone ||
-		created.MediaType != "application/pdf" {
+	if created.MediaType != "application/pdf" {
 		t.Fatalf("created Memory = %#v", created)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(wantBytes))
@@ -268,6 +268,50 @@ func TestCopyWithLimitRejectsFirstByteOverLimit(t *testing.T) {
 	}
 }
 
+func TestVaultPutAcceptsExactlyOneHundredMiB(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+
+	memory, err := v.Put(ctx, Import{
+		Content: io.LimitReader(repeatedByteReader{'x'}, MaxBlobBytes),
+		Context: ImportContext{
+			OriginalFilename:   "maximum.bin",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+		DeclaredMediaType: "application/octet-stream",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if memory.ByteSize != MaxBlobBytes {
+		t.Fatalf("ByteSize = %d, want %d", memory.ByteSize, MaxBlobBytes)
+	}
+}
+
+type repeatedByteReader struct {
+	value byte
+}
+
+func (reader repeatedByteReader) Read(destination []byte) (int, error) {
+	for index := range destination {
+		destination[index] = reader.value
+	}
+	return len(destination), nil
+}
+
 func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -304,5 +348,394 @@ func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid stored Blobref") {
 		t.Fatalf("unexpected error = %v", err)
+	}
+}
+
+func TestOpenCreatesSeparatedMemoryAndUnderstandingSchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+
+	wantColumns := map[string][]string{
+		"memories": {
+			"id",
+			"blob_hash",
+			"original_filename",
+			"relative_path",
+			"full_path",
+			"filesystem_created_at",
+			"filesystem_modified_at",
+			"media_type",
+			"byte_size",
+			"imported_at",
+		},
+		"understanding_runs": {
+			"id",
+			"memory_id",
+			"pipeline",
+			"created_at",
+			"completed_at",
+			"extractor_versions_json",
+			"warnings_json",
+		},
+		"active_understanding_runs": {"memory_id", "run_id"},
+	}
+	for table, want := range wantColumns {
+		got := readTableColumnsForTest(t, v.db, table)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s columns = %v, want %v", table, got, want)
+		}
+	}
+
+	_, err = v.db.ExecContext(
+		ctx,
+		`INSERT INTO understanding_runs (
+			id, memory_id, pipeline, created_at, completed_at
+		) VALUES (?, ?, ?, ?, ?)`,
+		"run",
+		"missing-memory",
+		"regular",
+		time.Now().UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		t.Fatalf("orphan Understanding Run insert error = %v", err)
+	}
+}
+
+func TestOpenRejectsLegacyMixedMemorySchema(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "memoryd.sqlite")
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.ExecContext(ctx, `CREATE TABLE memories (
+		id TEXT PRIMARY KEY,
+		blob_hash TEXT NOT NULL UNIQUE,
+		original_filename TEXT NOT NULL,
+		relative_path TEXT,
+		full_path TEXT,
+		filesystem_created_at TEXT,
+		filesystem_modified_at TEXT,
+		media_type TEXT NOT NULL,
+		byte_size INTEGER NOT NULL,
+		imported_at TEXT NOT NULL,
+		understanding_state TEXT NOT NULL,
+		run_id TEXT,
+		understanding_completed_at TEXT
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Open(
+		ctx,
+		databasePath,
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "recreate the database and reimport") {
+		t.Fatalf("Open() error = %v", err)
+	}
+}
+
+func readTableColumnsForTest(t *testing.T, database *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := database.QueryContext(
+		t.Context(),
+		`SELECT name FROM pragma_table_info(?) ORDER BY cid`,
+		table,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			t.Fatal(err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return columns
+}
+
+func TestPutRejectsCorruptExistingBlob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+
+	content := []byte("expected content")
+	digest := sha256.Sum256(content)
+	ref := NewSHA256Blobref(digest)
+	path := v.blobPath(ref)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("corrupted bytes!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = v.Put(ctx, Import{
+		Content: bytes.NewReader(content),
+		Context: ImportContext{
+			OriginalFilename:   "memory.bin",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+		DeclaredMediaType: "application/octet-stream",
+	})
+	if !errors.Is(err, ErrBlobUnavailable) {
+		t.Fatalf("Put() error = %v, want ErrBlobUnavailable", err)
+	}
+	memories, _, listErr := v.ListMemories(ctx, DefaultListLimit, nil)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(memories) != 0 {
+		t.Fatalf("committed Memories = %d, want 0", len(memories))
+	}
+}
+
+func TestConcurrentIdenticalImportsPublishOneBlobAndMemory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+
+	content := []byte("same immutable bytes")
+	const importers = 8
+	errorsFromImports := make(chan error, importers)
+	var waitGroup sync.WaitGroup
+	for index := 0; index < importers; index++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			_, err := v.Put(ctx, Import{
+				Content: bytes.NewReader(content),
+				Context: ImportContext{
+					OriginalFilename:   "same.txt",
+					RelativePath:       "",
+					FullPath:           "",
+					FilesystemCreated:  nil,
+					FilesystemModified: nil,
+				},
+				DeclaredMediaType: "text/plain",
+			})
+			errorsFromImports <- err
+		}()
+	}
+	waitGroup.Wait()
+	close(errorsFromImports)
+
+	succeeded := 0
+	duplicates := 0
+	for err := range errorsFromImports {
+		var duplicate *DuplicateError
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.As(err, &duplicate):
+			duplicates++
+		default:
+			t.Fatalf("concurrent Put() error = %v", err)
+		}
+	}
+	if succeeded != 1 || duplicates != importers-1 {
+		t.Fatalf("successful=%d duplicate=%d", succeeded, duplicates)
+	}
+
+	digest := sha256.Sum256(content)
+	ref := NewSHA256Blobref(digest)
+	if err := verifyBlob(v.blobPath(ref), ref, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartupCleansStagingAndPreservesPublishedOrphan(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	uploadDir := filepath.Join(root, "uploads")
+	contentDir := filepath.Join(root, "blobs", "sha256")
+	shardDir := filepath.Join(contentDir, "aa", "bb")
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(shardDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	importTemporary := filepath.Join(uploadDir, ".import-abandoned")
+	publishTemporary := filepath.Join(shardDir, ".publish-abandoned")
+	orphan := filepath.Join(shardDir, "sha256-"+strings.Repeat("a", 64))
+	for _, path := range []string{importTemporary, publishTemporary, orphan} {
+		if err := os.WriteFile(path, []byte("bytes"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		uploadDir,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	for _, path := range []string{importTemporary, publishTemporary} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("temporary path %s still exists: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatalf("published Orphan Blob was removed: %v", err)
+	}
+}
+
+func TestOpenContentDiagnosesMissingAndCorruptBlob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	content := []byte("original")
+	memory, err := v.Put(ctx, Import{
+		Content: bytes.NewReader(content),
+		Context: ImportContext{
+			OriginalFilename:   "memory.txt",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+		DeclaredMediaType: "text/plain",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := v.blobPath(memory.BlobRef)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := v.OpenContent(ctx, memory.ID); !errors.Is(err, ErrBlobUnavailable) {
+		t.Fatalf("missing Blob error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := v.OpenContent(ctx, memory.ID); !errors.Is(err, ErrBlobUnavailable) {
+		t.Fatalf("corrupt Blob error = %v", err)
+	}
+}
+
+func TestInterruptedCommitLeavesPublishedOrphanForRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "memoryd.sqlite")
+	blobDir := filepath.Join(root, "blobs")
+	uploadDir := filepath.Join(root, "uploads")
+	v, err := Open(ctx, databasePath, blobDir, uploadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("published before failed commit")
+	_, err = v.Put(ctx, Import{
+		Content: bytes.NewReader(content),
+		Context: ImportContext{
+			OriginalFilename:   "orphan.txt",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+		DeclaredMediaType: "text/plain",
+	})
+	if err == nil || !strings.Contains(err.Error(), "commit Memory") {
+		t.Fatalf("Put() error = %v, want failed Memory commit", err)
+	}
+
+	digest := sha256.Sum256(content)
+	ref := NewSHA256Blobref(digest)
+	orphanPath := v.blobPath(ref)
+	reopened, err := Open(ctx, databasePath, blobDir, uploadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if err := verifyBlob(orphanPath, ref, int64(len(content))); err != nil {
+		t.Fatalf("published Orphan Blob did not survive restart: %v", err)
+	}
+	memories, _, err := reopened.ListMemories(ctx, DefaultListLimit, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != 0 {
+		t.Fatalf("failed commit left %d Memories", len(memories))
 	}
 }

@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
+func TestPutReturnsCommittedMemoryAndTreatsDuplicateAsSuccess(t *testing.T) {
 	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
 	want := []byte("%PDF-1.7\nCLI upload\n%%EOF\n")
 	path := filepath.Join(t.TempDir(), "upload.pdf")
@@ -62,18 +62,11 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 			)
 		}
 		if requests.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprintf(w, "event: import_started\ndata: "+
-				"{\"event\":\"import_started\",\"memory_id\":%q,\"phase\":\"accepted\"}\n\n", memoryID)
-			fmt.Fprintf(w, "event: understanding_progress\ndata: "+
-				"{\"event\":\"understanding_progress\",\"memory_id\":%q,"+
-				"\"phase\":\"stub\",\"message\":\"working\"}\n\n", memoryID)
-			completion := api.ImportCompletedEvent{
-				Event:  api.ImportCompleted,
-				Memory: testMemorySummary(memoryID, int64(len(want)), "upload.pdf"),
-			}
-			encoded, _ := json.Marshal(completion)
-			fmt.Fprintf(w, "event: import_completed\ndata: %s\n\n", encoded)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(
+				testMemorySummary(memoryID, int64(len(want)), "upload.pdf"),
+			)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -81,7 +74,7 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.Error{
 			Code: "duplicate_memory", Details: nil, Message: "duplicate",
 			ExistingMemory: &api.DuplicateMemory{
-				Id: memoryID, UnderstandingState: api.Done,
+				Id: memoryID,
 			},
 		})
 	}))
@@ -94,9 +87,6 @@ func TestPutParsesGeneratedEventsAndTreatsDuplicateAsSuccess(t *testing.T) {
 		}
 		if stdout.String() != memoryID.String()+"\n" {
 			t.Fatalf("attempt %d stdout = %q", attempt, stdout.String())
-		}
-		if attempt == 1 && !strings.Contains(stderr.String(), "stub") {
-			t.Fatalf("progress stderr = %q", stderr.String())
 		}
 	}
 }
@@ -126,7 +116,7 @@ func TestPutDeclaresMarkdownMediaType(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.Error{
 			Code: "duplicate_memory", Details: nil, Message: "duplicate",
 			ExistingMemory: &api.DuplicateMemory{
-				Id: memoryID, UnderstandingState: api.Done,
+				Id: memoryID,
 			},
 		})
 	}))
@@ -289,18 +279,16 @@ func TestInfoReportsNotFound(t *testing.T) {
 
 func testMemorySummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
 	return api.MemorySummary{
-		ActiveRunId: nil, BlobHash: "sha256-" + strings.Repeat("a", 64),
+		BlobHash: "sha256-" + strings.Repeat("a", 64),
 		ByteSize: size, Id: id, ImportedAt: time.Time{},
 		MediaType: "application/pdf", OriginalCreatedAt: nil,
 		OriginalFilename: filename, OriginalModifiedAt: nil,
-		UnderstandingState: api.Done,
 	}
 }
 
 func testMemoryDetail(id uuid.UUID, size int64, filename string) api.MemoryDetail {
 	return api.MemoryDetail{
-		ActiveRun: nil, ContentUrl: nil,
-		DerivedContent: []api.DerivedContent{}, Facts: []api.Fact{},
+		ContentUrl: nil,
 		ImportContext: api.ImportContext{
 			ByteSize: nil, ContentHash: nil,
 			FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
