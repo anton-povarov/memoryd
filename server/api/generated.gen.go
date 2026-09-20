@@ -30,12 +30,7 @@ const ServerUrlLocalMemorydServer = "/api/v0"
 
 // Defines values for FactValueType.
 const (
-	Boolean  FactValueType = "boolean"
-	Date     FactValueType = "date"
 	Datetime FactValueType = "datetime"
-	Integer  FactValueType = "integer"
-	Json     FactValueType = "json"
-	Null     FactValueType = "null"
 	Number   FactValueType = "number"
 	String   FactValueType = "string"
 )
@@ -43,17 +38,7 @@ const (
 // Valid indicates whether the value is a known member of the FactValueType enum.
 func (e FactValueType) Valid() bool {
 	switch e {
-	case Boolean:
-		return true
-	case Date:
-		return true
 	case Datetime:
-		return true
-	case Integer:
-		return true
-	case Json:
-		return true
-	case Null:
 		return true
 	case Number:
 		return true
@@ -162,15 +147,12 @@ func (e ProcessingLogKind) Valid() bool {
 
 // Defines values for UnderstandingCompletedEventEvent.
 const (
-	CodexEnhancementCompleted UnderstandingCompletedEventEvent = "codex_enhancement_completed"
-	RebuildCompleted          UnderstandingCompletedEventEvent = "rebuild_completed"
+	RebuildCompleted UnderstandingCompletedEventEvent = "rebuild_completed"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingCompletedEventEvent enum.
 func (e UnderstandingCompletedEventEvent) Valid() bool {
 	switch e {
-	case CodexEnhancementCompleted:
-		return true
 	case RebuildCompleted:
 		return true
 	default:
@@ -180,16 +162,13 @@ func (e UnderstandingCompletedEventEvent) Valid() bool {
 
 // Defines values for UnderstandingFailedEventEvent.
 const (
-	CodexEnhancementFailed UnderstandingFailedEventEvent = "codex_enhancement_failed"
-	ImportFailed           UnderstandingFailedEventEvent = "import_failed"
-	RebuildFailed          UnderstandingFailedEventEvent = "rebuild_failed"
+	ImportFailed  UnderstandingFailedEventEvent = "import_failed"
+	RebuildFailed UnderstandingFailedEventEvent = "rebuild_failed"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingFailedEventEvent enum.
 func (e UnderstandingFailedEventEvent) Valid() bool {
 	switch e {
-	case CodexEnhancementFailed:
-		return true
 	case ImportFailed:
 		return true
 	case RebuildFailed:
@@ -222,15 +201,12 @@ func (e UnderstandingProgressEventEvent) Valid() bool {
 
 // Defines values for UnderstandingRunPipeline.
 const (
-	CodexEnhancement UnderstandingRunPipeline = "codex_enhancement"
-	Regular          UnderstandingRunPipeline = "regular"
+	Regular UnderstandingRunPipeline = "regular"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingRunPipeline enum.
 func (e UnderstandingRunPipeline) Valid() bool {
 	switch e {
-	case CodexEnhancement:
-		return true
 	case Regular:
 		return true
 	default:
@@ -259,15 +235,6 @@ func (e UnderstandingState) Valid() bool {
 	}
 }
 
-// CodexEnhancementRequest defines model for CodexEnhancementRequest.
-type CodexEnhancementRequest struct {
-	// ConfirmRepeat Confirm repeating an equivalent prior Codex enhancement.
-	ConfirmRepeat *bool `json:"confirm_repeat,omitempty"`
-
-	// Instructions Optional user direction for the explicit Codex task.
-	Instructions *string `json:"instructions,omitempty"`
-}
-
 // DerivedContent defines model for DerivedContent.
 type DerivedContent struct {
 	Kind     string                  `json:"kind"`
@@ -293,14 +260,15 @@ type Error struct {
 
 // Fact defines model for Fact.
 type Fact struct {
+	Category   string   `json:"category"`
 	Confidence *float64 `json:"confidence,omitempty"`
 	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
 
-	// Origin Extractor, plugin, or import provenance that asserted the Fact.
+	// Origin Extraction or import provenance that asserted the Fact.
 	Origin string `json:"origin"`
 
-	// Value Typed JSON value asserted by the Fact.
+	// Value Value asserted by the Fact. Must match value_type: string, JSON
+	// number, or an RFC 3339 string for datetime.
 	Value     interface{}   `json:"value"`
 	ValueType FactValueType `json:"value_type"`
 }
@@ -310,11 +278,12 @@ type FactValueType string
 
 // FactFilter defines model for FactFilter.
 type FactFilter struct {
-	Name      string             `json:"name"`
-	Namespace string             `json:"namespace"`
-	Operator  FactFilterOperator `json:"operator"`
+	Category string             `json:"category"`
+	Name     string             `json:"name"`
+	Operator FactFilterOperator `json:"operator"`
 
-	// Value Typed value used for exact Fact filtering.
+	// Value String, JSON number, or RFC 3339 datetime string used for exact
+	// Fact filtering.
 	Value interface{} `json:"value"`
 }
 
@@ -343,7 +312,7 @@ type ImportCompletedEvent struct {
 type ImportCompletedEventEvent string
 
 // ImportContext Stored provenance from the first successful import. Available values
-// also appear as Facts in the import namespace with origin import-client.
+// also appear as Facts in the import category with origin import-client.
 type ImportContext struct {
 	ByteSize             *int64     `json:"byte_size,omitempty"`
 	ContentHash          *string    `json:"content_hash,omitempty"`
@@ -365,7 +334,7 @@ type ImportContextInput struct {
 	// FullPath Original full path when the importing client can provide it.
 	FullPath *string `json:"full_path,omitempty"`
 
-	// RelativePath Browser-provided path relative to the selected directory.
+	// RelativePath Client-provided relative import path, when available.
 	RelativePath *string `json:"relative_path,omitempty"`
 }
 
@@ -397,7 +366,7 @@ type MemoryDetail struct {
 	Facts          []Fact           `json:"facts"`
 
 	// ImportContext Stored provenance from the first successful import. Available values
-	// also appear as Facts in the import namespace with origin import-client.
+	// also appear as Facts in the import category with origin import-client.
 	ImportContext ImportContext `json:"import_context"`
 	Memory        MemorySummary `json:"memory"`
 }
@@ -491,7 +460,7 @@ type UnderstandingCompletedEvent struct {
 // UnderstandingCompletedEventEvent defines model for UnderstandingCompletedEvent.Event.
 type UnderstandingCompletedEventEvent string
 
-// UnderstandingEvent One JSON payload carried by a rebuild or Codex SSE event.
+// UnderstandingEvent One JSON payload carried by a rebuild SSE event.
 type UnderstandingEvent struct {
 	union json.RawMessage
 }
@@ -529,7 +498,6 @@ type UnderstandingRun struct {
 	Id                openapi_types.UUID       `json:"id"`
 	MemoryId          openapi_types.UUID       `json:"memory_id"`
 	Pipeline          UnderstandingRunPipeline `json:"pipeline"`
-	PluginVersions    *map[string]string       `json:"plugin_versions,omitempty"`
 	Warnings          *[]string                `json:"warnings,omitempty"`
 }
 
@@ -565,9 +533,6 @@ type ListProcessingLogsParams struct {
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
 type ImportMemoryMultipartRequestBody = ImportMultipart
-
-// EnhanceMemoryWithCodexJSONRequestBody defines body for EnhanceMemoryWithCodex for application/json ContentType.
-type EnhanceMemoryWithCodexJSONRequestBody = CodexEnhancementRequest
 
 // SearchMemoriesJSONRequestBody defines body for SearchMemories for application/json ContentType.
 type SearchMemoriesJSONRequestBody = SearchRequest
@@ -824,9 +789,6 @@ type ServerInterface interface {
 	// Get Memory details
 	// (GET /memories/{memoryId})
 	GetMemory(ctx echo.Context, memoryId MemoryId) error
-	// Explicitly request Codex-assisted enhancement
-	// (POST /memories/{memoryId}/codex-enhancement)
-	EnhanceMemoryWithCodex(ctx echo.Context, memoryId MemoryId) error
 	// Download a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(ctx echo.Context, memoryId MemoryId) error
@@ -914,22 +876,6 @@ func (w *ServerInterfaceWrapper) GetMemory(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetMemory(ctx, memoryId)
-	return err
-}
-
-// EnhanceMemoryWithCodex converts echo context to params.
-func (w *ServerInterfaceWrapper) EnhanceMemoryWithCodex(ctx echo.Context) error {
-	var err error
-	// ------------- Path parameter "memoryId" -------------
-	var memoryId MemoryId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "memoryId", ctx.Param("memoryId"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter memoryId: %s", err))
-	}
-
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.EnhanceMemoryWithCodex(ctx, memoryId)
 	return err
 }
 
@@ -1130,7 +1076,6 @@ func RegisterHandlersWithOptions(router EchoRouter, si ServerInterface, options 
 	router.GET(options.BaseURL+"/memories", wrapper.BrowseMemories, options.OperationMiddlewares["browseMemories"]...)
 	router.POST(options.BaseURL+"/memories/import", wrapper.ImportMemory, options.OperationMiddlewares["importMemory"]...)
 	router.GET(options.BaseURL+"/memories/:memoryId", wrapper.GetMemory, options.OperationMiddlewares["getMemory"]...)
-	router.POST(options.BaseURL+"/memories/:memoryId/codex-enhancement", wrapper.EnhanceMemoryWithCodex, options.OperationMiddlewares["enhanceMemoryWithCodex"]...)
 	router.GET(options.BaseURL+"/memories/:memoryId/content", wrapper.GetMemoryContent, options.OperationMiddlewares["getMemoryContent"]...)
 	router.GET(options.BaseURL+"/memories/:memoryId/logs", wrapper.ListProcessingLogs, options.OperationMiddlewares["listProcessingLogs"]...)
 	router.POST(options.BaseURL+"/memories/:memoryId/rebuild", wrapper.RebuildMemory, options.OperationMiddlewares["rebuildMemory"]...)
@@ -1344,99 +1289,6 @@ func (response GetMemory404JSONResponse) VisitGetMemoryResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type EnhanceMemoryWithCodexRequestObject struct {
-	MemoryId MemoryId `json:"memoryId"`
-	Body     *EnhanceMemoryWithCodexJSONRequestBody
-}
-
-type EnhanceMemoryWithCodexResponseObject interface {
-	VisitEnhanceMemoryWithCodexResponse(w http.ResponseWriter) error
-}
-
-type EnhanceMemoryWithCodex200TexteventStreamResponse struct {
-	UnderstandingEventStreamTexteventStreamResponse
-}
-
-func (response EnhanceMemoryWithCodex200TexteventStreamResponse) VisitEnhanceMemoryWithCodexResponse(w http.ResponseWriter) error {
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	if response.ContentLength != 0 {
-		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
-	}
-	w.WriteHeader(200)
-
-	if closer, ok := response.Body.(io.ReadCloser); ok {
-		defer closer.Close()
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		// If w doesn't support flushing, fall back to io.Copy.
-		_, err := io.Copy(w, response.Body)
-		return err
-	}
-	// text/event-stream messages are typically small; use a
-	// modest buffer and flush after each chunk so clients see
-	// events immediately instead of waiting on OS buffering.
-	buf := make([]byte, 4096)
-	for {
-		n, err := response.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				return writeErr
-			}
-			flusher.Flush()
-		}
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-	}
-}
-
-type EnhanceMemoryWithCodex404JSONResponse Error
-
-func (response EnhanceMemoryWithCodex404JSONResponse) VisitEnhanceMemoryWithCodexResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type EnhanceMemoryWithCodex409JSONResponse Error
-
-func (response EnhanceMemoryWithCodex409JSONResponse) VisitEnhanceMemoryWithCodexResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type EnhanceMemoryWithCodex413JSONResponse Error
-
-func (response EnhanceMemoryWithCodex413JSONResponse) VisitEnhanceMemoryWithCodexResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1806,9 +1658,6 @@ type StrictServerInterface interface {
 	// Get Memory details
 	// (GET /memories/{memoryId})
 	GetMemory(ctx context.Context, request GetMemoryRequestObject) (GetMemoryResponseObject, error)
-	// Explicitly request Codex-assisted enhancement
-	// (POST /memories/{memoryId}/codex-enhancement)
-	EnhanceMemoryWithCodex(ctx context.Context, request EnhanceMemoryWithCodexRequestObject) (EnhanceMemoryWithCodexResponseObject, error)
 	// Download a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(ctx context.Context, request GetMemoryContentRequestObject) (GetMemoryContentResponseObject, error)
@@ -1943,40 +1792,6 @@ func (sh *strictHandler) GetMemory(ctx echo.Context, memoryId MemoryId) error {
 		return err
 	} else if validResponse, ok := response.(GetMemoryResponseObject); ok {
 		return validResponse.VisitGetMemoryResponse(ctx.Response())
-	} else if response != nil {
-		return fmt.Errorf("unexpected response type: %T", response)
-	}
-	return nil
-}
-
-// EnhanceMemoryWithCodex operation middleware
-func (sh *strictHandler) EnhanceMemoryWithCodex(ctx echo.Context, memoryId MemoryId) error {
-	var request EnhanceMemoryWithCodexRequestObject
-
-	request.MemoryId = memoryId
-
-	var body EnhanceMemoryWithCodexJSONRequestBody
-	if err := ctx.Bind(&body); err != nil {
-		if !errors.Is(err, io.EOF) {
-			return err
-		}
-	} else {
-		request.Body = &body
-	}
-
-	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.EnhanceMemoryWithCodex(ctx.Request().Context(), request.(EnhanceMemoryWithCodexRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "EnhanceMemoryWithCodex")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		return err
-	} else if validResponse, ok := response.(EnhanceMemoryWithCodexResponseObject); ok {
-		return validResponse.VisitEnhanceMemoryWithCodexResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}
@@ -2193,79 +2008,74 @@ func (sh *strictHandler) SearchMemories(ctx echo.Context) error {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

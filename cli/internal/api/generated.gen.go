@@ -21,12 +21,7 @@ import (
 
 // Defines values for FactValueType.
 const (
-	Boolean  FactValueType = "boolean"
-	Date     FactValueType = "date"
 	Datetime FactValueType = "datetime"
-	Integer  FactValueType = "integer"
-	Json     FactValueType = "json"
-	Null     FactValueType = "null"
 	Number   FactValueType = "number"
 	String   FactValueType = "string"
 )
@@ -34,17 +29,7 @@ const (
 // Valid indicates whether the value is a known member of the FactValueType enum.
 func (e FactValueType) Valid() bool {
 	switch e {
-	case Boolean:
-		return true
-	case Date:
-		return true
 	case Datetime:
-		return true
-	case Integer:
-		return true
-	case Json:
-		return true
-	case Null:
 		return true
 	case Number:
 		return true
@@ -153,15 +138,12 @@ func (e ProcessingLogKind) Valid() bool {
 
 // Defines values for UnderstandingCompletedEventEvent.
 const (
-	CodexEnhancementCompleted UnderstandingCompletedEventEvent = "codex_enhancement_completed"
-	RebuildCompleted          UnderstandingCompletedEventEvent = "rebuild_completed"
+	RebuildCompleted UnderstandingCompletedEventEvent = "rebuild_completed"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingCompletedEventEvent enum.
 func (e UnderstandingCompletedEventEvent) Valid() bool {
 	switch e {
-	case CodexEnhancementCompleted:
-		return true
 	case RebuildCompleted:
 		return true
 	default:
@@ -171,16 +153,13 @@ func (e UnderstandingCompletedEventEvent) Valid() bool {
 
 // Defines values for UnderstandingFailedEventEvent.
 const (
-	CodexEnhancementFailed UnderstandingFailedEventEvent = "codex_enhancement_failed"
-	ImportFailed           UnderstandingFailedEventEvent = "import_failed"
-	RebuildFailed          UnderstandingFailedEventEvent = "rebuild_failed"
+	ImportFailed  UnderstandingFailedEventEvent = "import_failed"
+	RebuildFailed UnderstandingFailedEventEvent = "rebuild_failed"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingFailedEventEvent enum.
 func (e UnderstandingFailedEventEvent) Valid() bool {
 	switch e {
-	case CodexEnhancementFailed:
-		return true
 	case ImportFailed:
 		return true
 	case RebuildFailed:
@@ -213,15 +192,12 @@ func (e UnderstandingProgressEventEvent) Valid() bool {
 
 // Defines values for UnderstandingRunPipeline.
 const (
-	CodexEnhancement UnderstandingRunPipeline = "codex_enhancement"
-	Regular          UnderstandingRunPipeline = "regular"
+	Regular UnderstandingRunPipeline = "regular"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingRunPipeline enum.
 func (e UnderstandingRunPipeline) Valid() bool {
 	switch e {
-	case CodexEnhancement:
-		return true
 	case Regular:
 		return true
 	default:
@@ -248,15 +224,6 @@ func (e UnderstandingState) Valid() bool {
 	default:
 		return false
 	}
-}
-
-// CodexEnhancementRequest defines model for CodexEnhancementRequest.
-type CodexEnhancementRequest struct {
-	// ConfirmRepeat Confirm repeating an equivalent prior Codex enhancement.
-	ConfirmRepeat *bool `json:"confirm_repeat,omitempty"`
-
-	// Instructions Optional user direction for the explicit Codex task.
-	Instructions *string `json:"instructions,omitempty"`
 }
 
 // DerivedContent defines model for DerivedContent.
@@ -286,18 +253,18 @@ type Error struct {
 
 // Fact defines model for Fact.
 type Fact struct {
+	// Category Example: bill
+	Category   string   `json:"category"`
 	Confidence *float64 `json:"confidence,omitempty"`
 
 	// Name Example: issue_date
 	Name string `json:"name"`
 
-	// Namespace Example: bill
-	Namespace string `json:"namespace"`
-
-	// Origin Extractor, plugin, or import provenance that asserted the Fact.
+	// Origin Extraction or import provenance that asserted the Fact.
 	Origin string `json:"origin"`
 
-	// Value Typed JSON value asserted by the Fact.
+	// Value Value asserted by the Fact. Must match value_type: string, JSON
+	// number, or an RFC 3339 string for datetime.
 	Value     interface{}   `json:"value"`
 	ValueType FactValueType `json:"value_type"`
 }
@@ -307,11 +274,12 @@ type FactValueType string
 
 // FactFilter defines model for FactFilter.
 type FactFilter struct {
-	Name      string             `json:"name"`
-	Namespace string             `json:"namespace"`
-	Operator  FactFilterOperator `json:"operator"`
+	Category string             `json:"category"`
+	Name     string             `json:"name"`
+	Operator FactFilterOperator `json:"operator"`
 
-	// Value Typed value used for exact Fact filtering.
+	// Value String, JSON number, or RFC 3339 datetime string used for exact
+	// Fact filtering.
 	Value interface{} `json:"value"`
 }
 
@@ -340,7 +308,7 @@ type ImportCompletedEvent struct {
 type ImportCompletedEventEvent string
 
 // ImportContext Stored provenance from the first successful import. Available values
-// also appear as Facts in the import namespace with origin import-client.
+// also appear as Facts in the import category with origin import-client.
 type ImportContext struct {
 	ByteSize             *int64     `json:"byte_size,omitempty"`
 	ContentHash          *string    `json:"content_hash,omitempty"`
@@ -362,7 +330,7 @@ type ImportContextInput struct {
 	// FullPath Original full path when the importing client can provide it.
 	FullPath *string `json:"full_path,omitempty"`
 
-	// RelativePath Browser-provided path relative to the selected directory.
+	// RelativePath Client-provided relative import path, when available.
 	RelativePath *string `json:"relative_path,omitempty"`
 }
 
@@ -394,7 +362,7 @@ type MemoryDetail struct {
 	Facts          []Fact           `json:"facts"`
 
 	// ImportContext Stored provenance from the first successful import. Available values
-	// also appear as Facts in the import namespace with origin import-client.
+	// also appear as Facts in the import category with origin import-client.
 	ImportContext ImportContext `json:"import_context"`
 	Memory        MemorySummary `json:"memory"`
 }
@@ -488,7 +456,7 @@ type UnderstandingCompletedEvent struct {
 // UnderstandingCompletedEventEvent defines model for UnderstandingCompletedEvent.Event.
 type UnderstandingCompletedEventEvent string
 
-// UnderstandingEvent One JSON payload carried by a rebuild or Codex SSE event.
+// UnderstandingEvent One JSON payload carried by a rebuild SSE event.
 type UnderstandingEvent struct {
 	union json.RawMessage
 }
@@ -526,7 +494,6 @@ type UnderstandingRun struct {
 	Id                openapi_types.UUID       `json:"id"`
 	MemoryId          openapi_types.UUID       `json:"memory_id"`
 	Pipeline          UnderstandingRunPipeline `json:"pipeline"`
-	PluginVersions    *map[string]string       `json:"plugin_versions,omitempty"`
 	Warnings          *[]string                `json:"warnings,omitempty"`
 }
 
@@ -562,9 +529,6 @@ type ListProcessingLogsParams struct {
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
 type ImportMemoryMultipartRequestBody = ImportMultipart
-
-// EnhanceMemoryWithCodexJSONRequestBody defines body for EnhanceMemoryWithCodex for application/json ContentType.
-type EnhanceMemoryWithCodexJSONRequestBody = CodexEnhancementRequest
 
 // SearchMemoriesJSONRequestBody defines body for SearchMemories for application/json ContentType.
 type SearchMemoriesJSONRequestBody = SearchRequest
@@ -924,7 +888,7 @@ type ClientInterface interface {
 
 	// BrowseMemories Browse Memories
 	//
-	// Returns whole Memories in reverse original-time order.
+	// Returns whole Memories.
 	//
 	// Corresponds with GET /memories (the `BrowseMemories` operationId).
 	BrowseMemories(ctx context.Context, params *BrowseMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -933,8 +897,7 @@ type ClientInterface interface {
 	//
 	// Upload one Blob. The request remains open until the
 	// understanding attempt reaches a terminal result. The response is an
-	// SSE stream; the client owns directory enumeration and uploads Blobs
-	// sequentially. Once the server has committed the Blob and InProgress
+	// SSE stream. Once the server has committed the Blob and InProgress
 	// Memory, disconnecting does not cancel server-side understanding.
 	// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
 	// 409 before an SSE response begins.
@@ -948,28 +911,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 	GetMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// EnhanceMemoryWithCodexWithBody Explicitly request Codex-assisted enhancement
-	//
-	// Creates a complete new Run containing the regular pipeline result plus
-	// Codex enrichment. The client must confirm before repeating an equivalent
-	// prior Codex enhancement.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-	EnhanceMemoryWithCodexWithBody(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// EnhanceMemoryWithCodex Explicitly request Codex-assisted enhancement
-	//
-	// Creates a complete new Run containing the regular pipeline result plus
-	// Codex enrichment. The client must confirm before repeating an equivalent
-	// prior Codex enhancement.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-	EnhanceMemoryWithCodex(ctx context.Context, memoryId MemoryId, body EnhanceMemoryWithCodexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMemoryContent Download a Memory's immutable Blob
 	//
@@ -1048,7 +989,7 @@ func (c *Client) GetLiveness(ctx context.Context, reqEditors ...RequestEditorFn)
 
 // BrowseMemories Browse Memories
 //
-// Returns whole Memories in reverse original-time order.
+// Returns whole Memories.
 //
 // Corresponds with GET /memories (the `BrowseMemories` operationId).
 func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1067,8 +1008,7 @@ func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParam
 //
 // Upload one Blob. The request remains open until the
 // understanding attempt reaches a terminal result. The response is an
-// SSE stream; the client owns directory enumeration and uploads Blobs
-// sequentially. Once the server has committed the Blob and InProgress
+// SSE stream. Once the server has committed the Blob and InProgress
 // Memory, disconnecting does not cancel server-side understanding.
 // Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
 // 409 before an SSE response begins.
@@ -1093,48 +1033,6 @@ func (c *Client) ImportMemoryWithBody(ctx context.Context, contentType string, b
 // Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 func (c *Client) GetMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetMemoryRequest(c.Server, memoryId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// EnhanceMemoryWithCodexWithBody Explicitly request Codex-assisted enhancement
-//
-// Creates a complete new Run containing the regular pipeline result plus
-// Codex enrichment. The client must confirm before repeating an equivalent
-// prior Codex enhancement.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-func (c *Client) EnhanceMemoryWithCodexWithBody(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewEnhanceMemoryWithCodexRequestWithBody(c.Server, memoryId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// EnhanceMemoryWithCodex Explicitly request Codex-assisted enhancement
-//
-// Creates a complete new Run containing the regular pipeline result plus
-// Codex enrichment. The client must confirm before repeating an equivalent
-// prior Codex enhancement.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-func (c *Client) EnhanceMemoryWithCodex(ctx context.Context, memoryId MemoryId, body EnhanceMemoryWithCodexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewEnhanceMemoryWithCodexRequest(c.Server, memoryId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1446,53 +1344,6 @@ func NewGetMemoryRequest(server string, memoryId MemoryId) (*http.Request, error
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewEnhanceMemoryWithCodexRequest calls the generic EnhanceMemoryWithCodex builder with application/json body
-func NewEnhanceMemoryWithCodexRequest(server string, memoryId MemoryId, body EnhanceMemoryWithCodexJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewEnhanceMemoryWithCodexRequestWithBody(server, memoryId, "application/json", bodyReader)
-}
-
-// NewEnhanceMemoryWithCodexRequestWithBody constructs an http.Request for the EnhanceMemoryWithCodex method, with any body, and a specified content type
-func NewEnhanceMemoryWithCodexRequestWithBody(server string, memoryId MemoryId, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/memories/%s/codex-enhancement", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1874,7 +1725,7 @@ type ClientWithResponsesInterface interface {
 
 	// BrowseMemoriesWithResponse Browse Memories
 	//
-	// Returns whole Memories in reverse original-time order.
+	// Returns whole Memories.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1885,8 +1736,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Upload one Blob. The request remains open until the
 	// understanding attempt reaches a terminal result. The response is an
-	// SSE stream; the client owns directory enumeration and uploads Blobs
-	// sequentially. Once the server has committed the Blob and InProgress
+	// SSE stream. Once the server has committed the Blob and InProgress
 	// Memory, disconnecting does not cancel server-side understanding.
 	// Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
 	// 409 before an SSE response begins.
@@ -1902,28 +1752,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
 	GetMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*GetMemoryResponse, error)
-
-	// EnhanceMemoryWithCodexWithBodyWithResponse Explicitly request Codex-assisted enhancement
-	//
-	// Creates a complete new Run containing the regular pipeline result plus
-	// Codex enrichment. The client must confirm before repeating an equivalent
-	// prior Codex enhancement.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-	EnhanceMemoryWithCodexWithBodyWithResponse(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnhanceMemoryWithCodexResponse, error)
-
-	// EnhanceMemoryWithCodexWithResponse Explicitly request Codex-assisted enhancement
-	//
-	// Creates a complete new Run containing the regular pipeline result plus
-	// Codex enrichment. The client must confirm before repeating an equivalent
-	// prior Codex enhancement.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-	EnhanceMemoryWithCodexWithResponse(ctx context.Context, memoryId MemoryId, body EnhanceMemoryWithCodexJSONRequestBody, reqEditors ...RequestEditorFn) (*EnhanceMemoryWithCodexResponse, error)
 
 	// GetMemoryContentWithResponse Download a Memory's immutable Blob
 	//
@@ -2192,61 +2020,6 @@ func (r GetMemoryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetMemoryResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type EnhanceMemoryWithCodexResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *Error
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *Error
-	// JSON413 the response for an HTTP 413 `application/json` response
-	JSON413 *Error
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r EnhanceMemoryWithCodexResponse) GetJSON404() *Error {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r EnhanceMemoryWithCodexResponse) GetJSON409() *Error {
-	return r.JSON409
-}
-
-// GetJSON413 returns the response for an HTTP 413 `application/json` response
-func (r EnhanceMemoryWithCodexResponse) GetJSON413() *Error {
-	return r.JSON413
-}
-
-// GetBody returns the raw response body bytes
-func (r EnhanceMemoryWithCodexResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r EnhanceMemoryWithCodexResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r EnhanceMemoryWithCodexResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r EnhanceMemoryWithCodexResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2653,7 +2426,7 @@ func (c *ClientWithResponses) GetLivenessWithResponse(ctx context.Context, reqEd
 
 // BrowseMemoriesWithResponse Browse Memories
 //
-// Returns whole Memories in reverse original-time order.
+// Returns whole Memories.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -2670,8 +2443,7 @@ func (c *ClientWithResponses) BrowseMemoriesWithResponse(ctx context.Context, pa
 //
 // Upload one Blob. The request remains open until the
 // understanding attempt reaches a terminal result. The response is an
-// SSE stream; the client owns directory enumeration and uploads Blobs
-// sequentially. Once the server has committed the Blob and InProgress
+// SSE stream. Once the server has committed the Blob and InProgress
 // Memory, disconnecting does not cancel server-side understanding.
 // Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
 // 409 before an SSE response begins.
@@ -2698,40 +2470,6 @@ func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, memoryI
 		return nil, err
 	}
 	return ParseGetMemoryResponse(rsp)
-}
-
-// EnhanceMemoryWithCodexWithBodyWithResponse Explicitly request Codex-assisted enhancement
-//
-// Creates a complete new Run containing the regular pipeline result plus
-// Codex enrichment. The client must confirm before repeating an equivalent
-// prior Codex enhancement.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-func (c *ClientWithResponses) EnhanceMemoryWithCodexWithBodyWithResponse(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnhanceMemoryWithCodexResponse, error) {
-	rsp, err := c.EnhanceMemoryWithCodexWithBody(ctx, memoryId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseEnhanceMemoryWithCodexResponse(rsp)
-}
-
-// EnhanceMemoryWithCodexWithResponse Explicitly request Codex-assisted enhancement
-//
-// Creates a complete new Run containing the regular pipeline result plus
-// Codex enrichment. The client must confirm before repeating an equivalent
-// prior Codex enhancement.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /memories/{memoryId}/codex-enhancement (the `EnhanceMemoryWithCodex` operationId).
-func (c *ClientWithResponses) EnhanceMemoryWithCodexWithResponse(ctx context.Context, memoryId MemoryId, body EnhanceMemoryWithCodexJSONRequestBody, reqEditors ...RequestEditorFn) (*EnhanceMemoryWithCodexResponse, error) {
-	rsp, err := c.EnhanceMemoryWithCodex(ctx, memoryId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseEnhanceMemoryWithCodexResponse(rsp)
 }
 
 // GetMemoryContentWithResponse Download a Memory's immutable Blob
@@ -2994,46 +2732,6 @@ func ParseGetMemoryResponse(rsp *http.Response) (*GetMemoryResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseEnhanceMemoryWithCodexResponse parses an HTTP response from a EnhanceMemoryWithCodexWithResponse call
-func ParseEnhanceMemoryWithCodexResponse(rsp *http.Response) (*EnhanceMemoryWithCodexResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &EnhanceMemoryWithCodexResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON413 = &dest
 
 	}
 

@@ -483,7 +483,7 @@ func assertImportContextDetail(t *testing.T, handler http.Handler, memoryID stri
 		"filesystem_modified_at": "2026-09-15T10:11:12Z",
 	}
 	for _, fact := range detail.Facts {
-		if fact.Namespace != "import" {
+		if fact.Category != "import" {
 			continue
 		}
 		want, ok := wantFacts[fact.Name]

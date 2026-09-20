@@ -92,8 +92,6 @@ Generic cards for all models showed schema and evidence-copy flaws. The 12B succ
 
 The PDF was first converted to page-labelled, layout-preserving text. A generic search-card prompt then asked what the file was and which explicit names, identifiers, dates, and sections might help retrieval. A second, itinerary-specific prompt asked for each leg with evidence; a short-passage query tested answering after candidate selection. This suggests a staged local workflow for unknown PDFs: generic extraction and recognition first, optional kind-specific parsing when justified, and brief query-time reading of retrieved passages. The 4B model's wrong departure times show why plausible JSON alone must not become deep Facts. The 12B model's success on this ticket shows the failure is not inevitable for every local model or task.
 
-The verbatim instruction templates, output schemas, and Ollama settings are preserved in [Exact local-model prompts](understanding-runs-local-model-prompts.md). The expanded prompts also contained personal ticket text, which is omitted from that note.
-
 ## Open design decisions
 
 These are questions for the design process, not decisions made by this note:
@@ -109,6 +107,6 @@ These are questions for the design process, not decisions made by this note:
 ## Sources and relationship to current design
 
 - [Project glossary and domain model](../../CONTEXT.md)
-- [MVP design snapshot](../MVP.md) — authoritative current snapshot, while this note's proposals remain tentative
+- [MVP design snapshot](../MVP.md) — MVP authoritative design snapshot
 - [ADR 0003: Understanding is rebuildable](../adr/0003-understanding-is-rebuildable.md)
 - [ADR 0007: Go, SQLite, and filesystem CAS](../adr/0007-go-sqlite-and-filesystem-cas.md) — FTS5 as a rebuildable projection

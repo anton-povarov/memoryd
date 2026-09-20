@@ -65,7 +65,7 @@ func (context ImportContext) normalized() (ImportContext, error) {
 
 // ImportFact is a provenance assertion derived from the stored Import Context.
 type ImportFact struct {
-	Namespace string
+	Category  string
 	Name      string
 	Value     any
 	ValueType string
@@ -101,7 +101,7 @@ func (context ImportContext) Facts() []ImportFact {
 
 func importFact(name string, value any, valueType string) ImportFact {
 	return ImportFact{
-		Namespace: "import",
+		Category:  "import",
 		Name:      name,
 		Value:     value,
 		ValueType: valueType,

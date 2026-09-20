@@ -45,7 +45,7 @@ paths:
       operationId: browseMemories
       tags: [memories]
       summary: Browse Memories
-      description: Returns whole Memories in reverse original-time order.
+      description: Returns whole Memories.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -125,8 +125,7 @@ paths:
       description: |
         Upload one Blob. The request remains open until the
         understanding attempt reaches a terminal result. The response is an
-        SSE stream; the client owns directory enumeration and uploads Blobs
-        sequentially. Once the server has committed the Blob and InProgress
+        SSE stream. Once the server has committed the Blob and InProgress
         Memory, disconnecting does not cancel server-side understanding.
         Blobs are limited to 100 MiB. Duplicate content is rejected with HTTP
         409 before an SSE response begins.
@@ -308,45 +307,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /memories/{memoryId}/codex-enhancement:
-    parameters:
-      - $ref: "#/components/parameters/MemoryId"
-    post:
-      operationId: enhanceMemoryWithCodex
-      tags: [understanding]
-      summary: Explicitly request Codex-assisted enhancement
-      description: |
-        Creates a complete new Run containing the regular pipeline result plus
-        Codex enrichment. The client must confirm before repeating an equivalent
-        prior Codex enhancement.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CodexEnhancementRequest"
-      responses:
-        "200":
-          $ref: "#/components/responses/UnderstandingEventStream"
-        "404":
-          description: The requested Memory or Run does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "409":
-          description: Confirmation is required before repeating an equivalent enhancement.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "413":
-          description: The Blob cannot be prepared within the cloud-bound input limit.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
   /search:
     post:
       operationId: searchMemories
@@ -480,7 +440,7 @@ components:
       properties:
         relative_path:
           type: string
-          description: Browser-provided path relative to the selected directory.
+          description: Client-provided relative import path, when available.
         full_path:
           type: string
           description: Original full path when the importing client can provide it.
@@ -500,7 +460,7 @@ components:
       discriminator:
         propertyName: event
     UnderstandingEvent:
-      description: One JSON payload carried by a rebuild or Codex SSE event.
+      description: One JSON payload carried by a rebuild SSE event.
       oneOf:
         - $ref: "#/components/schemas/UnderstandingProgressEvent"
         - $ref: "#/components/schemas/UnderstandingCompletedEvent"
@@ -545,7 +505,7 @@ components:
       properties:
         event:
           type: string
-          enum: [rebuild_completed, codex_enhancement_completed]
+          enum: [rebuild_completed]
         memory:
           $ref: "#/components/schemas/MemorySummary"
         run:
@@ -557,7 +517,7 @@ components:
       properties:
         event:
           type: string
-          enum: [import_failed, rebuild_failed, codex_enhancement_failed]
+          enum: [import_failed, rebuild_failed]
         memory_id:
           type: string
           format: uuid
@@ -663,7 +623,7 @@ components:
       required: [original_filename]
       description: |
         Stored provenance from the first successful import. Available values
-        also appear as Facts in the import namespace with origin import-client.
+        also appear as Facts in the import category with origin import-client.
       properties:
         original_filename:
           type: string
@@ -691,23 +651,24 @@ components:
 
     Fact:
       type: object
-      required: [namespace, name, value, value_type, origin]
+      required: [category, name, value, value_type, origin]
       properties:
-        namespace:
+        category:
           type: string
           example: bill
         name:
           type: string
           example: issue_date
         value:
-          description: Typed JSON value asserted by the Fact.
-          nullable: true
+          description: |
+            Value asserted by the Fact. Must match value_type: string, JSON
+            number, or an RFC 3339 string for datetime.
         value_type:
           type: string
-          enum: [string, integer, number, boolean, date, datetime, json, "null"]
+          enum: [string, number, datetime]
         origin:
           type: string
-          description: Extractor, plugin, or import provenance that asserted the Fact.
+          description: Extraction or import provenance that asserted the Fact.
         confidence:
           type: number
           format: double
@@ -739,7 +700,7 @@ components:
           format: uuid
         pipeline:
           type: string
-          enum: [regular, codex_enhancement]
+          enum: [regular]
         created_at:
           type: string
           format: date-time
@@ -749,10 +710,6 @@ components:
         active:
           type: boolean
         extractor_versions:
-          type: object
-          additionalProperties:
-            type: string
-        plugin_versions:
           type: object
           additionalProperties:
             type: string
@@ -827,17 +784,6 @@ components:
           type: string
           nullable: true
 
-    CodexEnhancementRequest:
-      type: object
-      properties:
-        instructions:
-          type: string
-          description: Optional user direction for the explicit Codex task.
-        confirm_repeat:
-          type: boolean
-          default: false
-          description: Confirm repeating an equivalent prior Codex enhancement.
-
     SearchRequest:
       type: object
       required: [query]
@@ -887,9 +833,9 @@ components:
 
     FactFilter:
       type: object
-      required: [namespace, name, operator, value]
+      required: [category, name, operator, value]
       properties:
-        namespace:
+        category:
           type: string
         name:
           type: string
@@ -905,8 +851,9 @@ components:
               less_than_or_equal,
             ]
         value:
-          description: Typed value used for exact Fact filtering.
-          nullable: true
+          description: |
+            String, JSON number, or RFC 3339 datetime string used for exact
+            Fact filtering.
 
     SearchResult:
       type: object

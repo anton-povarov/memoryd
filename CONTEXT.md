@@ -39,19 +39,16 @@ Content produced while understanding a Memory, such as extracted text, image met
 _Avoid_: Child memory, sub-document
 
 **Fact**:
-A categorized, named, searchable value asserted about a Memory, together with its origin. Facts never overwrite one another merely because they concern similar concepts; distinct origins and meanings coexist.
+A searchable value asserted about a Memory. A Fact has a name, category, origin, type, and value.
+Available Fact value types are: number, string, datetime (more can be added over time).
 _Avoid_: Attribute, property, tag
-
-**Fact Namespace**:
-The category that distinguishes a Fact's origin or semantic domain, such as `exif`, `bill`, or `passport`.
-_Avoid_: Group, prefix
 
 **General Extraction**:
 Best-effort understanding applicable to a broad content format, such as extracting text from a PDF or EXIF data from an image.
 _Avoid_: Generic parser, fallback parser
 
 **Specialized Enrichment**:
-Understanding specific to a detected Memory Kind that adds domain Facts beyond General Extraction.
+Understanding specific to a detected Memory Kind that adds domain Facts beyond General Extraction. Deferred beyond the MVP.
 _Avoid_: Specialized extraction, custom parsing
 
 **Duplicate**:
@@ -75,7 +72,7 @@ Content present in storage that no committed Memory references, normally because
 _Avoid_: Failed Memory, partially understood Memory
 
 **Understanding Plugin**:
-A versioned external component that can recognize supported Memories and contribute specialized Facts in an Understanding Run.
+A versioned external component that can recognize supported Memories and contribute specialized Facts in an Understanding Run. Deferred beyond the MVP.
 _Avoid_: In-process parser, file handler
 
 **Model Task Category**:

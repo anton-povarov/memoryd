@@ -345,29 +345,11 @@ func (h *Handler) RebuildMemory(
 		request.MemoryId,
 		"rebuild_completed",
 		api.RebuildCompleted,
-		api.Regular,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return api.RebuildMemory200TexteventStreamResponse{
-		UnderstandingEventStreamTexteventStreamResponse: understandingEventStream{
-			Body: stream,
-		},
-	}, nil
-}
-
-func (h *Handler) EnhanceMemoryWithCodex(
-	_ context.Context, request api.EnhanceMemoryWithCodexRequestObject,
-) (api.EnhanceMemoryWithCodexResponseObject, error) {
-	stream, err := understandingStream(
-		request.MemoryId, "codex_enhancement_completed",
-		api.CodexEnhancementCompleted, api.CodexEnhancement,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return api.EnhanceMemoryWithCodex200TexteventStreamResponse{
 		UnderstandingEventStreamTexteventStreamResponse: understandingEventStream{
 			Body: stream,
 		},
@@ -494,13 +476,13 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	importFacts := memory.ImportContext.Facts()
 	facts := make([]api.Fact, 0, 1+len(importFacts))
 	facts = append(facts, api.Fact{
-		Confidence: nil, Namespace: "memoryd", Name: "stub",
-		Value: true, ValueType: api.Boolean, Origin: "memoryd-stub",
+		Confidence: nil, Category: "memoryd", Name: "stub",
+		Value: 1, ValueType: api.Number, Origin: "memoryd-stub",
 	})
 	for _, fact := range importFacts {
 		facts = append(facts, api.Fact{
 			Confidence: nil,
-			Namespace:  fact.Namespace,
+			Category:   fact.Category,
 			Name:       fact.Name,
 			Value:      fact.Value,
 			ValueType:  api.FactValueType(fact.ValueType),
@@ -537,7 +519,6 @@ func understandingRun(memory vault.Memory) api.UnderstandingRun {
 		CompletedAt:       completedAt,
 		Active:            true,
 		ExtractorVersions: nil,
-		PluginVersions:    nil,
 		Warnings:          nil,
 	}
 }
@@ -596,19 +577,15 @@ func sampleMemory(id uuid.UUID) api.MemorySummary {
 	}
 }
 
-func sampleRun(
-	memoryID uuid.UUID,
-	pipeline api.UnderstandingRunPipeline,
-) api.UnderstandingRun {
+func sampleRun(memoryID uuid.UUID) api.UnderstandingRun {
 	return api.UnderstandingRun{
 		Id:                uuid.MustParse(stubRunID),
 		MemoryId:          memoryID,
-		Pipeline:          pipeline,
+		Pipeline:          api.Regular,
 		CreatedAt:         stubTime,
 		CompletedAt:       stubTime.Add(time.Second),
 		Active:            true,
 		ExtractorVersions: nil,
-		PluginVersions:    nil,
 		Warnings:          nil,
 	}
 }
@@ -649,10 +626,9 @@ func understandingStream(
 	memoryID uuid.UUID,
 	eventName string,
 	completed api.UnderstandingCompletedEventEvent,
-	pipeline api.UnderstandingRunPipeline,
 ) (io.Reader, error) {
 	memory := sampleMemory(memoryID)
-	run := sampleRun(memoryID, pipeline)
+	run := sampleRun(memoryID)
 	return eventStream(
 		event{
 			name: "understanding_started",
