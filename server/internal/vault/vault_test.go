@@ -6,10 +6,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -144,9 +144,9 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if created.MediaType != "application/pdf" {
 		t.Fatalf("created Memory = %#v", created)
 	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(wantBytes))
-	if created.BlobRef.String() != "sha256-"+digest {
-		t.Fatalf("Blobref = %s, want sha256-%s", created.BlobRef, digest)
+	wantBlobref := NewSHA256Blobref(sha256.Sum256(wantBytes))
+	if created.BlobRef != wantBlobref {
+		t.Fatalf("Blobref = %s, want %s", created.BlobRef, wantBlobref)
 	}
 	var storedRef string
 	if err := v.db.QueryRowContext(
@@ -167,13 +167,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	); err == nil {
 		t.Fatal("database accepted an unprefixed digest")
 	}
-	blobPath := filepath.Join(
-		blobDir,
-		"sha256",
-		digest[:2],
-		digest[2:4],
-		"sha256-"+digest,
-	)
+	blobPath := v.blobPath(wantBlobref)
 	storedBytes, err := os.ReadFile(blobPath)
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +387,7 @@ func TestOpenCreatesSeparatedMemoryAndUnderstandingSchema(t *testing.T) {
 	}
 	for table, want := range wantColumns {
 		got := readTableColumnsForTest(t, v.db, table)
-		if fmt.Sprint(got) != fmt.Sprint(want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("%s columns = %v, want %v", table, got, want)
 		}
 	}
@@ -608,7 +602,15 @@ func TestStartupCleansStagingAndPreservesPublishedOrphan(t *testing.T) {
 	root := t.TempDir()
 	uploadDir := filepath.Join(root, "uploads")
 	contentDir := filepath.Join(root, "blobs", "sha256")
-	shardDir := filepath.Join(contentDir, "aa", "bb")
+	orphanBytes := []byte("published orphan")
+	orphanRef := NewSHA256Blobref(sha256.Sum256(orphanBytes))
+	stagingVault := Vault{
+		db:        nil,
+		blobDir:   contentDir,
+		uploadDir: uploadDir,
+	}
+	orphan := stagingVault.blobPath(orphanRef)
+	shardDir := filepath.Dir(orphan)
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -617,11 +619,13 @@ func TestStartupCleansStagingAndPreservesPublishedOrphan(t *testing.T) {
 	}
 	importTemporary := filepath.Join(uploadDir, ".import-abandoned")
 	publishTemporary := filepath.Join(shardDir, ".publish-abandoned")
-	orphan := filepath.Join(shardDir, "sha256-"+strings.Repeat("a", 64))
-	for _, path := range []string{importTemporary, publishTemporary, orphan} {
+	for _, path := range []string{importTemporary, publishTemporary} {
 		if err := os.WriteFile(path, []byte("bytes"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(orphan, orphanBytes, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	v, err := Open(
