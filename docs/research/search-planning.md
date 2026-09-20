@@ -1,4 +1,4 @@
-# Local multilingual search-query understanding
+# Local multilingual Search Planning
 
 Status: research note, not product specification  
 Date: 2026-09-20  
@@ -17,7 +17,7 @@ QueryPlan:
   explanation: string
 ```
 
-`FactFilter` carries a category, name, comparison operator, and typed value ([`api/openapi.yaml`](../../api/openapi.yaml), `QueryPlan` and `FactFilter`, around lines 873–907). The search endpoint says that the plan is displayed and immediately executes exact Fact filters plus mandatory residual FTS terms ([`api/openapi.yaml`](../../api/openapi.yaml), `searchMemories`). This means query understanding is not merely an internal ranking hint: dropping a phrase or inventing a filter changes the user-visible search semantics.
+`FactFilter` carries a category, name, comparison operator, and typed value ([`api/openapi.yaml`](../../api/openapi.yaml), `QueryPlan` and `FactFilter`, around lines 873–907). The search endpoint says that the plan is displayed and immediately executes exact Fact filters plus mandatory residual FTS terms ([`api/openapi.yaml`](../../api/openapi.yaml), `searchMemories`). This means Search Planning is not merely an internal ranking hint: dropping a phrase or inventing a filter changes the user-visible search semantics.
 
 The authoritative MVP adds four constraints:
 
@@ -28,7 +28,7 @@ The authoritative MVP adds four constraints:
 
 The MVP also defers cross-language retrieval ([`docs/MVP.md`](../MVP.md), “Explicit MVP boundaries”). This creates a scope conflict with a broader multilingual/cross-language goal. A multilingual parser can understand a Russian, Arabic, or French query and emit a normalized date or MIME filter, but FTS still cannot find an English-only stored phrase merely because its meaning is equivalent. Conversely, adding embeddings later could improve cross-language recall but would not make an embedding match an exact Fact constraint. The MVP can therefore support multilingual query *parsing* without promising cross-language *retrieval*. The latter needs a deliberate future projection and evaluation track.
 
-Model selection belongs to the `query_understanding` Model Task Category, which is independently routed to a configured provider; ADR 0005 names Ollama as the intended provider and disallows automatic provider fallback ([ADR 0005](../adr/0005-models-are-routed-by-task-category.md)). The currently installed `embeddinggemma` is not a chat/query parser according to the MVP, so it should not be treated as a substitute for the configured model.
+Model selection belongs to the `search_planning` Model Task Category, which is independently routed to a configured provider; ADR 0005 names Ollama as the intended provider and disallows automatic provider fallback ([ADR 0005](../adr/0005-models-are-routed-by-task-category.md)). The currently installed `embeddinggemma` is not a chat/query parser according to the MVP, so it should not be treated as a substitute for the configured model.
 
 ## Candidate approaches
 
@@ -36,7 +36,7 @@ Model selection belongs to the `query_understanding` Model Task Category, which 
 
 Deterministic extraction is the safest first layer for fields with a finite vocabulary or normalization rules:
 
-- Media Type aliases can map `pdf`, `portable document`, `jpeg`, `photo`, and similar terms to a constrained MIME allowlist. This is query interpretation, not Media Type detection; the authoritative stored Media Type still comes from import metadata.
+- Media Type aliases can map `pdf`, `portable document`, `jpeg`, `photo`, and similar terms to a constrained MIME allowlist. This is Search Planning, not Media Type detection; the authoritative stored Media Type still comes from import metadata.
 - Memory Kind aliases can map known terms such as `passport`, `Tasleem bill`, `airline ticket`, or `newsletter` to the currently supported semantic-kind vocabulary. Unknown terms remain text instead of creating arbitrary Fact categories.
 - Numeric and ISO-like dates, years, explicit ranges, and locale-specific formats can be handled before a model call. A locale or reference time must be recorded because `03/04/2026` is ambiguous and “last month” is relative.
 
@@ -81,7 +81,7 @@ On macOS, [MLX](https://mlx-framework.org/) is Apple's local Apple-Silicon frame
 The recommended design is a deterministic pass, a bounded model pass, and a conservative merge:
 
 1. Preserve the original query and tokenize it without losing offsets. Run exact aliases, MIME normalization, numeric/ISO date rules, and the selected deterministic date parser. Detect only supported Memory Kinds and Fact fields.
-2. Send the original query plus the deterministic candidates and the supported vocabulary to Ollama under the `query_understanding` task category. Ask for candidates, exact source spans, locale assumptions, date precision, date role, confidence, and an explicit abstention when the wording is ambiguous. Use a JSON Schema and temperature 0.
+2. Send the original query plus the deterministic candidates and the supported vocabulary to Ollama under the `search_planning` task category. Ask for candidates, exact source spans, locale assumptions, date precision, date role, confidence, and an explicit abstention when the wording is ambiguous. Use a JSON Schema and temperature 0.
 3. Merge by authority: deterministic values win when unambiguous; the model may fill an unrecognized semantic alias or location candidate, but it may not override a validated date or invent an unsupported field. Require exact substring spans, valid offsets, allowlisted values, and `from <= to` for ranges.
 4. Remove only accepted constraint spans from the residual text. Preserve all other text, including unresolved aliases, unknown locations, relationship phrases, and model-abstained spans. Do not translate or paraphrase the residual terms.
 5. Map accepted candidates to the existing `FactFilter` array. The category and name choices remain an implementation decision; the public shape does not need a new model-specific field. Emit residual phrases in `full_text_terms` and generate `explanation` from the accepted filters and retained terms.

@@ -59,10 +59,6 @@ _Avoid_: Re-import, migration
 An immutable, versioned interpretation of a Memory containing the Derived Content and Facts produced together. A Run is recorded only after successful processing; one Run is active for search while earlier successful Runs remain available for provenance and rollback.
 _Avoid_: Parse result, extraction version
 
-**Understanding State**:
-The current lifecycle state of a Memory's understanding attempt: `InProgress`, `Done`, or `Failed`. `Done` means a coherent Understanding Run committed, although it may carry explicit warnings from optional enrichment. `Failed` means no usable Run could be committed. A Memory in `Failed` state remains a valid Memory with its Blob and import metadata; it is not an orphan.
-_Avoid_: Import state, orphan status
-
 **Orphan Blob**:
 Content present in storage that no committed Memory references, normally because an import was interrupted between writing the Blob and recording the Memory.
 _Avoid_: Failed Memory, partially understood Memory
@@ -72,8 +68,12 @@ A versioned external component that can recognize supported Memories and contrib
 _Avoid_: In-process parser, file handler
 
 **Model Task Category**:
-A named class of model-assisted work, such as query understanding or hard content extraction, that is independently assigned to a configured model provider.
+A named class of model-assisted work, such as Search Planning or Document Understanding, that is independently assigned to a configured model provider.
 _Avoid_: Model name, provider name
+
+**Search Planning**:
+The process of converting a natural-language search request into a visible Query Plan for execution.
+_Avoid_: Query Understanding, query parsing
 
 **Query Plan**:
 The visible interpretation of a natural-language query as exact Fact filters and residual full-text terms. Unresolved terms remain mandatory full-text terms rather than being silently discarded.
