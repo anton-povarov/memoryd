@@ -135,6 +135,7 @@ func (h *Handler) GetMemoryContent(
 		"memory_id",
 		request.MemoryId,
 	)
+
 	memory, content, err := h.vault.OpenContent(ctx, request.MemoryId)
 	if errors.Is(err, vault.ErrMemoryNotFound) {
 		logger.InfoContext(

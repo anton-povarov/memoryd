@@ -3,7 +3,7 @@ output: generated.gen.go
 
 generate:
   models: true
-  echo-server: true
+  std-http-server: true
   strict-server: true
   embedded-spec: true
   server-urls: true

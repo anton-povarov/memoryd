@@ -7,12 +7,11 @@ import (
 	"testing"
 
 	"github.com/anton-povarov/memoryd/server/internal/webui"
-	"github.com/labstack/echo/v4"
 )
 
 func TestRegisterServesEmbeddedInterface(t *testing.T) {
-	e := echo.New()
-	if err := webui.Register(e); err != nil {
+	mux := http.NewServeMux()
+	if err := webui.Register(mux); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,7 +37,7 @@ func TestRegisterServesEmbeddedInterface(t *testing.T) {
 		},
 	} {
 		recorder := httptest.NewRecorder()
-		e.ServeHTTP(
+		mux.ServeHTTP(
 			recorder,
 			httptest.NewRequest(http.MethodGet, test.path, nil),
 		)
@@ -61,6 +60,22 @@ func TestRegisterServesEmbeddedInterface(t *testing.T) {
 	}
 }
 
+func TestRegisterDoesNotCatchUnknownPaths(t *testing.T) {
+	mux := http.NewServeMux()
+	if err := webui.Register(mux); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/unknown", nil),
+	)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("GET /unknown status = %d", recorder.Code)
+	}
+}
+
 func TestRegisterRejectsNilRouter(t *testing.T) {
 	if err := webui.Register(nil); err == nil {
 		t.Fatal("Register(nil) returned nil error")
@@ -68,13 +83,13 @@ func TestRegisterRejectsNilRouter(t *testing.T) {
 }
 
 func TestInterfaceSupportsSelectingMultipleFiles(t *testing.T) {
-	e := echo.New()
-	if err := webui.Register(e); err != nil {
+	mux := http.NewServeMux()
+	if err := webui.Register(mux); err != nil {
 		t.Fatal(err)
 	}
 
 	recorder := httptest.NewRecorder()
-	e.ServeHTTP(
+	mux.ServeHTTP(
 		recorder,
 		httptest.NewRequest(http.MethodGet, "/", nil),
 	)

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/anton-povarov/memoryd/server/internal/server"
-	"github.com/labstack/echo/v4"
 )
 
 const testSpec = `openapi: 3.0.3
@@ -25,9 +24,9 @@ paths:
 `
 
 func TestRegisterDocumentationEndpoint(t *testing.T) {
-	e := echo.New()
+	mux := http.NewServeMux()
 	if err := server.RegisterDocumentationEndpoint(
-		e,
+		mux,
 		"/api/",
 		[]byte(testSpec),
 	); err != nil {
@@ -82,7 +81,7 @@ func TestRegisterDocumentationEndpoint(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, nil)
 			res := httptest.NewRecorder()
-			e.ServeHTTP(res, req)
+			mux.ServeHTTP(res, req)
 
 			if res.Code != tc.status {
 				t.Fatalf(
@@ -119,9 +118,9 @@ func TestRegisterDocumentationEndpoint(t *testing.T) {
 }
 
 func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
-	e := echo.New()
+	mux := http.NewServeMux()
 	spec := []byte(testSpec)
-	if err := server.RegisterDocumentationEndpoint(e, "", spec); err != nil {
+	if err := server.RegisterDocumentationEndpoint(mux, "", spec); err != nil {
 		t.Fatalf("register documentation: %v", err)
 	}
 	for i := range spec {
@@ -130,7 +129,7 @@ func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	res := httptest.NewRecorder()
-	e.ServeHTTP(res, req)
+	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", res.Code)
 	}
@@ -144,7 +143,7 @@ func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	res = httptest.NewRecorder()
-	e.ServeHTTP(res, req)
+	mux.ServeHTTP(res, req)
 	body, _ := io.ReadAll(res.Body)
 	if string(body) != testSpec {
 		t.Fatalf("YAML response changed after caller mutation")
@@ -153,7 +152,7 @@ func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 
 func TestRegisterDocumentationEndpointRejectsInvalidInput(t *testing.T) {
 	if err := server.RegisterDocumentationEndpoint(
-		echo.New(),
+		http.NewServeMux(),
 		"/api",
 		[]byte("openapi: ["),
 	); err == nil {
@@ -167,7 +166,7 @@ func TestRegisterDocumentationEndpointRejectsInvalidInput(t *testing.T) {
 		t.Fatal("nil router unexpectedly accepted")
 	}
 	if err := server.RegisterDocumentationEndpoint(
-		echo.New(),
+		http.NewServeMux(),
 		"api",
 		[]byte(testSpec),
 	); err == nil {

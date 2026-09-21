@@ -6,17 +6,15 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-
-	"github.com/labstack/echo/v4"
 )
 
 //go:embed assets/*
 var assets embed.FS
 
-// Register mounts the browser interface and its static assets on e.
-func Register(e *echo.Echo) error {
-	if e == nil {
-		return fmt.Errorf("webui: nil Echo router")
+// Register mounts the browser interface and its static assets on mux.
+func Register(mux *http.ServeMux) error {
+	if mux == nil {
+		return fmt.Errorf("webui: nil HTTP router")
 	}
 
 	assetFS, err := fs.Sub(assets, "assets")
@@ -24,30 +22,19 @@ func Register(e *echo.Echo) error {
 		return fmt.Errorf("webui: open embedded assets: %w", err)
 	}
 
-	e.GET("/", func(c echo.Context) error {
-		return serveAsset(c, assetFS, "index.html", "text/html; charset=utf-8")
+	indexHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, assetFS, "index.html")
 	})
-	e.GET("/assets/app.css", func(c echo.Context) error {
-		return serveAsset(c, assetFS, "app.css", "text/css; charset=utf-8")
-	})
-	e.GET("/assets/app.js", func(c echo.Context) error {
-		return serveAsset(c, assetFS, "app.js", "text/javascript; charset=utf-8")
-	})
+	mux.Handle(http.MethodGet+" /{$}", noCache(indexHandler))
+	assetHandler := http.StripPrefix("/assets/", http.FileServerFS(assetFS))
+	mux.Handle(http.MethodGet+" /assets/", noCache(assetHandler))
 
 	return nil
 }
 
-func serveAsset(
-	c echo.Context,
-	assetFS fs.FS,
-	name string,
-	contentType string,
-) error {
-	content, err := fs.ReadFile(assetFS, name)
-	if err != nil {
-		return fmt.Errorf("webui: read %s: %w", name, err)
-	}
-
-	c.Response().Header().Set("Cache-Control", "no-cache")
-	return c.Blob(http.StatusOK, contentType, content)
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }

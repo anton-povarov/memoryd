@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
 	"github.com/swaggest/swgui/v5emb"
 	"sigs.k8s.io/yaml"
 )
@@ -23,12 +22,12 @@ import (
 // registered. The input bytes are copied, so callers may safely reuse or
 // mutate their input after this function returns.
 func RegisterDocumentationEndpoint(
-	e *echo.Echo,
+	mux *http.ServeMux,
 	urlPrefix string,
 	yamlSpec []byte,
 ) error {
-	if e == nil {
-		return errors.New("apidoc: nil Echo router")
+	if mux == nil {
+		return errors.New("apidoc: nil HTTP router")
 	}
 
 	prefix, err := normalizePrefix(urlPrefix)
@@ -48,29 +47,32 @@ func RegisterDocumentationEndpoint(
 	docsPath := prefix + "/docs"
 	docsBasePath := docsPath + "/"
 
-	yamlHandler := func(c echo.Context) error {
+	yamlHandler := func(w http.ResponseWriter, _ *http.Request) {
 		// text/yaml is intentionally used here: browsers display this response
 		// instead of treating an unknown application type as a download.
-		return c.Blob(http.StatusOK, "text/yaml; charset=utf-8", yamlCopy)
+		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(yamlCopy)
 	}
-	e.GET(openAPIYAMLPath, yamlHandler)
+	mux.HandleFunc(http.MethodGet+" "+openAPIYAMLPath, yamlHandler)
 	// Keep the conventional .yml spelling as a harmless compatibility alias.
-	e.GET(openAPIYMLPath, yamlHandler)
-	e.GET(openAPIJSONPath, func(c echo.Context) error {
-		return c.Blob(
-			http.StatusOK,
-			"application/json; charset=utf-8",
-			jsonSpec,
-		)
-	})
-	e.GET(docsPath, func(c echo.Context) error {
-		return c.Redirect(http.StatusPermanentRedirect, docsBasePath)
+	mux.HandleFunc(http.MethodGet+" "+openAPIYMLPath, yamlHandler)
+	mux.HandleFunc(
+		http.MethodGet+" "+openAPIJSONPath,
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(jsonSpec)
+		},
+	)
+	mux.HandleFunc(http.MethodGet+" "+docsPath, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, docsBasePath, http.StatusPermanentRedirect)
 	})
 
 	// v5emb serves both the HTML shell and its static JS/CSS from embedded
 	// assets. It does not require the browser to reach a CDN.
 	ui := v5emb.New(title, openAPIJSONPath, docsBasePath)
-	e.Any(docsPath+"/*", echo.WrapHandler(ui))
+	mux.Handle(http.MethodGet+" "+docsBasePath, ui)
 
 	return nil
 }

@@ -3,9 +3,9 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/anton-povarov/memoryd/server/internal/api"
@@ -13,15 +13,15 @@ import (
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/anton-povarov/memoryd/server/internal/vault"
 	"github.com/anton-povarov/memoryd/server/internal/webui"
-
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/google/uuid"
 )
 
+const requestIDHeader = "X-Request-ID"
+
 type Server struct {
-	config config.ServerConfig
-	echo   *echo.Echo
-	logger *slog.Logger
+	config     config.ServerConfig
+	httpServer *http.Server
+	logger     *slog.Logger
 }
 
 func New(
@@ -35,57 +35,71 @@ func New(
 	}
 
 	httpHandler := NewHandler(version, cfg.Storage.DataDir, memoryVault)
-
-	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
-	e.Logger.SetOutput(io.Discard)
-	e.Use(panicRecovery(logger))
-	e.Use(middleware.RequestID())
-	e.Use(requestLogContext(logger))
-	e.Use(requestLogger(logger))
-	e.Use(requestPassThroughContext())
+	mux := http.NewServeMux()
 
 	openAPIYAML, err := api.OpenAPIYAML()
 	if err != nil {
 		return nil, err
 	}
-	if err := RegisterDocumentationEndpoint(e, "", openAPIYAML); err != nil {
+	if err := RegisterDocumentationEndpoint(mux, "", openAPIYAML); err != nil {
 		return nil, err
 	}
-	if err := webui.Register(e); err != nil {
+	if err := webui.Register(mux); err != nil {
 		return nil, err
 	}
-	api.RegisterHandlersWithBaseURL(
-		e,
-		api.NewStrictHandler(httpHandler, nil),
+
+	strictHandler := api.NewStrictHandlerWithOptions(
+		httpHandler,
+		nil,
+		api.StrictHTTPServerOptions{
+			RequestErrorHandlerFunc: nil,
+			ResponseErrorHandlerFunc: func(
+				w http.ResponseWriter,
+				r *http.Request,
+				err error,
+			) {
+				logging.FromContext(r.Context()).ErrorContext(
+					r.Context(),
+					"HTTP handler failed",
+					"error", err,
+				)
+				http.Error(
+					w,
+					http.StatusText(http.StatusInternalServerError),
+					http.StatusInternalServerError,
+				)
+			},
+		},
+	)
+	api.HandlerFromMuxWithBaseURL(
+		strictHandler,
+		mux,
 		api.ServerUrlLocalMemorydServer,
 	)
 
-	return &Server{config: cfg.Server, echo: e, logger: logger}, nil
-}
+	handler := requestIDMiddleware(
+		requestLoggerMiddleware(
+			logger,
+			panicRecoveryMiddleware(
+				requestContextMiddleware(mux),
+			),
+		),
+	)
+	httpServer := new(http.Server)
+	httpServer.Addr = cfg.Server.Address
+	httpServer.Handler = handler
+	httpServer.ErrorLog = slog.NewLogLogger(logger.Handler(), slog.LevelError)
 
-func panicRecovery(logger *slog.Logger) echo.MiddlewareFunc {
-	return middleware.RecoverWithConfig(middleware.RecoverConfig{
-		DisableStackAll: true,
-		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
-			request := c.Request()
-			logger.ErrorContext(request.Context(),
-				"HTTP handler panicked",
-				"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
-				"method", request.Method,
-				"path", request.URL.Path,
-				"error", err,
-				"stack", string(stack),
-			)
-			return err
-		},
-	})
+	return &Server{
+		config:     cfg.Server,
+		httpServer: httpServer,
+		logger:     logger,
+	}, nil
 }
 
 // Handler exposes the complete HTTP surface for black-box tests and embedding.
 func (s *Server) Handler() http.Handler {
-	return s.echo
+	return s.httpServer.Handler
 }
 
 // Run serves until ctx is cancelled or the listener fails. Cancellation starts
@@ -98,7 +112,7 @@ func (s *Server) Run(ctx context.Context) error {
 			"api_base", api.ServerUrlLocalMemorydServer,
 			"docs", "/docs/",
 		)
-		errorsFromServer <- s.echo.Start(s.config.Address)
+		errorsFromServer <- s.httpServer.ListenAndServe()
 	}()
 
 	select {
@@ -120,7 +134,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.config.ShutdownTimeout,
 	)
 	defer cancel()
-	if err := s.echo.Shutdown(shutdownContext); err != nil {
+	if err := s.httpServer.Shutdown(shutdownContext); err != nil {
 		return err
 	}
 
@@ -136,71 +150,112 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
-	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-		LogStatus:    true,
-		LogURIPath:   true,
-		LogMethod:    true,
-		LogLatency:   true,
-		LogRequestID: true,
-		LogRemoteIP:  true,
-		LogError:     true,
-		LogValuesFunc: func(_ echo.Context, values middleware.RequestLoggerValues) error {
-			level := slog.LevelInfo
-			if values.Status >= http.StatusInternalServerError {
-				level = slog.LevelError
-			} else if values.Status >= http.StatusBadRequest {
-				level = slog.LevelWarn
-			}
-			attrs := []slog.Attr{
-				slog.String("request_id", values.RequestID),
-				slog.String("method", values.Method),
-				slog.String("path", values.URIPath),
-				slog.Int("status", values.Status),
-				slog.Duration("latency", values.Latency),
-				slog.String("remote_address", values.RemoteIP),
-			}
-			if values.Error != nil {
-				attrs = append(attrs, slog.Any("error", values.Error))
-			}
-			logger.LogAttrs(
-				context.Background(),
-				level,
-				"HTTP request",
-				attrs...)
-			return nil
-		},
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get(requestIDHeader)
+		if requestID == "" {
+			requestID = uuid.NewString()
+			r.Header.Set(requestIDHeader, requestID)
+		}
+		w.Header().Set(requestIDHeader, requestID)
+
+		next.ServeHTTP(w, r)
 	})
 }
 
-func requestLogContext(logger *slog.Logger) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			request := c.Request()
-			// Echo writes generated IDs to the response header; unlike a
-			// client-supplied ID, it does not copy them into the request header.
-			requestID := c.Response().Header().Get(echo.HeaderXRequestID)
-			requestLogger := logger.With("request_id", requestID)
-			c.SetRequest(
-				request.WithContext(
-					logging.WithLogger(request.Context(), requestLogger),
-				),
-			)
-			return next(c)
+func requestLoggerMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedAt := time.Now()
+		requestID := r.Header.Get(requestIDHeader)
+		requestLogger := logger.With("request_id", requestID)
+		r = r.WithContext(logging.WithLogger(r.Context(), requestLogger))
+		response := &responseRecorder{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+			committed:      false,
 		}
-	}
+
+		next.ServeHTTP(response, r)
+
+		level := slog.LevelInfo
+		if response.status >= http.StatusInternalServerError {
+			level = slog.LevelError
+		} else if response.status >= http.StatusBadRequest {
+			level = slog.LevelWarn
+		}
+		logger.LogAttrs(
+			context.Background(),
+			level,
+			"HTTP request",
+			slog.String("request_id", requestID),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", response.status),
+			slog.Duration("latency", time.Since(startedAt)),
+			slog.String("remote_address", r.RemoteAddr),
+		)
+	})
+}
+
+func panicRecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				logging.FromContext(r.Context()).ErrorContext(
+					r.Context(),
+					"HTTP handler panicked",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"error", recovered,
+					"stack", string(debug.Stack()),
+				)
+				if response, ok := w.(*responseRecorder); !ok || !response.committed {
+					http.Error(
+						w,
+						http.StatusText(http.StatusInternalServerError),
+						http.StatusInternalServerError,
+					)
+				}
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 type requestContextKey struct{}
 
-func requestPassThroughContext() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			request := c.Request()
+func requestContextMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), requestContextKey{}, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
-			ctx := context.WithValue(request.Context(), requestContextKey{}, request)
-			c.SetRequest(request.WithContext(ctx))
-			return next(c)
-		}
+type responseRecorder struct {
+	http.ResponseWriter
+	status    int
+	committed bool
+}
+
+func (r *responseRecorder) WriteHeader(status int) {
+	if r.committed {
+		return
 	}
+
+	r.status = status
+	r.committed = true
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *responseRecorder) Write(content []byte) (int, error) {
+	if !r.committed {
+		r.WriteHeader(http.StatusOK)
+	}
+
+	return r.ResponseWriter.Write(content)
+}
+
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }

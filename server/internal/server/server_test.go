@@ -32,6 +32,16 @@ func newTestServer(t *testing.T) http.Handler {
 
 func newTestServerAt(t *testing.T, root string) http.Handler {
 	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return newTestServerAtWithLogger(t, root, logger)
+}
+
+func newTestServerAtWithLogger(
+	t *testing.T,
+	root string,
+	logger *slog.Logger,
+) http.Handler {
+	t.Helper()
 	cfg := config.Defaults()
 	cfg.Storage.DataDir = root
 	cfg.Storage.DatabasePath = filepath.Join(root, "memoryd.sqlite")
@@ -48,12 +58,43 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 	}
 	t.Cleanup(func() { _ = vlt.Close() })
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := server.New("test version", cfg, logger, vlt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s.Handler()
+}
+
+func TestRequestIDsAndFinalStatusLogging(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := newTestServerAtWithLogger(t, t.TempDir(), logger)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v0/livez", nil)
+	request.Header.Set("X-Request-ID", "client-request-id")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Header().Get("X-Request-ID") != "client-request-id" {
+		t.Fatalf(
+			"X-Request-ID = %q, want client-request-id",
+			response.Header().Get("X-Request-ID"),
+		)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v0/livez", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /api/v0/livez status = %d", response.Code)
+	}
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("generated X-Request-ID is empty")
+	}
+
+	if !strings.Contains(logs.String(), `"msg":"HTTP request"`) ||
+		!strings.Contains(logs.String(), `"status":405`) {
+		t.Fatalf("request log does not contain final 405 status: %s", logs.String())
+	}
 }
 
 func writeImportContextPart(writer *multipart.Writer, value string) error {
