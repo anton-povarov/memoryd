@@ -25,6 +25,11 @@
     memoryList: document.querySelector("#memory-list"),
     loadMore: document.querySelector("#load-more"),
     welcomeState: document.querySelector("#welcome-state"),
+    welcomeEyebrow: document.querySelector("#welcome-eyebrow"),
+    welcomeTitle: document.querySelector("#welcome-title"),
+    welcomeCopy: document.querySelector("#welcome-copy"),
+    welcomeImport: document.querySelector("#welcome-import"),
+    welcomeNote: document.querySelector("#welcome-note"),
     memoryDetail: document.querySelector("#memory-detail"),
     detailLoading: document.querySelector("#detail-loading"),
     detailTitle: document.querySelector("#detail-title"),
@@ -53,6 +58,12 @@
     progressBar: document.querySelector("#progress-bar"),
     importMessage: document.querySelector("#import-message"),
     submitImport: document.querySelector("#submit-import"),
+    deleteMemory: document.querySelector("#delete-memory"),
+    deleteDialog: document.querySelector("#delete-dialog"),
+    deleteTitle: document.querySelector("#delete-title"),
+    closeDelete: document.querySelector("#close-delete"),
+    cancelDelete: document.querySelector("#cancel-delete"),
+    submitDelete: document.querySelector("#submit-delete"),
     toastRegion: document.querySelector("#toast-region"),
   };
 
@@ -214,6 +225,31 @@
     elements.loadMore.hidden = !state.nextCursor;
   }
 
+  function renderNoSelectionState() {
+    const hasMemories = state.memories.length > 0;
+
+    if (hasMemories) document.body.classList.remove("is-detail-open");
+
+    elements.welcomeEyebrow.textContent = hasMemories
+      ? "Your memory vault"
+      : "Personal memory vault";
+    elements.welcomeTitle.textContent = hasMemories
+      ? "Choose a memory to revisit."
+      : "Your memory, kept close.";
+    elements.welcomeCopy.textContent = hasMemories
+      ? "Select a memory from the list to view its preview and provenance, or import another memory."
+      : "Import the things worth keeping. memoryd preserves the original and makes its provenance easy to inspect.";
+    elements.welcomeImport.textContent = hasMemories
+      ? "Import another memory"
+      : "Add your first memory";
+    elements.welcomeNote.textContent = hasMemories
+      ? "Stored locally · Select a memory to inspect it"
+      : "Stored locally · Original bytes preserved";
+    elements.detailLoading.hidden = true;
+    elements.memoryDetail.hidden = true;
+    elements.welcomeState.hidden = false;
+  }
+
   async function loadMemories({ append = false } = {}) {
     if (append && state.loadingMore) return;
     state.loadingMore = append;
@@ -230,8 +266,11 @@
       state.nextCursor = page.next_cursor || null;
       renderMemoryList();
 
-      if (!append && state.memories.length && window.innerWidth > 680) {
-        await selectMemory(state.memories[0].id, { openMobile: false });
+      if (!append && state.selectedID === null) {
+        renderNoSelectionState();
+        if (state.memories.length && window.innerWidth > 680) {
+          await selectMemory(state.memories[0].id, { openMobile: false });
+        }
       }
     } catch (error) {
       if (!append) {
@@ -273,7 +312,7 @@
       showToast(`Could not open memory. ${error.message}`);
       state.selectedID = null;
       renderMemoryList();
-      elements.welcomeState.hidden = false;
+      renderNoSelectionState();
     } finally {
       if (state.selectedID === memoryID) setDetailLoading(false);
     }
@@ -738,6 +777,57 @@
     window.setTimeout(() => toast.remove(), 4200);
   }
 
+  function showDeleteDialog() {
+    const memory = state.memories.find(
+      (entry) => entry.id === state.selectedID,
+    );
+    elements.deleteTitle.textContent =
+      memory?.original_filename || "This memory";
+    elements.deleteDialog.showModal();
+  }
+
+  async function deleteSelectedMemory() {
+    const memoryID = state.selectedID;
+    if (!memoryID) return;
+    elements.deleteDialog.close();
+    elements.deleteMemory.disabled = true;
+    elements.deleteMemory.textContent = "Deleting…";
+    try {
+      const response = await fetch(`${apiBase}/memories/${memoryID}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      if (response.status !== 204) {
+        let message = `Delete failed (HTTP ${response.status}).`;
+        try {
+          const problem = await response.json();
+          if (problem.message) message = problem.message;
+        } catch {
+          // keep the generic message
+        }
+        throw new Error(message);
+      }
+      state.memories = state.memories.filter(
+        (entry) => entry.id !== memoryID,
+      );
+      const deletedMemoryWasSelected = state.selectedID === memoryID;
+      if (deletedMemoryWasSelected) {
+        state.selectedID = null;
+        revokePreviewURL();
+      }
+      renderMemoryList();
+      showToast("Memory deleted.");
+      if (deletedMemoryWasSelected) {
+        renderNoSelectionState();
+      }
+    } catch (error) {
+      showToast(error.message || "Could not delete the memory.");
+    } finally {
+      elements.deleteMemory.disabled = false;
+      elements.deleteMemory.textContent = "Delete";
+    }
+  }
+
   for (const button of openImportButtons) {
     button.addEventListener("click", showImport);
   }
@@ -768,6 +858,14 @@
       showToast("Could not copy the content identity.");
     }
   });
+  elements.deleteMemory.addEventListener("click", showDeleteDialog);
+  elements.closeDelete.addEventListener("click", () =>
+    elements.deleteDialog.close(),
+  );
+  elements.cancelDelete.addEventListener("click", () =>
+    elements.deleteDialog.close(),
+  );
+  elements.submitDelete.addEventListener("click", deleteSelectedMemory);
 
   elements.fileInput.addEventListener("change", () => {
     addSelectedFiles(elements.fileInput.files || []);

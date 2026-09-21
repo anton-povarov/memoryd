@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
@@ -80,13 +82,19 @@ func (e *DuplicateError) Error() string {
 }
 
 type Vault struct {
-	db        *sql.DB
-	blobDir   string
-	uploadDir string
+	db             *sql.DB
+	blobDir        string
+	uploadDir      string
+	logger         *slog.Logger
+	blobMutationMu sync.Mutex
 }
 
-func Open(ctx context.Context, databasePath, blobDir, uploadDir string) (*Vault, error) {
-	if err := os.MkdirAll(filepath.Dir(databasePath), 0o755); err != nil {
+func Open(
+	ctx context.Context,
+	logger *slog.Logger,
+	dbPath, blobDir, uploadDir string,
+) (*Vault, error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 	contentDir := filepath.Join(blobDir, "sha256")
@@ -100,20 +108,32 @@ func Open(ctx context.Context, databasePath, blobDir, uploadDir string) (*Vault,
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", databasePath)
+	logger = logger.With("component", "vault")
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open Vault database: %w", err)
 	}
 	db.SetMaxOpenConns(maxOpenConnections)
+
+	logger.DebugContext(ctx, "Opened Vault database",
+		"database_path", dbPath,
+		"blob_dir", contentDir,
+		"upload_dir", uploadDir)
+
 	v := &Vault{
-		db:        db,
-		blobDir:   contentDir,
-		uploadDir: uploadDir,
+		db:             db,
+		blobDir:        contentDir,
+		uploadDir:      uploadDir,
+		logger:         logger,
+		blobMutationMu: sync.Mutex{},
 	}
 	if err := v.initialize(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+
+	logger.DebugContext(ctx, "Vault init done")
 	return v, nil
 }
 
@@ -164,22 +184,36 @@ func (v *Vault) initialize(ctx context.Context) error {
 		FOREIGN KEY (run_id, memory_id)
 			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
 	)`
+
+	v.logger.DebugContext(ctx, "Initializing schema")
 	if _, err := v.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize Vault database: %w", err)
 	}
+
+	if err := v.validateAllBlobrefs(ctx); err != nil {
+		return err
+	}
+
+	if err := v.validateSchema(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
+	v.logger.DebugContext(ctx, "Validating all blobrefs")
 	rows, err := v.db.QueryContext(ctx, `SELECT blob_hash FROM memories`)
 	if err != nil {
 		return fmt.Errorf("validate stored Blobrefs: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			logging.FromContext(ctx).WarnContext(
-				ctx,
-				"Could not close stored Blobref rows",
-				"error", err,
-			)
+			logging.FromContext(ctx).WarnContext(ctx,
+				"close stored Blobref rows",
+				"error", err)
 		}
 	}()
+
 	for rows.Next() {
 		var value string
 		if err := rows.Scan(&value); err != nil {
@@ -194,9 +228,6 @@ func (v *Vault) initialize(ctx context.Context) error {
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close stored Blobref rows: %w", err)
-	}
-	if err := v.validateSchema(ctx); err != nil {
-		return err
 	}
 	return nil
 }
@@ -331,6 +362,12 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"media_type", mediaType,
 		"temporary_path", temporaryPath,
 	)
+
+	// Keep Blob publication and its Memory commit atomic with respect to
+	// deletion. Otherwise a concurrent delete can unlink this Blob after the
+	// import verifies it but before the new Memory is committed.
+	v.blobMutationMu.Lock()
+	defer v.blobMutationMu.Unlock()
 
 	finalPath := v.blobPath(blobRef)
 	if err := v.ensureBlobDirectory(finalPath); err != nil {
@@ -497,6 +534,60 @@ func (v *Vault) OpenContent(
 		"media_type", memory.MediaType,
 	)
 	return memory, content, nil
+}
+
+// Delete permanently removes the Memory and its Understanding Runs, then
+// removes the now-unreferenced Blob from content storage. blob_hash is
+// UNIQUE, so one Memory claims any Blob and a successful deletion leaves no
+// committed reference to it. Blob removal is best-effort: the database
+// remains authoritative and a leftover file is an Orphan Blob.
+func (v *Vault) Delete(ctx context.Context, id uuid.UUID) error {
+	logger := logging.FromContext(ctx)
+
+	v.blobMutationMu.Lock()
+	defer v.blobMutationMu.Unlock()
+
+	memory, err := v.Memory(ctx, id)
+	if err != nil {
+		return err
+	}
+	result, err := v.db.ExecContext(
+		ctx,
+		`DELETE FROM memories WHERE id = ?`,
+		id.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("delete Memory: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect Memory deletion: %w", err)
+	}
+	if deleted == 0 {
+		return ErrMemoryNotFound
+	}
+	blobPath := v.blobPath(memory.BlobRef)
+	if err := os.Remove(blobPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logger.WarnContext(ctx, "Could not remove deleted Memory Blob",
+				"memory_id", memory.ID,
+				"blob_hash", memory.BlobRef.String(),
+				"error", err,
+			)
+		}
+	} else if err := syncDirectory(filepath.Dir(blobPath)); err != nil {
+		logger.WarnContext(ctx, "Could not flush deleted Memory Blob directory",
+			"memory_id", memory.ID,
+			"blob_hash", memory.BlobRef.String(),
+			"error", err,
+		)
+	}
+	logger.InfoContext(ctx, "Memory deleted",
+		"memory_id", memory.ID,
+		"blob_hash", memory.BlobRef.String(),
+		"original_filename", memory.ImportContext.OriginalFilename,
+	)
+	return nil
 }
 
 // publishBlob copies into the content-addressed filesystem and uses a hard

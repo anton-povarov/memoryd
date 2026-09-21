@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,18 +113,23 @@ func TestResolveMediaType(t *testing.T) {
 	}
 }
 
+func openVault(ctx context.Context, root string) (*Vault, error) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{AddSource: true}))
+	databasePath := filepath.Join(root, "memoryd.sqlite")
+	blobDir := filepath.Join(root, "blobs")
+	uploadDir := filepath.Join(root, "uploads")
+	return Open(ctx, logger, databasePath, blobDir, uploadDir)
+}
+
 func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	root := t.TempDir()
-	databasePath := filepath.Join(root, "memoryd.sqlite")
-	blobDir := filepath.Join(root, "blobs")
-	uploadDir := filepath.Join(root, "uploads")
+	root := t.TempDir() // reused a couple times
 	wantBytes := []byte("%PDF-1.7\nbyte-exact memory\n%%EOF\n")
 	modifiedAt := time.Date(2026, 9, 15, 10, 11, 12, 0, time.UTC)
 
-	v, err := Open(ctx, databasePath, blobDir, uploadDir)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +181,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if !bytes.Equal(storedBytes, wantBytes) {
 		t.Fatalf("stored content = %q, want %q", storedBytes, wantBytes)
 	}
-	stagedEntries, err := os.ReadDir(uploadDir)
+	stagedEntries, err := os.ReadDir(v.uploadDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +192,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err = Open(ctx, databasePath, blobDir, uploadDir)
+	v, err = openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +251,86 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := Open(
+		ctx,
+		slog.Default(),
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+
+	wantBytes := []byte("%PDF-1.7\ndelete me\n%%EOF\n")
+	memory, err := v.Put(ctx, Import{
+		Content:           bytes.NewReader(wantBytes),
+		DeclaredMediaType: "",
+		Context: ImportContext{
+			OriginalFilename:   "remove.pdf",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A committed Understanding Run must cascade with its Memory.
+	_, err = v.db.ExecContext(
+		ctx,
+		`INSERT INTO understanding_runs (
+			id, memory_id, pipeline, created_at, completed_at
+		) VALUES (?, ?, ?, ?, ?)`,
+		"run",
+		memory.ID.String(),
+		"regular",
+		time.Now().UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobPath := v.blobPath(memory.BlobRef)
+	if _, err := os.Stat(blobPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.Delete(ctx, memory.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Memory(ctx, memory.ID); !errors.Is(err, ErrMemoryNotFound) {
+		t.Fatalf("Memory lookup after delete = %v, want ErrMemoryNotFound", err)
+	}
+	if _, err := os.Stat(blobPath); err == nil {
+		t.Fatal("Blob file remains after Memory deletion")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspect removed Blob: %v", err)
+	}
+	var runCount int
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM understanding_runs WHERE memory_id = ?`,
+		memory.ID.String(),
+	).Scan(&runCount); err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 {
+		t.Fatalf("Understanding Runs remain after Memory deletion: %d", runCount)
+	}
+
+	if err := v.Delete(ctx, memory.ID); !errors.Is(err, ErrMemoryNotFound) {
+		t.Fatalf("second delete = %v, want ErrMemoryNotFound", err)
+	}
+}
+
 func TestCopyWithLimitRejectsFirstByteOverLimit(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +353,7 @@ func TestVaultPutAcceptsExactlyOneHundredMiB(t *testing.T) {
 	root := t.TempDir()
 	v, err := Open(
 		ctx,
+		slog.Default(),
 		filepath.Join(root, "memoryd.sqlite"),
 		filepath.Join(root, "blobs"),
 		filepath.Join(root, "uploads"),
@@ -331,12 +418,7 @@ func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Open(
-		ctx,
-		databasePath,
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	_, err = openVault(ctx, root)
 	if err == nil {
 		t.Fatal("expected invalid stored Blobref error")
 	}
@@ -350,12 +432,7 @@ func TestOpenCreatesSeparatedMemoryAndUnderstandingSchema(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,12 +517,7 @@ func TestOpenRejectsLegacyMixedMemorySchema(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Open(
-		ctx,
-		databasePath,
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	_, err = openVault(ctx, root)
 	if err == nil || !strings.Contains(err.Error(), "recreate the database and reimport") {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -485,12 +557,7 @@ func TestPutRejectsCorruptExistingBlob(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,12 +602,7 @@ func TestConcurrentIdenticalImportsPublishOneBlobAndMemory(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,12 +690,7 @@ func TestStartupCleansStagingAndPreservesPublishedOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := Open(
-		ctx,
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		uploadDir,
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,12 +710,7 @@ func TestOpenContentDiagnosesMissingAndCorruptBlob(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,10 +750,7 @@ func TestInterruptedCommitLeavesPublishedOrphanForRestart(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	databasePath := filepath.Join(root, "memoryd.sqlite")
-	blobDir := filepath.Join(root, "blobs")
-	uploadDir := filepath.Join(root, "uploads")
-	v, err := Open(ctx, databasePath, blobDir, uploadDir)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +776,7 @@ func TestInterruptedCommitLeavesPublishedOrphanForRestart(t *testing.T) {
 	digest := sha256.Sum256(content)
 	ref := NewSHA256Blobref(digest)
 	orphanPath := v.blobPath(ref)
-	reopened, err := Open(ctx, databasePath, blobDir, uploadDir)
+	reopened, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}

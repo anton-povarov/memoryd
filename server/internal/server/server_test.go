@@ -49,6 +49,7 @@ func newTestServerAtWithLogger(
 	cfg.Storage.UploadDir = filepath.Join(root, "uploads")
 	vlt, err := vault.Open(
 		t.Context(),
+		logger,
 		cfg.Storage.DatabasePath,
 		cfg.Storage.BlobDir,
 		cfg.Storage.UploadDir,
@@ -518,6 +519,81 @@ func TestImportReturnsCommittedMemoryThenDownloadsExactBlob(t *testing.T) {
 		len(want),
 	) {
 		t.Fatalf("Content-Length = %q", got)
+	}
+}
+
+func TestDeleteMemoryRemovesItAndReportsMissing(t *testing.T) {
+	handler := newTestServer(t)
+	want := []byte("%PDF-1.7\nMemory to delete\n%%EOF\n")
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "delete-me.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(want); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v0/memories/import",
+		&body,
+	)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("import status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	match := regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).
+		FindStringSubmatch(recorder.Body.String())
+	if len(match) != 2 {
+		t.Fatalf("import response has no Memory ID: %s", recorder.Body.String())
+	}
+	memoryID := match[1]
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodDelete, "/api/v0/memories/"+memoryID, nil),
+	)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf(
+			"delete status=%d body=%s",
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/api/v0/memories/"+memoryID, nil),
+	)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("get after delete status=%d body=%s",
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodDelete, "/api/v0/memories/"+memoryID, nil),
+	)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("second delete status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var problem api.Error
+	if err := json.Unmarshal(recorder.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "memory_not_found" {
+		t.Fatalf("second delete code = %q, want memory_not_found", problem.Code)
 	}
 }
 

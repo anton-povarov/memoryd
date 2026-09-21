@@ -32,6 +32,7 @@ go run ./cli/cmd/mem put /absolute/path/to/file
 go run ./cli/cmd/mem list
 go run ./cli/cmd/mem info <memory-id>
 go run ./cli/cmd/mem get <memory-id>
+go run ./cli/cmd/mem delete <memory-id>
 ```
 
 Use `mem --server ADDRESS ...` or set `MEMORYD_URL` to connect to another

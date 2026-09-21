@@ -47,6 +47,7 @@ func run() error {
 
 	memoryVault, err := vault.Open(
 		context.Background(),
+		logger,
 		cfg.Storage.DatabasePath,
 		cfg.Storage.BlobDir,
 		cfg.Storage.UploadDir,

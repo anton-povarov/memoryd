@@ -76,16 +76,18 @@
             </div>
             <div class="memory-spark">✦</div>
           </div>
-          <p class="eyebrow">Personal memory vault</p>
-          <h2>Your memory, kept close.</h2>
-          <p class="welcome-copy">
+          <p class="eyebrow" id="welcome-eyebrow">Personal memory vault</p>
+          <h2 id="welcome-title">Your memory, kept close.</h2>
+          <p class="welcome-copy" id="welcome-copy">
             Import the things worth keeping. memoryd preserves the original
             and makes its provenance easy to inspect.
           </p>
           <button class="button button-dark" id="welcome-import" type="button">
             Add your first memory
           </button>
-          <p class="welcome-note">Stored locally · Original bytes preserved</p>
+          <p class="welcome-note" id="welcome-note">
+            Stored locally · Original bytes preserved
+          </p>
         </div>
 
         <article class="memory-detail" id="memory-detail" hidden>
@@ -97,12 +99,17 @@
               <h2 id="detail-title"></h2>
               <div class="detail-pills" id="detail-pills"></div>
             </div>
-            <a class="button button-dark" id="download-memory" href="#" download>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path>
-              </svg>
-              Download
-            </a>
+            <div class="detail-actions">
+              <a class="button button-dark" id="download-memory" href="#" download>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path>
+                </svg>
+                Download
+              </a>
+              <button class="button button-danger" id="delete-memory" type="button">
+                Delete
+              </button>
+            </div>
           </div>
 
           <div class="detail-grid">
@@ -190,6 +197,32 @@
         <span>Original bytes are copied into your Vault.</span>
         <button class="button button-primary" id="submit-import" type="submit" disabled>
           Add to vault
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="import-dialog" id="delete-dialog">
+    <form method="dialog" class="dialog-shell" id="delete-form">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Remove from the vault</p>
+          <h2>Delete this memory?</h2>
+        </div>
+        <button class="icon-button" id="close-delete" type="button" aria-label="Close">
+          ×
+        </button>
+      </div>
+
+      <p class="delete-copy">
+        <strong id="delete-title"></strong> and its stored bytes will be
+        permanently removed from the Vault. This cannot be undone.
+      </p>
+
+      <div class="delete-actions">
+        <button class="button" id="cancel-delete" type="button">Keep memory</button>
+        <button class="button button-danger" id="submit-delete" type="button">
+          Delete permanently
         </button>
       </div>
     </form>

@@ -277,6 +277,56 @@ func TestInfoReportsNotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteDeletesMemoryAndPrintsItsID(t *testing.T) {
+	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodDelete ||
+			r.URL.Path != "/api/v0/memories/"+memoryID.String() {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	if err := Delete(t.Context(), server.URL, memoryID, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != memoryID.String()+"\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "deleting Memory "+memoryID.String()) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestDeleteReportsNotFound(t *testing.T) {
+	memoryID := uuid.MustParse("2d6f4d1a-4d62-4ef3-9b2c-6aa7f1f0d6c2")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(api.Error{
+			Code: "memory_not_found", Details: nil,
+			ExistingMemory: nil, Message: "Memory does not exist",
+		})
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	err := Delete(t.Context(), server.URL, memoryID, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "memory_not_found: Memory does not exist") ||
+		stdout.Len() != 0 {
+		t.Fatalf("error=%v stdout=%q", err, stdout.String())
+	}
+}
+
 func testMemorySummary(id uuid.UUID, size int64, filename string) api.MemorySummary {
 	return api.MemorySummary{
 		BlobHash: "sha256-" + strings.Repeat("a", 64),

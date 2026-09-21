@@ -288,6 +288,37 @@ func Get(
 	return nil
 }
 
+func Delete(
+	ctx context.Context,
+	serverURL string,
+	memoryID uuid.UUID,
+	stdout, stderr io.Writer,
+) error {
+	fmt.Fprintf(stderr, "deleting Memory %s\n", memoryID)
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	response, err := client.DeleteMemory(ctx, memoryID)
+	if err != nil {
+		return fmt.Errorf("delete Memory: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		fmt.Fprintf(stderr, "Memory %s deleted\n", memoryID)
+		_, err = fmt.Fprintln(stdout, memoryID)
+		return err
+	}
+	parsed, err := api.ParseDeleteMemoryResponse(response)
+	if err != nil {
+		return fmt.Errorf("delete failed with HTTP %s", response.Status)
+	}
+	if parsed.JSON404 != nil {
+		return fmt.Errorf("%s: %s", parsed.JSON404.Code, parsed.JSON404.Message)
+	}
+	return fmt.Errorf("delete failed with HTTP %s", parsed.Status())
+}
+
 func Info(ctx context.Context, serverURL string, memoryID uuid.UUID, stdout io.Writer) error {
 	client, err := api.NewClient(apiBaseURL(serverURL))
 	if err != nil {

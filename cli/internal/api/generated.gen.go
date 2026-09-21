@@ -239,6 +239,15 @@ type ClientInterface interface {
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteMemory Delete one Memory and its Blob
+	//
+	// Permanently deletes the Memory, its Understanding Runs, and the
+	// immutable Blob referenced by it. The Vault reuses the Blob only when
+	// its content is imported again.
+	//
+	// Corresponds with DELETE /memories/{memoryId} (the `DeleteMemory` operationId).
+	DeleteMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetMemory Get committed Memory details
 	//
 	// Corresponds with GET /memories/{memoryId} (the `GetMemory` operationId).
@@ -298,6 +307,25 @@ func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParam
 // Corresponds with POST /memories/import (the `ImportMemory` operationId).
 func (c *Client) ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewImportMemoryRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteMemory Delete one Memory and its Blob
+//
+// Permanently deletes the Memory, its Understanding Runs, and the
+// immutable Blob referenced by it. The Vault reuses the Blob only when
+// its content is imported again.
+//
+// Corresponds with DELETE /memories/{memoryId} (the `DeleteMemory` operationId).
+func (c *Client) DeleteMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteMemoryRequest(c.Server, memoryId)
 	if err != nil {
 		return nil, err
 	}
@@ -475,6 +503,40 @@ func NewImportMemoryRequestWithBody(server string, contentType string, body io.R
 	return req, nil
 }
 
+// NewDeleteMemoryRequest constructs an http.Request for the DeleteMemory method
+func NewDeleteMemoryRequest(server string, memoryId MemoryId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/memories/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetMemoryRequest constructs an http.Request for the GetMemory method
 func NewGetMemoryRequest(server string, memoryId MemoryId) (*http.Request, error) {
 	var err error
@@ -640,6 +702,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportMemoryResponse, error)
+
+	// DeleteMemoryWithResponse Delete one Memory and its Blob
+	//
+	// Permanently deletes the Memory, its Understanding Runs, and the
+	// immutable Blob referenced by it. The Vault reuses the Blob only when
+	// its content is imported again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /memories/{memoryId} (the `DeleteMemory` operationId).
+	DeleteMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*DeleteMemoryResponse, error)
 
 	// GetMemoryWithResponse Get committed Memory details
 	//
@@ -815,6 +888,47 @@ func (r ImportMemoryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ImportMemoryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteMemoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteMemoryResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteMemoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteMemoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteMemoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteMemoryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1011,6 +1125,23 @@ func (c *ClientWithResponses) ImportMemoryWithBodyWithResponse(ctx context.Conte
 	return ParseImportMemoryResponse(rsp)
 }
 
+// DeleteMemoryWithResponse Delete one Memory and its Blob
+//
+// Permanently deletes the Memory, its Understanding Runs, and the
+// immutable Blob referenced by it. The Vault reuses the Blob only when
+// its content is imported again.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /memories/{memoryId} (the `DeleteMemory` operationId).
+func (c *ClientWithResponses) DeleteMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*DeleteMemoryResponse, error) {
+	rsp, err := c.DeleteMemory(ctx, memoryId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteMemoryResponse(rsp)
+}
+
 // GetMemoryWithResponse Get committed Memory details
 //
 // Returns a wrapper object for the known response body format(s).
@@ -1157,6 +1288,35 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteMemoryResponse parses an HTTP response from a DeleteMemoryWithResponse call
+func ParseDeleteMemoryResponse(rsp *http.Response) (*DeleteMemoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteMemoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 

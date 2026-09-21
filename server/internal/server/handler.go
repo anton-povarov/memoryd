@@ -185,6 +185,31 @@ func (h *Handler) GetMemoryContent(
 	}, nil
 }
 
+func (h *Handler) DeleteMemory(
+	ctx context.Context, request api.DeleteMemoryRequestObject,
+) (api.DeleteMemoryResponseObject, error) {
+	logger := logging.FromContext(ctx)
+
+	logger.DebugContext(ctx, "Delete memory attempt",
+		"memory_id", request.MemoryId)
+
+	err := h.vault.Delete(ctx, request.MemoryId)
+	if errors.Is(err, vault.ErrMemoryNotFound) {
+		logger.DebugContext(ctx, "Memory delete not found",
+			"memory_id", request.MemoryId,
+		)
+		return api.DeleteMemory404JSONResponse(notFoundError()), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	logger.InfoContext(ctx, "Memory deleted",
+		"memory_id", request.MemoryId)
+
+	return api.DeleteMemory204Response{}, nil
+}
+
 func (h *Handler) ImportMemory(
 	ctx context.Context, request api.ImportMemoryRequestObject,
 ) (api.ImportMemoryResponseObject, error) {

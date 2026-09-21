@@ -165,6 +165,9 @@ type ServerInterface interface {
 	// ImportMemory Durably import one Blob as a Memory
 	// (POST /memories/import)
 	ImportMemory(w http.ResponseWriter, r *http.Request)
+	// DeleteMemory Delete one Memory and its Blob
+	// (DELETE /memories/{memoryId})
+	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
 	// GetMemory Get committed Memory details
 	// (GET /memories/{memoryId})
 	GetMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
@@ -250,6 +253,32 @@ func (siw *ServerInterfaceWrapper) ImportMemory(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportMemory(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMemory operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memoryId" -------------
+	var memoryId MemoryId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memoryId", r.PathValue("memoryId"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memoryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMemory(w, r, memoryId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -448,6 +477,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/livez", wrapper.GetLiveness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories", wrapper.BrowseMemories)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/memories/{memoryId}", wrapper.DeleteMemory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}", wrapper.GetMemory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}/content", wrapper.GetMemoryContent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/import", wrapper.ImportMemory)
@@ -590,6 +620,36 @@ func (response ImportMemory500JSONResponse) VisitImportMemoryResponse(w http.Res
 	return err
 }
 
+type DeleteMemoryRequestObject struct {
+	MemoryId MemoryId `json:"memoryId"`
+}
+
+type DeleteMemoryResponseObject interface {
+	VisitDeleteMemoryResponse(w http.ResponseWriter) error
+}
+
+type DeleteMemory204Response struct {
+}
+
+func (response DeleteMemory204Response) VisitDeleteMemoryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteMemory404JSONResponse Error
+
+func (response DeleteMemory404JSONResponse) VisitDeleteMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMemoryRequestObject struct {
 	MemoryId MemoryId `json:"memoryId"`
 }
@@ -727,6 +787,9 @@ type StrictServerInterface interface {
 	// ImportMemory Durably import one Blob as a Memory
 	// (POST /memories/import)
 	ImportMemory(ctx context.Context, request ImportMemoryRequestObject) (ImportMemoryResponseObject, error)
+	// DeleteMemory Delete one Memory and its Blob
+	// (DELETE /memories/{memoryId})
+	DeleteMemory(ctx context.Context, request DeleteMemoryRequestObject) (DeleteMemoryResponseObject, error)
 	// GetMemory Get committed Memory details
 	// (GET /memories/{memoryId})
 	GetMemory(ctx context.Context, request GetMemoryRequestObject) (GetMemoryResponseObject, error)
@@ -858,6 +921,32 @@ func (sh *strictHandler) ImportMemory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DeleteMemory operation middleware
+func (sh *strictHandler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId) {
+	var request DeleteMemoryRequestObject
+
+	request.MemoryId = memoryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMemory(ctx, request.(DeleteMemoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMemory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteMemoryResponseObject); ok {
+		if err := validResponse.VisitDeleteMemoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetMemory operation middleware
 func (sh *strictHandler) GetMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId) {
 	var request GetMemoryRequestObject
@@ -939,41 +1028,43 @@ func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

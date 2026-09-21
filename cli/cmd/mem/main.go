@@ -30,7 +30,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	global.Usage = func() {
 		fmt.Fprintln(
 			stderr,
-			"usage: mem [--server ADDRESS] (get|put|info|list) [subcommand options]",
+			"usage: mem [--server ADDRESS] (get|put|info|list|delete) [subcommand options]",
 		)
 	}
 	if err := global.Parse(args); err != nil {
@@ -111,6 +111,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 		err = command.Info(ctx, serverURL, memoryID, stdout)
+	case "delete":
+		deleteFlags := flag.NewFlagSet("mem delete", flag.ContinueOnError)
+		deleteFlags.SetOutput(stderr)
+		deleteFlags.Usage = func() {
+			fmt.Fprintln(stderr, "usage: mem [--server ADDRESS] delete <memory-id>")
+		}
+		if err := deleteFlags.Parse(remaining); err != nil {
+			return exitUsage
+		}
+		if deleteFlags.NArg() != 1 {
+			deleteFlags.Usage()
+			return exitUsage
+		}
+		memoryID, parseErr := parseMemoryID(deleteFlags.Arg(0), stderr)
+		if parseErr != nil {
+			return exitUsage
+		}
+		err = command.Delete(ctx, serverURL, memoryID, stdout, stderr)
 	case "list":
 		listFlags := flag.NewFlagSet("mem list", flag.ContinueOnError)
 		listFlags.SetOutput(stderr)

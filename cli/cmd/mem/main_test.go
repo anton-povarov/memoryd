@@ -43,6 +43,8 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v0/memories/"+memoryID.String()+"/content":
 			w.Header().Set("Content-Type", "application/pdf")
 			_, _ = w.Write(content)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v0/memories/"+memoryID.String():
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -68,6 +70,8 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 		{name: "get", args: []string{"get", "-o", "-", memoryID.String()}, want: string(content)},
 		{name: "get verbose", args: []string{"get", "-v", "-o", "-", memoryID.String()},
 			want: string(content), wantProgress: "downloading Memory " + memoryID.String()},
+		{name: "delete", args: []string{"delete", memoryID.String()},
+			want: memoryID.String() + "\n", wantProgress: "deleting Memory " + memoryID.String()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -90,7 +94,7 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 
 func TestSubcommandUsageErrors(t *testing.T) {
 	for _, args := range [][]string{
-		{}, {"unknown"}, {"get"}, {"get", "not-a-uuid"}, {"put"}, {"info"}, {"info", "not-a-uuid"},
+		{}, {"unknown"}, {"get"}, {"get", "not-a-uuid"}, {"put"}, {"info"}, {"info", "not-a-uuid"}, {"delete"}, {"delete", "not-a-uuid"},
 		{"list", "-n", "0"}, {"list", "-n", "bad"}, {"list", "--all", "-n", "2"}, {"list", "extra"},
 	} {
 		var stdout, stderr bytes.Buffer
