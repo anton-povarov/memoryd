@@ -5,11 +5,10 @@ server:
   shutdown_timeout: 10s
 
 storage:
-  data_dir: ./data
-  # database_path, blob_dir, and upload_dir default below data_dir when omitted.
-  # database_path: ./data/memoryd.sqlite
-  # blob_dir: ./data/blobs
-  # upload_dir: ./data/uploads
+  data_dir: ./server/data
+  # database_path: ./server/data/memoryd.sqlite
+  # blob_dir: ./server/data/blobs
+  # upload_dir: ./server/data/uploads
 
 logging:
   level: info

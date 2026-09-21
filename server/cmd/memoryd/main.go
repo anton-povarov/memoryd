@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/anton-povarov/memoryd/server/internal/config"
-	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/anton-povarov/memoryd/server/internal/server"
 	"github.com/anton-povarov/memoryd/server/internal/vault"
@@ -57,8 +56,7 @@ func run() error {
 	}
 	defer memoryVault.Close() // nolint:errcheck
 
-	httpHandler := httpapi.NewHandler(version, cfg.Storage.DataDir, memoryVault)
-	httpServer, err := server.New(cfg, logger, httpHandler)
+	httpServer, err := server.New(version, cfg, logger, memoryVault)
 	if err != nil {
 		return err
 	}

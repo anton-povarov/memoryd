@@ -1,6 +1,4 @@
-// Package apidoc exposes the checked-in OpenAPI contract and an interactive,
-// offline Swagger UI for an Echo server.
-package apidoc
+package server
 
 import (
 	"bytes"

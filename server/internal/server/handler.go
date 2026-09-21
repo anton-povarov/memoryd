@@ -1,5 +1,4 @@
-// Package httpapi adapts the generated OpenAPI interface to Vault behavior.
-package httpapi
+package server
 
 import (
 	"context"
@@ -8,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/anton-povarov/memoryd/server/api"
+	"github.com/anton-povarov/memoryd/server/internal/api"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/anton-povarov/memoryd/server/internal/vault"
 	"github.com/google/uuid"
@@ -22,6 +22,11 @@ const (
 	multipartFormMemoryBytes        = 1 << 20
 	multipartProtocolOverhead       = 1 << 20
 	MaxImportRequestBytes     int64 = vault.MaxBlobBytes + multipartProtocolOverhead
+)
+
+var (
+	errUploadTooLarge     = fmt.Errorf("upload limit: %d bytes", MaxImportRequestBytes)
+	errUploadVarsTooLarge = fmt.Errorf("upload vars limit: %d bytes", multipartFormMemoryBytes)
 )
 
 type Handler struct {
@@ -185,31 +190,48 @@ func (h *Handler) ImportMemory(
 	logger := logging.FromContext(ctx)
 	logger.DebugContext(ctx, "Parsing Memory import request")
 	if request.Body == nil {
-		logger.InfoContext(
-			ctx,
+		logger.InfoContext(ctx,
 			"Memory import rejected",
-			"reason",
-			"missing multipart body",
+			"reason", "missing multipart body",
 		)
 		return badImport("invalid_multipart", "multipart request body is required"), nil
 	}
 
+	httpRequest, ok := ctx.Value(requestContextKey{}).(*http.Request)
+	if !ok {
+		return nil, errors.New("HTTP request missing from context")
+	}
+
+	logger.Debug(
+		"checking upload size",
+		"size", httpRequest.ContentLength,
+		"limit", MaxImportRequestBytes)
+
+	if httpRequest.ContentLength > MaxImportRequestBytes {
+		logger.InfoContext(ctx,
+			"Memory import rejected",
+			"reason", "upload too large",
+			"size", httpRequest.ContentLength,
+			"limit", MaxImportRequestBytes,
+		)
+		return uploadTooLarge(errUploadTooLarge.Error()), nil
+	}
+
 	form, err := request.Body.ReadForm(multipartFormMemoryBytes)
 	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			return api.ImportMemory413JSONResponse{
-				Code: "blob_too_large", Details: nil,
-				ExistingMemory: nil, Message: vault.ErrBlobTooLarge.Error(),
-			}, nil
+		if errors.Is(err, multipart.ErrMessageTooLarge) {
+			logger.InfoContext(ctx,
+				"Memory import rejected",
+				"reason", "upload vars too large",
+				"limit", multipartFormMemoryBytes,
+			)
+			return uploadTooLarge(errUploadVarsTooLarge.Error()), nil
 		}
-		logger.InfoContext(
-			ctx,
+
+		logger.InfoContext(ctx,
 			"Memory import rejected",
-			"reason",
-			"invalid multipart body",
-			"error",
-			err,
+			"reason", "invalid multipart body",
+			"error", err,
 		)
 		return badImport("invalid_multipart", "could not parse multipart request"), nil
 	}
@@ -221,9 +243,10 @@ func (h *Handler) ImportMemory(
 
 	files := form.File["file"]
 	if len(files) != 1 {
-		logger.InfoContext(
-			ctx, "Memory import rejected",
-			"reason", "expected exactly one Blob", "blob_count", len(files),
+		logger.InfoContext(ctx,
+			"Memory import rejected",
+			"reason", "expected exactly one Blob",
+			"blob_count", len(files),
 		)
 		return badImport("invalid_file", "exactly one Blob is required"), nil
 	}
@@ -341,7 +364,7 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 }
 
 func memoryDetail(memory vault.Memory) api.MemoryDetail {
-	contentURL := "/api/v0/memories/" + memory.ID.String() + "/content"
+	contentURL := api.ServerUrlLocalMemorydServer + "/memories/" + memory.ID.String() + "/content"
 	mediaType := memory.MediaType
 	byteSize := memory.ByteSize
 	contentHash := memory.BlobRef.String()
@@ -378,6 +401,15 @@ func notFoundError() api.Error {
 func badImport(code, message string) api.ImportMemoryResponseObject {
 	return api.ImportMemory400JSONResponse{
 		Code: code, Details: nil, ExistingMemory: nil, Message: message,
+	}
+}
+
+func uploadTooLarge(message string) api.ImportMemoryResponseObject {
+	return api.ImportMemory413JSONResponse{
+		Code:           "blob_too_large",
+		Details:        nil,
+		ExistingMemory: nil,
+		Message:        message,
 	}
 }
 

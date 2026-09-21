@@ -1,4 +1,4 @@
-package apidoc
+package server_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/anton-povarov/memoryd/server/internal/server"
 	"github.com/labstack/echo/v4"
 )
 
@@ -25,7 +26,7 @@ paths:
 
 func TestRegisterDocumentationEndpoint(t *testing.T) {
 	e := echo.New()
-	if err := RegisterDocumentationEndpoint(
+	if err := server.RegisterDocumentationEndpoint(
 		e,
 		"/api/",
 		[]byte(testSpec),
@@ -120,7 +121,7 @@ func TestRegisterDocumentationEndpoint(t *testing.T) {
 func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 	e := echo.New()
 	spec := []byte(testSpec)
-	if err := RegisterDocumentationEndpoint(e, "", spec); err != nil {
+	if err := server.RegisterDocumentationEndpoint(e, "", spec); err != nil {
 		t.Fatalf("register documentation: %v", err)
 	}
 	for i := range spec {
@@ -151,21 +152,21 @@ func TestOpenAPISpecIsJSONAndInputIsCopied(t *testing.T) {
 }
 
 func TestRegisterDocumentationEndpointRejectsInvalidInput(t *testing.T) {
-	if err := RegisterDocumentationEndpoint(
+	if err := server.RegisterDocumentationEndpoint(
 		echo.New(),
 		"/api",
 		[]byte("openapi: ["),
 	); err == nil {
 		t.Fatal("invalid YAML unexpectedly accepted")
 	}
-	if err := RegisterDocumentationEndpoint(
+	if err := server.RegisterDocumentationEndpoint(
 		nil,
 		"/api",
 		[]byte(testSpec),
 	); err == nil {
 		t.Fatal("nil router unexpectedly accepted")
 	}
-	if err := RegisterDocumentationEndpoint(
+	if err := server.RegisterDocumentationEndpoint(
 		echo.New(),
 		"api",
 		[]byte(testSpec),

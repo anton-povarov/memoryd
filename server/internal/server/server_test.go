@@ -19,9 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anton-povarov/memoryd/server/api"
+	"github.com/anton-povarov/memoryd/server/internal/api"
 	"github.com/anton-povarov/memoryd/server/internal/config"
-	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/server"
 	"github.com/anton-povarov/memoryd/server/internal/vault"
 )
@@ -38,7 +37,7 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 	cfg.Storage.DatabasePath = filepath.Join(root, "memoryd.sqlite")
 	cfg.Storage.BlobDir = filepath.Join(root, "blobs")
 	cfg.Storage.UploadDir = filepath.Join(root, "uploads")
-	v, err := vault.Open(
+	vlt, err := vault.Open(
 		t.Context(),
 		cfg.Storage.DatabasePath,
 		cfg.Storage.BlobDir,
@@ -47,13 +46,10 @@ func newTestServerAt(t *testing.T, root string) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = v.Close() })
+	t.Cleanup(func() { _ = vlt.Close() })
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s, err := server.New(
-		cfg,
-		logger,
-		httpapi.NewHandler("test", cfg.Storage.DataDir, v),
-	)
+	s, err := server.New("test version", cfg, logger, vlt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +188,7 @@ func TestImportRejectsRequestBeyondBoundBeforeReadingBody(t *testing.T) {
 		"/api/v0/memories/import",
 		body,
 	)
-	request.ContentLength = httpapi.MaxImportRequestBytes + 1
+	request.ContentLength = server.MaxImportRequestBytes + 1
 	request.Header.Set("Content-Type", "multipart/form-data; boundary=unused")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -206,8 +202,11 @@ func TestImportRejectsRequestBeyondBoundBeforeReadingBody(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Code != "blob_too_large" ||
-		!strings.Contains(problem.Message, "100 MiB") {
+	wantMessage := fmt.Sprintf(
+		"upload limit: %d bytes",
+		server.MaxImportRequestBytes,
+	)
+	if problem.Code != "blob_too_large" || problem.Message != wantMessage {
 		t.Fatalf("problem = %#v", problem)
 	}
 }

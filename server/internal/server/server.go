@@ -1,4 +1,3 @@
-// Package server owns memoryd's HTTP runtime and process lifecycle.
 package server
 
 import (
@@ -9,12 +8,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/anton-povarov/memoryd/server/api"
-	"github.com/anton-povarov/memoryd/server/internal/apidoc"
+	"github.com/anton-povarov/memoryd/server/internal/api"
 	"github.com/anton-povarov/memoryd/server/internal/config"
-	"github.com/anton-povarov/memoryd/server/internal/httpapi"
 	"github.com/anton-povarov/memoryd/server/internal/logging"
+	"github.com/anton-povarov/memoryd/server/internal/vault"
 	"github.com/anton-povarov/memoryd/server/internal/webui"
+
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -26,33 +25,32 @@ type Server struct {
 }
 
 func New(
+	version string,
 	cfg config.Config,
 	logger *slog.Logger,
-	handler api.StrictServerInterface,
+	memoryVault *vault.Vault,
 ) (*Server, error) {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		panic("server.New: must provide a logger")
 	}
+
+	httpHandler := NewHandler(version, cfg.Storage.DataDir, memoryVault)
 
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 	e.Logger.SetOutput(io.Discard)
-	e.Use(middleware.Recover())
+	e.Use(panicRecovery(logger))
 	e.Use(middleware.RequestID())
 	e.Use(requestLogContext(logger))
 	e.Use(requestLogger(logger))
-	e.Use(limitImportRequestBody())
+	e.Use(requestPassThroughContext())
 
 	openAPIYAML, err := api.OpenAPIYAML()
 	if err != nil {
 		return nil, err
 	}
-	if err := apidoc.RegisterDocumentationEndpoint(
-		e,
-		"",
-		openAPIYAML,
-	); err != nil {
+	if err := RegisterDocumentationEndpoint(e, "", openAPIYAML); err != nil {
 		return nil, err
 	}
 	if err := webui.Register(e); err != nil {
@@ -60,40 +58,35 @@ func New(
 	}
 	api.RegisterHandlersWithBaseURL(
 		e,
-		api.NewStrictHandler(handler, nil),
+		api.NewStrictHandler(httpHandler, nil),
 		api.ServerUrlLocalMemorydServer,
 	)
 
 	return &Server{config: cfg.Server, echo: e, logger: logger}, nil
 }
 
-func limitImportRequestBody() echo.MiddlewareFunc {
-	const importPath = api.ServerUrlLocalMemorydServer + "/memories/import"
-
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+func panicRecovery(logger *slog.Logger) echo.MiddlewareFunc {
+	return middleware.RecoverWithConfig(middleware.RecoverConfig{
+		DisableStackAll: true,
+		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
 			request := c.Request()
-			if request.Method == http.MethodPost && request.URL.Path == importPath {
-				if request.ContentLength > httpapi.MaxImportRequestBytes {
-					return c.JSON(http.StatusRequestEntityTooLarge, api.Error{
-						Code: "blob_too_large", Details: nil,
-						ExistingMemory: nil,
-						Message:        "blob exceeds the 100 MiB limit",
-					})
-				}
-				request.Body = http.MaxBytesReader(
-					c.Response().Writer,
-					request.Body,
-					httpapi.MaxImportRequestBytes,
-				)
-			}
-			return next(c)
-		}
-	}
+			logger.ErrorContext(request.Context(),
+				"HTTP handler panicked",
+				"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				"method", request.Method,
+				"path", request.URL.Path,
+				"error", err,
+				"stack", string(stack),
+			)
+			return err
+		},
+	})
 }
 
 // Handler exposes the complete HTTP surface for black-box tests and embedding.
-func (s *Server) Handler() http.Handler { return s.echo }
+func (s *Server) Handler() http.Handler {
+	return s.echo
+}
 
 // Run serves until ctx is cancelled or the listener fails. Cancellation starts
 // graceful shutdown and bounds request draining by the configured timeout.
@@ -193,6 +186,20 @@ func requestLogContext(logger *slog.Logger) echo.MiddlewareFunc {
 					logging.WithLogger(request.Context(), requestLogger),
 				),
 			)
+			return next(c)
+		}
+	}
+}
+
+type requestContextKey struct{}
+
+func requestPassThroughContext() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			request := c.Request()
+
+			ctx := context.WithValue(request.Context(), requestContextKey{}, request)
+			c.SetRequest(request.WithContext(ctx))
 			return next(c)
 		}
 	}

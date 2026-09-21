@@ -43,11 +43,7 @@ if [[ -z "$lint_cache_dir" ]] || ! can_write_cache "$lint_cache_dir"; then
 fi
 
 echo "Formatting Go files..."
-for module in cli server; do
-  (cd "$module" && golangci-lint fmt ./...)
-done
+golangci-lint fmt ./...
 
 echo "Linting Go files..."
-for module in server cli; do
-  (cd "$module" && golangci-lint run ./...)
-done
+golangci-lint run ./...

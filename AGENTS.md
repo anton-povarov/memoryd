@@ -12,10 +12,11 @@ Stage: MVP design, see `docs/MVP.md`.
 
 Coding standard: see `GO_CODING_STANDARD.md`.
 
-### Formatting and linting
 When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
 These commands would already perform `go fmt`, `go vet` so no need to run them separately.
 Fix issues. If you need to ignore a warning with `nolint` comment, explicitly report it to the user.
+
+To regenerate code from the OpenAPI specification, run `dev-generate-openapi.sh`.
 
 ## Agents
 

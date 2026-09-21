@@ -283,8 +283,9 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, err
 	}
 	logger := logging.FromContext(ctx)
-	logger.DebugContext(
-		ctx, "Blob import staging started", "original_filename", importContext.OriginalFilename,
+	logger.DebugContext(ctx,
+		"Blob import staging started",
+		"original_filename", importContext.OriginalFilename,
 	)
 
 	temporary, err := os.CreateTemp(v.uploadDir, ".import-*")
@@ -321,12 +322,16 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	var digest [sha256.Size]byte
 	copy(digest[:], hash.Sum(nil))
 	blobRef := NewSHA256Blobref(digest)
-	logger.DebugContext(ctx, "Blob import staged",
+
+	logger.DebugContext(ctx,
+		"Blob import staged",
+		"original_filename", importContext.OriginalFilename,
 		"blob_hash", blobRef.String(),
 		"byte_size", byteSize,
 		"media_type", mediaType,
 		"temporary_path", temporaryPath,
 	)
+
 	finalPath := v.blobPath(blobRef)
 	if err := v.ensureBlobDirectory(finalPath); err != nil {
 		return Memory{}, fmt.Errorf("create Blob shard directory: %w", err)
@@ -334,7 +339,12 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if err := publishBlob(temporaryPath, finalPath, blobRef, byteSize); err != nil {
 		return Memory{}, fmt.Errorf("publish Blob: %w", err)
 	}
-	logger.DebugContext(ctx, "Blob published or verified", "blob_hash", blobRef.String())
+	logger.DebugContext(ctx,
+		"Blob published or verified",
+		"original_filename", importContext.OriginalFilename,
+		"blob_hash", blobRef.String(),
+		"final_path", finalPath,
+	)
 
 	now := time.Now().UTC()
 	memory := Memory{
@@ -345,6 +355,13 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		ByteSize:      byteSize,
 		ImportedAt:    now,
 	}
+
+	logger.DebugContext(ctx,
+		"Memory import started",
+		"memory_id", memory.ID,
+		"blob_hash", memory.BlobRef.String(),
+		"original_filename", memory.ImportContext.OriginalFilename,
+	)
 
 	// The Blob is durable now. The Memory commit must survive client
 	// disconnection so successful storage is never reported as a failed import.
@@ -384,6 +401,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		logger.InfoContext(durableContext, "Duplicate import rejected",
 			"memory_id", existing.ID,
 			"blob_hash", existing.BlobRef.String(),
+			"original_filename", existing.ImportContext.OriginalFilename,
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
 	}
@@ -393,6 +411,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		"blob_hash", memory.BlobRef.String(),
 		"byte_size", memory.ByteSize,
 		"media_type", memory.MediaType,
+		"original_filename", memory.ImportContext.OriginalFilename,
 	)
 	return memory, nil
 }

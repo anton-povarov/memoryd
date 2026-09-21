@@ -5,6 +5,10 @@ run:
   tests: true
 
 linters:
+  exclusions:
+    paths:
+      - '.*\.gen\.go$'
+
   enable:
     - gocritic # Criticism
     - gocyclo # Cyclomatic complexity
@@ -49,6 +53,9 @@ linters:
 
 # Configure the formatters block to automatically break those lines up
 formatters:
+  exclusions:
+    paths:
+      - '.*\.gen\.go$'
   enable:
     - goimports
     - golines
