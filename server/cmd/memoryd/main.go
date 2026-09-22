@@ -39,10 +39,7 @@ func run() error {
 		}
 	}
 
-	logger, err := logging.New(cfg.Logging)
-	if err != nil {
-		return err
-	}
+	logger := logging.NewRoot(cfg.Logging.Level, os.Stderr)
 	slog.SetDefault(logger)
 
 	memoryVault, err := vault.Open(

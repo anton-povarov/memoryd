@@ -108,7 +108,8 @@ func Open(
 		return nil, err
 	}
 
-	logger = logger.With("component", "vault")
+	logger = logging.NewChildLogger(logger, "vault")
+	logger = logging.NewChildLogger(logger, "yooo")
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -133,7 +134,7 @@ func Open(
 		return nil, err
 	}
 
-	logger.DebugContext(ctx, "Vault init done")
+	logger.InfoContext(ctx, "Vault init done")
 	return v, nil
 }
 

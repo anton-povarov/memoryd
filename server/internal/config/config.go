@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ const (
 	DefaultAddress         = "127.0.0.1:8080"
 	DefaultShutdownTimeout = 10 * time.Second
 	DefaultDataDir         = "./data"
-	DefaultLogLevel        = "info"
+	DefaultLogLevel        = slog.LevelInfo
 	maxTCPPort             = 65535
 )
 
@@ -46,7 +47,7 @@ type StorageConfig struct {
 }
 
 type LoggingConfig struct {
-	Level string `yaml:"level"`
+	Level slog.Level `yaml:"level"`
 }
 
 func Defaults() Config {
@@ -109,30 +110,10 @@ func (c Config) Validate() error {
 	if c.Server.ShutdownTimeout <= 0 {
 		return fmt.Errorf("server.shutdown_timeout must be greater than zero")
 	}
-
-	if _, err := ParseLoggingLevel(c.Logging.Level); err != nil {
-		return err
-	}
 	if strings.TrimSpace(c.Storage.DataDir) == "" {
 		return fmt.Errorf("storage.data_dir must not be empty")
 	}
 	return nil
-}
-
-// ParseLoggingLevel validates a configured level and returns its canonical
-// name. Both "warn" and "warning" map to "warn".
-func ParseLoggingLevel(value string) (string, error) {
-	switch level := strings.ToLower(strings.TrimSpace(value)); level {
-	case "debug", "info", "error":
-		return level, nil
-	case "warn", "warning":
-		return "warn", nil
-	default:
-		return "", fmt.Errorf(
-			"logging.level must be one of debug, info, warn, warning, or error (got %q)",
-			value,
-		)
-	}
 }
 
 func (c Config) withDerivedPaths() Config {

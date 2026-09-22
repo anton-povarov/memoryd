@@ -8,17 +8,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/anton-povarov/memoryd/server/internal/config"
 )
 
 func TestNewWithWriterUsesJSONAndLevel(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "")
 	var output bytes.Buffer
-	logger, err := NewWithWriter(config.LoggingConfig{Level: "warn"}, &output)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := NewRoot(slog.LevelWarn, &output)
 	logger.Info("hidden")
 	logger.Warn("visible", "count", 2)
 	var record map[string]any
@@ -33,10 +28,7 @@ func TestNewWithWriterUsesJSONAndLevel(t *testing.T) {
 func TestNewWithWriterUsesDevelopmentFormat(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "true")
 	var output bytes.Buffer
-	logger, err := NewWithWriter(config.LoggingConfig{Level: "debug"}, &output)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := NewRoot(slog.LevelDebug, &output)
 	logger.Debug("hello", "answer", 42)
 	if !strings.Contains(
 		output.String(),
@@ -112,14 +104,7 @@ func TestDevelopmentFormatRequiresDevelopmentMode(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			handler, err := handlerForOutput(
-				config.LoggingConfig{Level: "info"},
-				&output,
-				test.development,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
+			handler := NewRootHandler("", slog.LevelInfo, &output, test.development)
 			logger := slog.New(handler)
 			logger.Info("hello")
 			gotDevFormat := strings.Contains(
@@ -198,14 +183,5 @@ func TestDevelopmentEnabled(t *testing.T) {
 		if developmentEnabled(value) {
 			t.Errorf("developmentEnabled(%q) = true", value)
 		}
-	}
-}
-
-func TestHandlerRejectsInvalidSettings(t *testing.T) {
-	if _, err := Handler(
-		config.LoggingConfig{Level: "trace"},
-		&bytes.Buffer{},
-	); err == nil {
-		t.Fatal("expected invalid level error")
 	}
 }

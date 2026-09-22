@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -92,8 +93,31 @@ func parseYAMLConfig(data []byte) (Config, error) {
 	}
 	if raw.Logging != nil {
 		if raw.Logging.Level != nil {
-			c.Logging.Level = *raw.Logging.Level
+			level, err := parseLoggingLevel(*raw.Logging.Level)
+			if err != nil {
+				return Config{}, err
+			}
+			c.Logging.Level = level
 		}
 	}
 	return c.withDerivedPaths(), nil
+}
+
+func parseLoggingLevel(value string) (slog.Level, error) {
+	value = strings.ToLower(value)
+	switch value {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf(
+			"logging.level must be one of debug, info, warn, warning, or error (got %q)",
+			value,
+		)
+	}
 }

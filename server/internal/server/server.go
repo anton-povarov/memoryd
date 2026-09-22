@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,9 @@ func New(
 		panic("server.New: must provide a logger")
 	}
 
-	httpHandler := NewHandler(version, cfg.Storage.DataDir, memoryVault)
+	logger = logging.NewChildLogger(logger, "http")
+
+	httpHandler := NewHandler(version, logger, memoryVault)
 	mux := http.NewServeMux()
 
 	openAPIYAML, err := api.OpenAPIYAML()
@@ -58,7 +61,8 @@ func New(
 				r *http.Request,
 				err error,
 			) {
-				logging.FromContext(r.Context()).ErrorContext(
+				logger := logging.FromContext(r.Context())
+				logger.ErrorContext(
 					r.Context(),
 					"HTTP handler failed",
 					"error", err,
@@ -154,7 +158,8 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := r.Header.Get(requestIDHeader)
 		if requestID == "" {
-			requestID = uuid.NewString()
+			uu := uuid.New()
+			requestID = base64.RawURLEncoding.EncodeToString(uu[:])
 			r.Header.Set(requestIDHeader, requestID)
 		}
 		w.Header().Set(requestIDHeader, requestID)
@@ -167,13 +172,24 @@ func requestLoggerMiddleware(logger *slog.Logger, next http.Handler) http.Handle
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
 		requestID := r.Header.Get(requestIDHeader)
+
 		requestLogger := logger.With("request_id", requestID)
+		requestLogger = logging.NewChildLogger(requestLogger, requestID)
 		r = r.WithContext(logging.WithLogger(r.Context(), requestLogger))
 		response := &responseRecorder{
 			ResponseWriter: w,
 			status:         http.StatusOK,
 			committed:      false,
 		}
+
+		requestLogger.LogAttrs(
+			r.Context(),
+			slog.LevelInfo,
+			">> HTTP request starting",
+			slog.String("request_id", requestID),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+		)
 
 		next.ServeHTTP(response, r)
 
@@ -183,10 +199,10 @@ func requestLoggerMiddleware(logger *slog.Logger, next http.Handler) http.Handle
 		} else if response.status >= http.StatusBadRequest {
 			level = slog.LevelWarn
 		}
-		logger.LogAttrs(
-			context.Background(),
+		requestLogger.LogAttrs(
+			r.Context(),
 			level,
-			"HTTP request",
+			"<< HTTP request completed",
 			slog.String("request_id", requestID),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),

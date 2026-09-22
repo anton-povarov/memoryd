@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if c.Server.ShutdownTimeout != 10*time.Second {
 		t.Fatalf("default shutdown timeout = %s", c.Server.ShutdownTimeout)
 	}
-	if c.Logging.Level != "info" {
+	if c.Logging.Level != slog.LevelInfo {
 		t.Fatalf("default logging = %#v", c.Logging)
 	}
 	if c.Storage.UploadDir != filepath.Join("data", "uploads") {
@@ -54,7 +55,7 @@ logging:
 		c.Storage.UploadDir != filepath.Join("vault", "uploads") {
 		t.Fatalf("derived storage paths = %#v", c.Storage)
 	}
-	if c.Logging != (LoggingConfig{Level: "DEBUG"}) {
+	if c.Logging != (LoggingConfig{Level: slog.LevelDebug}) {
 		t.Fatalf("logging config = %#v", c.Logging)
 	}
 }
@@ -117,12 +118,12 @@ func TestLoadRejectsInvalidDuration(t *testing.T) {
 
 func TestParseLoggingLevel(t *testing.T) {
 	for _, value := range []string{"warn", "warning", "WARNING"} {
-		level, err := ParseLoggingLevel(value)
-		if err != nil || level != "warn" {
+		level, err := parseLoggingLevel(value)
+		if err != nil || level != slog.LevelWarn {
 			t.Errorf("ParseLoggingLevel(%q) = %q, %v", value, level, err)
 		}
 	}
-	_, err := ParseLoggingLevel("trace")
+	_, err := parseLoggingLevel("trace")
 	if err == nil || !strings.Contains(err.Error(), "warning") {
 		t.Fatalf("invalid level error = %v", err)
 	}

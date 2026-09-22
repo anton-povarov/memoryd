@@ -1,4 +1,3 @@
-// Package logging centralizes construction of memoryd's structured logger.
 package logging
 
 import (
@@ -8,11 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/anton-povarov/memoryd/server/internal/config"
 )
 
 type contextKey struct{}
@@ -34,72 +33,163 @@ func FromContext(ctx context.Context) *slog.Logger {
 	return slog.Default()
 }
 
-// New builds a logger writing to stderr.  The format and level are validated
-// here as well as by config.Config so callers that construct a config directly
-// get the same safe behavior.
-func New(cfg config.LoggingConfig) (*slog.Logger, error) {
-	return NewWithWriter(cfg, os.Stderr)
-}
-
-// NewFromConfig is a convenience for callers that keep the complete process
-// configuration together.
-func NewFromConfig(cfg config.Config) (*slog.Logger, error) {
-	return New(cfg.Logging)
-}
-
-// NewWithWriter is useful for tests and for applications embedding memoryd.
-func NewWithWriter(
-	cfg config.LoggingConfig,
-	writer io.Writer,
-) (*slog.Logger, error) {
-	h, err := Handler(cfg, writer)
-	if err != nil {
-		return nil, err
+// New creates new root logger with empty name, level and writing to writer
+func NewRoot(level slog.Level, writer io.Writer) *slog.Logger {
+	if developmentEnabled(os.Getenv("MEMORYD_DEV")) {
+		return slog.New(newHandlerNode("", nil, newDevHandler(writer, level)))
+	} else {
+		return slog.New(newHandlerNode("", nil, slog.NewJSONHandler(writer, &slog.HandlerOptions{
+			Level: level, AddSource: false, ReplaceAttr: nil,
+		})))
 	}
-	return slog.New(h), nil
 }
 
-// Must builds a logger and panics if cfg is invalid. It is intended for
-// process bootstrap after configuration loading, where an invalid setting is
-// unrecoverable.
-func Must(cfg config.LoggingConfig) *slog.Logger {
-	logger, err := New(cfg)
-	if err != nil {
-		panic(err)
+// NewSubLogger constructs a logger with name = "<parent.name>/<name>",
+// parent's level and writing to parent's output.
+func NewChildLogger(parent *slog.Logger, name string) *slog.Logger {
+	if parent == nil {
+		return nil
 	}
-	return logger
+
+	pnode := parent.Handler().(*handlerNode)
+
+	var newName string
+	if pnode.name == "" {
+		newName = name
+	} else {
+		newName = fmt.Sprintf("%s/%s", pnode.name, name)
+	}
+
+	switch ph := pnode.h.(type) {
+	case *devHandler:
+		clone := *ph
+		return slog.New(newHandlerNode(newName, pnode, &clone))
+	case *slog.JSONHandler:
+		return slog.New(newHandlerNode(newName, pnode, ph.WithAttrs([]slog.Attr{slog.String("__name", newName)})))
+	default:
+		panic("NewSubLogger: parent logger must be DEVELOPMENT or JSON")
+	}
 }
 
-// Handler constructs the slog handler corresponding to cfg.
-func Handler(cfg config.LoggingConfig, writer io.Writer) (slog.Handler, error) {
-	return handlerForOutput(
-		cfg,
-		writer,
-		developmentEnabled(os.Getenv("MEMORYD_DEV")),
-	)
-}
-
-func handlerForOutput(
-	cfg config.LoggingConfig,
-	writer io.Writer,
-	development bool,
-) (slog.Handler, error) {
+// NewRootHandler constructs the root handler
+func NewRootHandler(name string, level slog.Level, writer io.Writer, development bool) slog.Handler {
 	if writer == nil {
-		return nil, fmt.Errorf("logging writer must not be nil")
+		return nil
 	}
-	level, err := ParseLevel(cfg.Level)
-	if err != nil {
-		return nil, err
-	}
+
+	var h slog.Handler
 	if development {
-		return newDevHandler(writer, level), nil
+		h = newDevHandler(writer, level)
+	} else {
+		h = slog.NewJSONHandler(writer, &slog.HandlerOptions{
+			AddSource: false, Level: level, ReplaceAttr: nil,
+		})
 	}
-	return slog.NewJSONHandler(writer, &slog.HandlerOptions{
-		AddSource: false, Level: level, ReplaceAttr: nil,
-	}), nil
+	return newHandlerNode(name, nil, h)
 }
 
-func newDevHandler(writer io.Writer, level slog.Level) slog.Handler {
+type handlerNode struct {
+	parent *handlerNode
+	name   string
+	h      slog.Handler
+}
+
+func newHandlerNode(name string, parent *handlerNode, h slog.Handler) *handlerNode {
+	return &handlerNode{parent: parent, name: name, h: h}
+}
+
+func (h *handlerNode) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.h.Enabled(ctx, level)
+}
+
+func (h *handlerNode) Handle(ctx context.Context, record slog.Record) error {
+
+	type frameInfo struct {
+		pkg  string
+		file string
+		line int
+	}
+
+	switch realH := h.h.(type) {
+	case *devHandler:
+		var pcs [20]uintptr
+		pcs_len := runtime.Callers(4, pcs[:])
+		frames := runtime.CallersFrames(pcs[:pcs_len])
+		packages := make([]frameInfo, 0)
+		for {
+			frame, more := frames.Next()
+
+			// frame.Function looks like: "://github.com"
+			pkgPath := frame.Function
+			if strings.Contains(pkgPath, "memoryd") && !strings.Contains(frame.File, ".gen.") {
+				// fmt.Printf("%#v %s:%d\n", pkgPath, frame.File, frame.Line)
+
+				// Find the last slash to ignore path slashes, then look for the first dot after it
+				lastSlash := strings.LastIndex(pkgPath, "/")
+				if lastSlash != -1 {
+					pkgPath = pkgPath[lastSlash+1:]
+				}
+
+				// find the dot in pkgName.funcName, must be there as calls are fully qualified
+				dotIndex := strings.Index(pkgPath, ".")
+				if dotIndex != -1 {
+					pkgPath = pkgPath[:dotIndex]
+				} else {
+					break
+				}
+
+				if len(packages) == 0 || packages[len(packages)-1].pkg != pkgPath {
+					// reduce filename to just the last component
+					lastSlash := strings.LastIndex(frame.File, "/")
+					if lastSlash != -1 {
+						frame.File = frame.File[lastSlash+1:]
+					}
+					packages = append(packages, frameInfo{pkg: pkgPath, file: frame.File, line: frame.Line})
+				}
+			}
+			if pkgPath == "main" || pkgPath == "runtime" {
+				break
+			}
+
+			if !more {
+				break
+			}
+		}
+		slices.Reverse(packages)
+
+		// last component gets the file:line
+		// first component does not get the prefix " > "
+		pkgString := ""
+		for i, pkg := range packages {
+			if i != 0 && len(packages) > 1 {
+				pkgString += " > "
+			}
+
+			if i == len(packages)-1 {
+				pkgString += fmt.Sprintf("%s/%s:%d", pkg.pkg, pkg.file, pkg.line)
+			} else {
+				pkgString += fmt.Sprintf("%s", pkg.pkg)
+			}
+		}
+
+		record.Message = fmt.Sprintf(" %s [%s]", record.Message, pkgString)
+		return realH.Handle(ctx, record)
+	case *slog.JSONHandler:
+		return realH.Handle(ctx, record)
+	default:
+		panic("handlerNode::Handle: logger must be DEVELOPMENT or JSON")
+	}
+}
+
+func (h *handlerNode) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return newHandlerNode(h.name, h.parent, h.h.WithAttrs(attrs))
+}
+
+func (h *handlerNode) WithGroup(name string) slog.Handler {
+	return newHandlerNode(h.name, h.parent, h.h.WithGroup(name))
+}
+
+func newDevHandler(writer io.Writer, level slog.Level) *devHandler {
 	return &devHandler{
 		writer: writer,
 		level:  level,
@@ -143,13 +233,13 @@ func (h *devHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level
 }
 
-func (h *devHandler) Handle(_ context.Context, record slog.Record) error {
+func (h *devHandler) Handle(ctx context.Context, record slog.Record) error {
 	var line strings.Builder
 	line.WriteString("")
 	line.WriteString(record.Time.Format(timestampLayout))
 	line.WriteString(" ")
 	writeLevel(&line, record.Level)
-	line.WriteString("  ")
+	line.WriteString(" ")
 	writeMessage(&line, record.Message)
 
 	h.writeJSONAttrs(&line, record)
@@ -245,10 +335,8 @@ func writeLevel(line *strings.Builder, level slog.Level) {
 // info green, warn yellow, and errors red.
 func levelColorAndName(level slog.Level) (string, string) {
 	switch {
-	case level < slog.LevelDebug:
-		return ansiBlue, "TRC"
 	case level < slog.LevelInfo:
-		return "", "DBG"
+		return ansiBlue, "DBG"
 	case level < slog.LevelWarn:
 		return ansiGreen, "INF"
 	case level < slog.LevelError:
@@ -285,22 +373,4 @@ func writeMessage(line *strings.Builder, message string) {
 		return
 	}
 	line.WriteString(message)
-}
-
-func ParseLevel(value string) (slog.Level, error) {
-	level, err := config.ParseLoggingLevel(value)
-	if err != nil {
-		return 0, err
-	}
-	switch level {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	}
-	panic("validated logging level is unreachable")
 }

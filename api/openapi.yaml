@@ -223,9 +223,6 @@ components:
           enum: [ok]
         version:
           type: string
-        vault_path:
-          type: string
-          description: Human-readable vault location, when configured.
 
     Error:
       type: object

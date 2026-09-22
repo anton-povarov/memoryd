@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -30,16 +31,16 @@ var (
 )
 
 type Handler struct {
-	version   string
-	vaultPath string
-	vault     *vault.Vault
+	version string
+	logger  *slog.Logger
+	vault   *vault.Vault
 }
 
-func NewHandler(version, vaultPath string, memoryVault *vault.Vault) *Handler {
+func NewHandler(version string, logger *slog.Logger, memoryVault *vault.Vault) *Handler {
 	return &Handler{
-		version:   version,
-		vaultPath: vaultPath,
-		vault:     memoryVault,
+		version: version,
+		logger:  logger,
+		vault:   memoryVault,
 	}
 }
 
@@ -98,20 +99,18 @@ func (h *Handler) BrowseMemories(
 func (h *Handler) GetMemory(
 	ctx context.Context, request api.GetMemoryRequestObject,
 ) (api.GetMemoryResponseObject, error) {
+
 	logger := logging.FromContext(ctx)
-	logger.DebugContext(
-		ctx,
+
+	logger.DebugContext(ctx,
 		"Getting Memory details",
-		"memory_id",
-		request.MemoryId,
-	)
+		"memory_id", request.MemoryId)
+
 	memory, err := h.vault.Memory(ctx, request.MemoryId)
 	if errors.Is(err, vault.ErrMemoryNotFound) {
-		logger.DebugContext(
-			ctx,
+		logger.DebugContext(ctx,
 			"Memory details not found",
-			"memory_id",
-			request.MemoryId,
+			"memory_id", request.MemoryId,
 		)
 		return api.GetMemory404JSONResponse(notFoundError()), nil
 	}
@@ -371,9 +370,7 @@ func importInternalError(ctx context.Context, err error) api.ImportMemoryRespons
 }
 
 func (h *Handler) health() api.HealthResponse {
-	return api.HealthResponse{
-		Status: api.Ok, Version: &h.version, VaultPath: &h.vaultPath,
-	}
+	return api.HealthResponse{Status: api.Ok, Version: &h.version}
 }
 
 func memorySummary(memory vault.Memory) api.MemorySummary {
