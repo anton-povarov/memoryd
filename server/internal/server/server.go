@@ -37,9 +37,10 @@ func New(
 		panic("server.New: must provide a logger")
 	}
 
-	logger = logging.NewChildLogger(logger, "http")
+	httpLogger := logger.With(logging.System("http"))
+	apiLogger := logger.With(logging.System("api"))
 
-	httpHandler := NewHandler(version, logger, memoryVault)
+	httpHandler := NewHandler(version, apiLogger, memoryVault)
 	mux := http.NewServeMux()
 
 	if err := RegisterDocumentationEndpoint(mux); err != nil {
@@ -57,9 +58,7 @@ func New(
 					apiRequest := apiRequestFromContext(r.Context())
 					apiRequest.operationID = operationID
 
-					logger := logging.FromContext(r.Context())
-					logger = logging.NewChildLogger(logger, operationID)
-					r = r.WithContext(logging.ContextWithLogger(r.Context(), logger))
+					logger := logging.ForOperationInRequest(apiLogger, operationID, r.Context())
 
 					logger.LogAttrs(r.Context(),
 						slog.LevelInfo,
@@ -104,18 +103,19 @@ func New(
 
 	handler :=
 		requestIDMiddleware(
-			apiRequestMiddleware(logger,
-				panicRecoveryMiddleware(mux)))
+			apiRequestMiddleware(httpLogger, apiLogger,
+				panicRecoveryMiddleware(httpLogger, mux)))
 
 	httpServer := new(http.Server)
 	httpServer.Addr = cfg.Server.Address
 	httpServer.Handler = handler
-	httpServer.ErrorLog = slog.NewLogLogger(logger.Handler(), slog.LevelError)
+	httpServer.ErrorLog = slog.NewLogLogger(
+		logging.ForOperation(httpLogger, "ServeHTTP").Handler(), slog.LevelError)
 
 	return &Server{
 		config:     cfg.Server,
 		httpServer: httpServer,
-		logger:     logger,
+		logger:     httpLogger,
 	}, nil
 }
 
@@ -127,9 +127,10 @@ func (s *Server) Handler() http.Handler {
 // Run serves until ctx is cancelled or the listener fails. Cancellation starts
 // graceful shutdown and bounds request draining by the configured timeout.
 func (s *Server) Run(ctx context.Context) error {
+	logger := logging.ForOperation(s.logger, "Run")
 	errorsFromServer := make(chan error, 1)
 	go func() {
-		s.logger.Info("HTTP server starting",
+		logger.Info("HTTP server starting",
 			"address", s.config.Address,
 			"api_base", api.ServerUrlLocalMemorydServer,
 			"docs", "/docs/",
@@ -146,7 +147,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	s.logger.Info(
+	logger.Info(
 		"HTTP server shutting down",
 		"timeout",
 		s.config.ShutdownTimeout,
@@ -168,7 +169,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-time.After(s.config.ShutdownTimeout):
 		return context.DeadlineExceeded
 	}
-	s.logger.Info("HTTP server stopped")
+	logger.Info("HTTP server stopped")
 	return nil
 }
 
@@ -181,7 +182,6 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 			r.Header.Set(requestIDHeader, requestID)
 		}
 		w.Header().Set(requestIDHeader, requestID)
-
 		next.ServeHTTP(w, r)
 	})
 }
@@ -210,10 +210,7 @@ func responseLogLevel(response *responseRecorder) slog.Level {
 	return slog.LevelInfo
 }
 
-func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
-	genericLogger := logging.NewSibling(logger, "")
-	apiLogger := logging.NewSibling(logger, "api")
-
+func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
 
@@ -229,19 +226,15 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 
 		// might serve an API request, get prep'd
 		if strings.Contains(r.URL.Path, api.ServerUrlLocalMemorydServer) {
-			requestID := r.Header.Get(requestIDHeader)
-
 			rctx = &apiRequestContext{
 				startTime:   startedAt,
 				request:     r,
 				operationID: "",
 			}
-
 			r = r.WithContext(contextWithAPIRequest(r.Context(), rctx))
 
-			// logger passed to request handler
-			requestLogger := apiLogger.With("request_id", requestID)
-			r = r.WithContext(logging.ContextWithLogger(r.Context(), requestLogger))
+			requestID := r.Header.Get(requestIDHeader)
+			r = r.WithContext(logging.ContextWithRequestID(r.Context(), requestID))
 
 			next.ServeHTTP(response, r)
 
@@ -251,6 +244,8 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 			// because response is written in generated code and we can't access it,
 			// and here we can via `response`
 			if rctx.operationID != "" {
+				requestLogger := logging.ForOperationInRequest(
+					apiLogger, rctx.operationID, r.Context())
 				logAttrs := []slog.Attr{
 					slog.String("path", r.URL.Path),
 					slog.Int("status", response.status),
@@ -284,6 +279,8 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 				)
 
 			} else { // happened to not be an API request, or a 404 or whatever the f
+				requestLogger := logging.ForOperationInRequest(
+					apiLogger, "_Unexpected", r.Context())
 
 				level := responseLogLevel(response)
 
@@ -304,6 +301,7 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 			}
 
 		} else { // non-api request for sure
+			staticLogger := logging.ForOperationInRequest(logger, "", r.Context())
 
 			next.ServeHTTP(response, r)
 
@@ -311,8 +309,8 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 
 			// very short logging if everything is ok in developer mode
 			// don't want to flood the log with unimportant stuff
-			if logging.IsDevelopment(genericLogger) && response.status < http.StatusBadRequest {
-				genericLogger.DebugContext(r.Context(),
+			if logging.IsDevelopment(staticLogger) && response.status < http.StatusBadRequest {
+				staticLogger.DebugContext(r.Context(),
 					fmt.Sprintf("HTTP static asset: %d %s", response.status, r.URL.Path))
 			} else {
 				// production logging or error response from the `next` handler
@@ -326,7 +324,7 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 					attrs = append(attrs, slog.String("error", errmsg))
 				}
 
-				logger.LogAttrs(r.Context(),
+				staticLogger.LogAttrs(r.Context(),
 					level,
 					"HTTP static asset",
 					attrs...)
@@ -335,11 +333,11 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-func panicRecoveryMiddleware(next http.Handler) http.Handler {
+func panicRecoveryMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				logging.FromContext(r.Context()).ErrorContext(
+				logging.ForOperationInRequest(logger, "PanicRecovery", r.Context()).ErrorContext(
 					r.Context(),
 					"HTTP handler panicked",
 					"method", r.Method,

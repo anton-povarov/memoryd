@@ -6,191 +6,74 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"text/tabwriter"
 )
 
-type contextKey struct{}
+type requestIDContextKey struct{}
 
-// ContextWithLogger associates a structured logger with work derived from ctx.
-func ContextWithLogger(ctx context.Context, logger *slog.Logger) context.Context {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return context.WithValue(ctx, contextKey{}, logger)
+// ContextWithRequestID associates a request ID with work derived from ctx.
+func ContextWithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDContextKey{}, id)
 }
 
-// FromContext returns the request-scoped logger when one is present.
-func FromContext(ctx context.Context) *slog.Logger {
-	if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok &&
-		logger != nil {
-		return logger
-	}
-	return slog.Default()
+// ForOperation derives a logger with the reserved operation attribute.
+func ForOperation(base *slog.Logger, operation string) *slog.Logger {
+	return base.With(SysOperation(operation))
 }
 
-// New creates new root logger with empty name, level and writing to writer
+// ForOperationInRequest derives an operation logger and includes the request
+// ID as an ordinary attribute when one is present in ctx.
+func ForOperationInRequest(
+	base *slog.Logger,
+	operation string,
+	ctx context.Context,
+) *slog.Logger {
+	logger := ForOperation(base, operation)
+	if requestID, ok := ctx.Value(requestIDContextKey{}).(string); ok && requestID != "" {
+		logger = logger.With("request_id", requestID)
+	}
+
+	return logger
+}
+
+// NewRoot creates a root logger at level, writing to writer.
 func NewRoot(level slog.Level, writer io.Writer) *slog.Logger {
 	if developmentEnabled(os.Getenv("MEMORYD_DEV")) {
-		return slog.New(newHandlerNode("", nil, newDevHandler(writer, level)))
-	} else {
-		return slog.New(newHandlerNode("", nil, slog.NewJSONHandler(writer, &slog.HandlerOptions{
-			Level: level, AddSource: false, ReplaceAttr: nil,
-		})))
+		return slog.New(newDevHandler(writer, level))
 	}
+	return slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
+		Level: level, AddSource: false, ReplaceAttr: nil,
+	}))
 }
 
-// NewSubLogger constructs a logger with name = "<parent.name>/<name>",
-// parent's level and writing to parent's output.
-func NewChildLogger(parent *slog.Logger, name string) *slog.Logger {
-	if parent == nil {
-		return nil
-	}
+const (
+	systemKey       = "__system"
+	sysOperationKey = "__sys_operation"
+)
 
-	pnode, ok := parent.Handler().(*handlerNode)
-	if !ok {
-		panic("NewChildLogger: parent logger must be created by logging.NewRoot")
-	}
-
-	var newName string
-	if pnode.name == "" {
-		newName = name
-	} else {
-		newName = fmt.Sprintf("%s/%s", pnode.name, name)
-	}
-
-	switch ph := pnode.h.(type) {
-	case *devHandler:
-		clone := *ph
-		return slog.New(newHandlerNode(newName, pnode, &clone))
-	case *slog.JSONHandler:
-		clone := *ph
-		return slog.New(
-			newHandlerNode(
-				newName,
-				pnode,
-				// can't do something like
-				// ph.WithAttrs([]slog.Attr{slog.String("__name", newName)}),
-				// because json handler does not replace the attr,
-				// just appends one more with the same name
-				&clone,
-			),
-		)
-	default:
-		panic("NewSubLogger: parent logger must be DEVELOPMENT or JSON")
-	}
+// System returns the reserved attribute used to identify a log system.
+func System(name string) slog.Attr {
+	return slog.String(systemKey, name)
 }
 
-func NewSibling(sibling *slog.Logger, name string) *slog.Logger {
-	if sibling == nil {
-		return nil
-	}
-	snode, ok := sibling.Handler().(*handlerNode)
-	if !ok {
-		panic("NewSibling: sibling logger must be created by logging.New* functions")
-	}
-
-	return NewChildLogger(slog.New(snode.parent), name)
+// SysOperation returns the reserved attribute used to identify an operation within a system.
+func SysOperation(operation string) slog.Attr {
+	return slog.String(sysOperationKey, operation)
 }
 
 func IsDevelopment(logger *slog.Logger) bool {
-	_, ok := logger.Handler().(*handlerNode).h.(*devHandler)
+	if logger == nil {
+		return false
+	}
+	_, ok := logger.Handler().(*devHandler)
 	return ok
-}
-
-// newRootHandler constructs the root handler
-func newRootHandler(
-	name string,
-	level slog.Level,
-	writer io.Writer,
-	development bool,
-) slog.Handler {
-	if writer == nil {
-		return nil
-	}
-
-	var h slog.Handler
-	if development {
-		h = newDevHandler(writer, level)
-	} else {
-		h = slog.NewJSONHandler(writer, &slog.HandlerOptions{
-			AddSource: false, Level: level, ReplaceAttr: nil,
-		})
-	}
-	return newHandlerNode(name, nil, h)
-}
-
-type handlerNode struct {
-	parent *handlerNode
-	name   string
-	h      slog.Handler
-}
-
-func newHandlerNode(name string, parent *handlerNode, h slog.Handler) *handlerNode {
-	return &handlerNode{parent: parent, name: name, h: h}
-}
-
-func (h *handlerNode) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.h.Enabled(ctx, level)
-}
-
-func (h *handlerNode) Handle(ctx context.Context, record slog.Record) error {
-
-	switch realH := h.h.(type) {
-	case *devHandler:
-		if record.NumAttrs() > 0 {
-			callers := callersFramesForLogging(5)
-
-			var pkgSpec strings.Builder
-
-			// format is like
-			// <innermost package>/file:line < (2nd innermost package/file:line) < package3 < ...
-			for i, pkg := range callers {
-				if i > 0 && callers[i-1].pkg == pkg.pkg {
-					continue
-				}
-
-				if i != 0 && len(callers) > 1 {
-					pkgSpec.WriteString(" < ")
-				}
-
-				if (i == 0 || i == 1) && pkg.pkg != "runtime" {
-					fmt.Fprintf(&pkgSpec, "%s/%s:%d", pkg.pkg, pkg.file, pkg.line)
-				} else {
-					fmt.Fprint(&pkgSpec, pkg.pkg)
-				}
-			}
-
-			record.AddAttrs(slog.String("__source", pkgSpec.String()))
-		}
-
-		// format: message [/path/to/logger/name]
-		msg := " " + record.Message
-		if h.name != "" {
-			msg += " [" + h.name + "]"
-		}
-		record.Message = msg
-
-		return realH.Handle(ctx, record)
-
-	case *slog.JSONHandler:
-		record.AddAttrs(slog.String("__name", h.name))
-		return realH.Handle(ctx, record)
-
-	default:
-		panic("handlerNode::Handle: logger must be DEVELOPMENT or JSON")
-	}
-}
-
-func (h *handlerNode) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return newHandlerNode(h.name, h.parent, h.h.WithAttrs(attrs))
-}
-
-func (h *handlerNode) WithGroup(name string) slog.Handler {
-	return newHandlerNode(h.name, h.parent, h.h.WithGroup(name))
 }
 
 func newDevHandler(writer io.Writer, level slog.Level) *devHandler {
@@ -245,8 +128,9 @@ func (h *devHandler) Handle(ctx context.Context, record slog.Record) error {
 	writeLevel(&line, record.Level)
 	line.WriteString(" ")
 	writeMessage(&line, record.Message)
+	writeSpecialSuffix(&line, h.specialAttrs(record))
 
-	h.writeJSONAttrs(&line, record)
+	h.writeAttrs(&line, record)
 	line.WriteByte('\n')
 
 	h.mutex.Lock()
@@ -255,7 +139,86 @@ func (h *devHandler) Handle(ctx context.Context, record slog.Record) error {
 	return err
 }
 
-func (h *devHandler) writeJSONAttrs(line *strings.Builder, record slog.Record) {
+type devSpecialAttrs struct {
+	system       string
+	sysOperation string
+}
+
+func (h *devHandler) specialAttrs(record slog.Record) devSpecialAttrs {
+	var special devSpecialAttrs
+	for _, attr := range h.attrs {
+		visitSpecialAttrs(attr.attr, &special)
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		visitSpecialAttrs(attr, &special)
+		return true
+	})
+	return special
+}
+
+func visitSpecialAttrs(attr slog.Attr, special *devSpecialAttrs) {
+	attr.Value = attr.Value.Resolve()
+	if attr.Key == systemKey {
+		special.system = attrString(attr.Value)
+		return
+	}
+	if attr.Key == sysOperationKey {
+		special.sysOperation = attrString(attr.Value)
+		return
+	}
+	if attr.Value.Kind() == slog.KindGroup {
+		for _, nested := range attr.Value.Group() {
+			visitSpecialAttrs(nested, special)
+		}
+	}
+}
+
+func attrString(value slog.Value) string {
+	if value.Kind() == slog.KindString {
+		return value.String()
+	}
+	return fmt.Sprint(jsonValue(value))
+}
+
+func writeSpecialSuffix(line *strings.Builder, special devSpecialAttrs) {
+	if special.system == "" && special.sysOperation == "" {
+		return
+	}
+
+	line.WriteString(" [")
+	line.WriteString(special.system)
+	if special.system != "" && special.sysOperation != "" {
+		line.WriteByte('/')
+	}
+	line.WriteString(special.sysOperation)
+	line.WriteByte(']')
+}
+
+func sourceForCurrentCall() string {
+	callers := callersFramesForLogging(5)
+	var pkgSpec strings.Builder
+
+	// format is like: <innermost package>/file:line < package2/file:line < ...
+	for i, pkg := range callers {
+		if i > 0 && callers[i-1].pkg == pkg.pkg {
+			continue
+		}
+
+		if i != 0 && len(callers) > 1 {
+			pkgSpec.WriteString(" < ")
+		}
+
+		if (i == 0 || i == 1) && pkg.pkg != "runtime" {
+			fmt.Fprintf(&pkgSpec, "%s/%s:%d", pkg.pkg, pkg.file, pkg.line)
+		} else {
+			fmt.Fprint(&pkgSpec, pkg.pkg)
+		}
+	}
+
+	return pkgSpec.String()
+}
+
+func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 	if len(h.attrs) == 0 && record.NumAttrs() == 0 {
 		return
 	}
@@ -272,29 +235,50 @@ func (h *devHandler) writeJSONAttrs(line *strings.Builder, record slog.Record) {
 		return
 	}
 
+	// source needs to be top level always (i.e. not within a group, that might be on this logger)
+	object["__source"] = sourceForCurrentCall()
+
 	encoded := func() string {
 		var buf strings.Builder
-		encoder := json.NewEncoder(&buf)
-		encoder.SetIndent("", "    ")
-		encoder.SetEscapeHTML(false)
 
+		// check that this object can be encoded as JSON
+		// this is only required for compatibility with the JSON handler used in production
+		encoder := json.NewEncoder(&buf)
 		err := encoder.Encode(object)
 		if err != nil {
-			buf.Reset()
-			buf.WriteString("{\n    ")
-			buf.WriteString("\"error\": ")
-			buf.WriteString(strconv.Quote(
-				fmt.Sprintf("could not encode log attributes: %v", err),
-			))
-			buf.WriteString("\n}")
+			fmt.Fprintf(&buf, "\n    error %q\n",
+				fmt.Sprintf("json encoding error: %v", err))
+			return buf.String()
 		}
 
-		// encoder adds a trailing newline it seems
+		buf.Reset()
+		w := tabwriter.NewWriter(&buf, 1, 4, 3, ' ', 0)
+		w.Write([]byte("\n")) // nolint:errcheck
+
+		for _, k := range slices.Sorted(maps.Keys(object)) {
+			valstr := fmt.Sprint(object[k])
+			// newlines will break tab columns alignment a bit,
+			// so simulate that the next line has empty columns before this one
+			// effectively aligning into a multiline structure
+			// https://stackoverflow.com/questions/45237529/how-to-add-a-newline-into-tabwriter-in-go
+			// i.e.
+			// <key>      <value to 1st newline>
+			// <empty>    <value to 2nd newline>
+			// ...
+			valstr = strings.ReplaceAll(valstr, "\r", "")
+			valstr = strings.ReplaceAll(valstr, "\n", "\n\t\t")
+			fmt.Fprintf(w, "\t\t%s\t%v\n", k, valstr)
+		}
+
+		w.Flush() // nolint:errcheck
+
 		result := strings.TrimRight(buf.String(), "\r\n")
 		return result
 	}()
 
 	line.WriteByte(' ')
+	// fmt.Fprintf(line, "%#v\n", object)
+	// _ = encoded
 	line.WriteString(encoded)
 }
 
@@ -311,6 +295,9 @@ func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
 		for _, nested := range attr.Value.Group() {
 			addJSONAttr(object, nestedGroups, nested)
 		}
+		return
+	}
+	if attr.Key == systemKey || attr.Key == sysOperationKey {
 		return
 	}
 

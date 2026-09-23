@@ -108,7 +108,8 @@ func Open(
 		return nil, err
 	}
 
-	logger = logging.NewChildLogger(logger, "vault")
+	logger = logger.With(logging.System("vault"))
+	openLogger := logging.ForOperation(logger, "Open")
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -116,7 +117,7 @@ func Open(
 	}
 	db.SetMaxOpenConns(maxOpenConnections)
 
-	logger.DebugContext(ctx, "Opened Vault database")
+	openLogger.DebugContext(ctx, "Opened Vault database")
 
 	v := &Vault{
 		db:             db,
@@ -130,7 +131,7 @@ func Open(
 		return nil, err
 	}
 
-	logger.InfoContext(ctx, "Vault init done",
+	openLogger.InfoContext(ctx, "Vault init done",
 		"database_path", dbPath,
 		"blob_dir", contentDir,
 		"upload_dir", uploadDir,
@@ -140,6 +141,8 @@ func Open(
 }
 
 func (v *Vault) initialize(ctx context.Context) error {
+	logger := logging.ForOperation(v.logger, "Initialize")
+
 	if _, err := v.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		return fmt.Errorf("enable Vault foreign keys: %w", err)
 	}
@@ -187,7 +190,7 @@ func (v *Vault) initialize(ctx context.Context) error {
 			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
 	)`
 
-	v.logger.DebugContext(ctx, "Initializing schema")
+	logger.DebugContext(ctx, "Initializing schema")
 	if _, err := v.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize Vault database: %w", err)
 	}
@@ -203,7 +206,8 @@ func (v *Vault) initialize(ctx context.Context) error {
 }
 
 func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
-	v.logger.DebugContext(ctx, "Validating all blobrefs")
+	logger := logging.ForOperation(v.logger, "ValidateAllBlobrefs")
+	logger.DebugContext(ctx, "Validating all blobrefs")
 
 	rows, err := v.db.QueryContext(ctx, `SELECT blob_hash FROM memories`)
 	if err != nil {
@@ -211,7 +215,7 @@ func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			logging.FromContext(ctx).WarnContext(ctx,
+			logger.WarnContext(ctx,
 				"close stored Blobref rows",
 				"error", err)
 		}
@@ -236,7 +240,8 @@ func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
 }
 
 func (v *Vault) validateSchema(ctx context.Context) error {
-	v.logger.DebugContext(ctx, "Validating schema")
+	logger := logging.ForOperation(v.logger, "ValidateSchema")
+	logger.DebugContext(ctx, "Validating schema")
 
 	wantColumns := map[string][]string{
 		"memories": {
@@ -318,7 +323,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if err != nil {
 		return Memory{}, err
 	}
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(v.logger, "Put", ctx)
 	logger.DebugContext(ctx,
 		"Blob import staging started",
 		"original_filename", importContext.OriginalFilename,
@@ -469,6 +474,8 @@ func (v *Vault) ListMemories(
 	limit int,
 	after *ListCursor,
 ) ([]Memory, bool, error) {
+	logger := logging.ForOperationInRequest(v.logger, "ListMemories", ctx)
+
 	if limit <= 0 || limit > MaxListLimit {
 		limit = DefaultListLimit
 	}
@@ -487,13 +494,18 @@ func (v *Vault) ListMemories(
 	}
 	query += ` ORDER BY julianday(imported_at) DESC, id DESC LIMIT ?`
 	arguments = append(arguments, limit+1)
+
+	logger.DebugContext(ctx, "sqlite query",
+		"query", query,
+		"arguments", arguments)
+
 	rows, err := v.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list Memories: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			logging.FromContext(ctx).WarnContext(ctx, "Could not close Memory rows", "error", err)
+			logger.WarnContext(ctx, "Could not close Memory rows", "error", err)
 		}
 	}()
 	var memories []Memory
@@ -518,7 +530,7 @@ func (v *Vault) OpenContent(
 	ctx context.Context,
 	id uuid.UUID,
 ) (Memory, io.ReadCloser, error) {
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(v.logger, "OpenContent", ctx)
 
 	memory, err := v.Memory(ctx, id)
 	if err != nil {
@@ -547,7 +559,7 @@ func (v *Vault) OpenContent(
 // committed reference to it. Blob removal is best-effort: the database
 // remains authoritative and a leftover file is an Orphan Blob.
 func (v *Vault) Delete(ctx context.Context, id uuid.UUID) error {
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(v.logger, "Delete", ctx)
 
 	v.blobMutationMu.Lock()
 	defer v.blobMutationMu.Unlock()

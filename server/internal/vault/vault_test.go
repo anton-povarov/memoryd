@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -121,6 +122,103 @@ func openVault(ctx context.Context, root string) (*Vault, error) {
 	blobDir := filepath.Join(root, "blobs")
 	uploadDir := filepath.Join(root, "uploads")
 	return Open(ctx, logger, databasePath, blobDir, uploadDir)
+}
+
+func TestOpenAcceptsStandardSlogLogger(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	root := t.TempDir()
+	v, err := Open(
+		context.Background(),
+		logger,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := v.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if !strings.Contains(output.String(), `"__system":"vault"`) {
+		t.Fatalf("Vault logs lack system field: %s", output.String())
+	}
+}
+
+func TestOpenContentLogsVaultOperationAndRequestID(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+	root := t.TempDir()
+	v, err := Open(
+		context.Background(),
+		logger,
+		filepath.Join(root, "memoryd.sqlite"),
+		filepath.Join(root, "blobs"),
+		filepath.Join(root, "uploads"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := v.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	memory, err := v.Put(context.Background(), Import{
+		Content:           bytes.NewReader([]byte("hello")),
+		DeclaredMediaType: "",
+		Context: ImportContext{
+			OriginalFilename:   "note.txt",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := logging.ContextWithRequestID(context.Background(), "req-123")
+	_, content, err := v.OpenContent(ctx, memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := content.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		if !strings.Contains(line, `"msg":"Memory Blob opened"`) {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["__system"] != "vault" ||
+			record["__sys_operation"] != "OpenContent" ||
+			record["request_id"] != "req-123" {
+			t.Fatalf("OpenContent log fields = %#v", record)
+		}
+		if strings.Count(line, `"__system"`) != 1 ||
+			strings.Count(line, `"__sys_operation"`) != 1 {
+			t.Fatalf("OpenContent log has duplicate scope fields: %s", line)
+		}
+		return
+	}
+	t.Fatalf("OpenContent log not found: %s", output.String())
 }
 
 func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {

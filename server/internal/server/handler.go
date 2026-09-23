@@ -58,6 +58,9 @@ func (h *Handler) GetReadiness(
 func (h *Handler) BrowseMemories(
 	ctx context.Context, request api.BrowseMemoriesRequestObject,
 ) (api.BrowseMemoriesResponseObject, error) {
+
+	logger := logging.ForOperationInRequest(h.logger, "BrowseMemories", ctx)
+
 	limit := vault.DefaultListLimit
 	if request.Params.Limit != nil {
 		limit = int(*request.Params.Limit)
@@ -73,6 +76,11 @@ func (h *Handler) BrowseMemories(
 		}
 		after = &decoded
 	}
+
+	logger.WithGroup("args").DebugContext(ctx, "Listing memories",
+		"limit", limit,
+		"after", after)
+
 	memories, hasMore, err := h.vault.ListMemories(ctx, limit, after)
 	if err != nil {
 		return nil, err
@@ -100,7 +108,7 @@ func (h *Handler) GetMemory(
 	request api.GetMemoryRequestObject,
 ) (api.GetMemoryResponseObject, error) {
 
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(h.logger, "GetMemory", ctx)
 
 	logger.DebugContext(ctx,
 		"Getting Memory details",
@@ -127,7 +135,7 @@ func (h *Handler) GetMemoryContent(
 	api.GetMemoryContentResponseObject,
 	error,
 ) {
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(h.logger, "GetMemoryContent", ctx)
 	logger.DebugContext(
 		ctx,
 		"Preparing Memory content download",
@@ -187,7 +195,7 @@ func (h *Handler) GetMemoryContent(
 func (h *Handler) DeleteMemory(
 	ctx context.Context, request api.DeleteMemoryRequestObject,
 ) (api.DeleteMemoryResponseObject, error) {
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(h.logger, "DeleteMemory", ctx)
 
 	logger.DebugContext(ctx, "Delete memory attempt",
 		"memory_id", request.MemoryId)
@@ -212,7 +220,7 @@ func (h *Handler) DeleteMemory(
 func (h *Handler) ImportMemory(
 	ctx context.Context, request api.ImportMemoryRequestObject,
 ) (api.ImportMemoryResponseObject, error) {
-	logger := logging.FromContext(ctx)
+	logger := logging.ForOperationInRequest(h.logger, "ImportMemory", ctx)
 	logger.DebugContext(ctx, "Parsing Memory import request")
 	if request.Body == nil {
 		logger.InfoContext(ctx,
@@ -284,7 +292,7 @@ func (h *Handler) ImportMemory(
 	// imported file content
 	content, err := formFile.Open()
 	if err != nil {
-		return importInternalError(ctx, err), nil
+		return importInternalError(ctx, logger, err), nil
 	}
 	defer func() { _ = content.Close() }()
 
@@ -355,14 +363,18 @@ func (h *Handler) ImportMemory(
 		}, nil
 
 	case err != nil:
-		return importInternalError(ctx, err), nil
+		return importInternalError(ctx, logger, err), nil
 	}
 
 	return api.ImportMemory201JSONResponse(memorySummary(memory)), nil
 }
 
-func importInternalError(ctx context.Context, err error) api.ImportMemoryResponseObject {
-	logging.FromContext(ctx).ErrorContext(ctx, "Memory import failed", "error", err)
+func importInternalError(
+	ctx context.Context,
+	logger *slog.Logger,
+	err error,
+) api.ImportMemoryResponseObject {
+	logger.ErrorContext(ctx, "Memory import failed", "error", err)
 	return api.ImportMemory500JSONResponse{
 		Code: "import_failed", Details: nil,
 		ExistingMemory: nil, Message: err.Error(),
