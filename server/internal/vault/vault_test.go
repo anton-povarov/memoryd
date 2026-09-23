@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/anton-povarov/memoryd/server/internal/logging"
 )
 
 func TestResolveMediaType(t *testing.T) {
@@ -114,7 +116,7 @@ func TestResolveMediaType(t *testing.T) {
 }
 
 func openVault(ctx context.Context, root string) (*Vault, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{AddSource: true}))
+	logger := logging.NewRoot(slog.LevelInfo, io.Discard)
 	databasePath := filepath.Join(root, "memoryd.sqlite")
 	blobDir := filepath.Join(root, "blobs")
 	uploadDir := filepath.Join(root, "uploads")
@@ -256,13 +258,7 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		slog.Default(),
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,13 +347,7 @@ func TestCopyWithLimitRejectsFirstByteOverLimit(t *testing.T) {
 func TestVaultPutAcceptsExactlyOneHundredMiB(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	v, err := Open(
-		ctx,
-		slog.Default(),
-		filepath.Join(root, "memoryd.sqlite"),
-		filepath.Join(root, "blobs"),
-		filepath.Join(root, "uploads"),
-	)
+	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}

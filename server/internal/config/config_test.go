@@ -92,12 +92,11 @@ func TestLoadMissingFileIsExplicit(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsNonLoopbackAddress(t *testing.T) {
+func TestValidateAcceptsNonLoopbackAddress(t *testing.T) {
 	c := Defaults()
 	c.Server.Address = "0.0.0.0:8080"
-	if err := c.Validate(); err == nil ||
-		!strings.Contains(err.Error(), "loopback") {
-		t.Fatalf("non-loopback validation error = %v", err)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("non-loopback address validation error = %v", err)
 	}
 }
 

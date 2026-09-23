@@ -97,7 +97,7 @@ The MVP web UI is a basic interface that will evolve through use. Its initial ca
 - Implement the main server in Go, with SQLite/FTS5 and filesystem content-addressed storage.
 - Use Ollama as the initial model runtime for Document Understanding and Search Planning.
 - The Go server uses `destel/rill` to bound concurrent understanding across requests and startup recovery, but introduces no persistent queue table, separate worker service, or external queue.
-- Bind only to loopback and require no application login in the MVP.
+- Require no application login in the MVP.
 - Treat a checked-in `openapi.yaml` as the API source of truth and generate Go handler interfaces and request/response types from it.
 
 ## Open design work

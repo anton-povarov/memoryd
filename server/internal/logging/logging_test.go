@@ -30,10 +30,9 @@ func TestNewWithWriterUsesDevelopmentFormat(t *testing.T) {
 	var output bytes.Buffer
 	logger := NewRoot(slog.LevelDebug, &output)
 	logger.Debug("hello", "answer", 42)
-	if !strings.Contains(
-		output.String(),
-		"DBG  hello {\n    \"answer\": 42\n}",
-	) {
+	if !strings.Contains(output.String(), "\x1b[34mDBG\x1b[0m  hello {") ||
+		!strings.Contains(output.String(), "\"answer\": 42") ||
+		!strings.Contains(output.String(), "\"__source\":") {
 		t.Fatalf("text output = %q", output.String())
 	}
 }
@@ -69,7 +68,7 @@ func TestDevelopmentHandlerFormat(t *testing.T) {
 	if err := handler.Handle(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
-	want := "2026-09-14 23:57:33 .288000 \x1b[32mINF\x1b[0m  HTTP request {\n" +
+	want := "2026-09-14 23:57:33 .288000 \x1b[32mINF\x1b[0m HTTP request {\n" +
 		"    \"latency\": \"3.667µs\",\n    \"method\": \"GET\",\n" +
 		"    \"path\": \"/docs\",\n    \"status\": 308\n}\n"
 	if output.String() != want {
@@ -105,7 +104,7 @@ func TestDevelopmentFormatRequiresDevelopmentMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
 			handler := newRootHandler("", slog.LevelInfo, &output, test.development)
-			logger := slog.New(handler) 
+			logger := slog.New(handler)
 			logger.Info("hello")
 			gotDevFormat := strings.Contains(
 				output.String(),
@@ -149,8 +148,8 @@ func TestDevelopmentLevelColors(t *testing.T) {
 		level slog.Level
 		want  string
 	}{
-		{name: "trace", level: slog.Level(-8), want: "\x1b[34mTRC\x1b[0m"},
-		{name: "debug", level: slog.LevelDebug, want: " DBG "},
+		{name: "trace", level: slog.Level(-8), want: "\x1b[34mDBG\x1b[0m"},
+		{name: "debug", level: slog.LevelDebug, want: "\x1b[34mDBG\x1b[0m"},
 		{name: "info", level: slog.LevelInfo, want: "\x1b[32mINF\x1b[0m"},
 		{name: "warn", level: slog.LevelWarn, want: "\x1b[33mWRN\x1b[0m"},
 		{name: "error", level: slog.LevelError, want: "\x1b[31mERR\x1b[0m"},

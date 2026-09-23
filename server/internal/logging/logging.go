@@ -144,12 +144,6 @@ func (h *handlerNode) Handle(ctx context.Context, record slog.Record) error {
 		if record.NumAttrs() > 0 {
 			callers := callersFramesForLogging(5)
 
-			// formatted := make([]string, 0, len(callers))
-			// for i, pkg := range callers {
-			// 	formatted = append(formatted, fmt.Sprintf("%s/%s:%d", pkg.pkg, pkg.file, pkg.line))
-			// }
-			// record.AddAttrs(slog.String("__source", strings.Join(formatted, " < ")))
-
 			var pkgSpec strings.Builder
 
 			// format is like
@@ -422,7 +416,8 @@ func callersFramesForLogging(skip int) []callerFrameInfo {
 		pkgInMemoryd := strings.Contains(pkgPath, "memoryd")
 		pkgIsMain := strings.HasPrefix(pkgPath, "main.")
 		pkgIsRuntime := strings.HasPrefix(pkgPath, "runtime.")
-		fileIsGenerated := strings.Contains(frame.File, "memoryd") && strings.Contains(frame.File, ".gen.")
+		fileIsGenerated := strings.Contains(frame.File, "memoryd") &&
+			strings.Contains(frame.File, ".gen.")
 
 		// NOTE(antoxa): before using continue - check `more` variable
 
