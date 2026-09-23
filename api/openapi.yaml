@@ -137,6 +137,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "507":
+          description: Insufficient storage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /memories/import:
     post:

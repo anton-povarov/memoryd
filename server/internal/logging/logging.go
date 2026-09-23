@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,8 +15,8 @@ import (
 
 type contextKey struct{}
 
-// WithLogger associates a structured logger with work derived from ctx.
-func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
+// ContextWithLogger associates a structured logger with work derived from ctx.
+func ContextWithLogger(ctx context.Context, logger *slog.Logger) context.Context {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -51,7 +50,10 @@ func NewChildLogger(parent *slog.Logger, name string) *slog.Logger {
 		return nil
 	}
 
-	pnode := parent.Handler().(*handlerNode)
+	pnode, ok := parent.Handler().(*handlerNode)
+	if !ok {
+		panic("NewChildLogger: parent logger must be created by logging.NewRoot")
+	}
 
 	var newName string
 	if pnode.name == "" {
@@ -65,14 +67,47 @@ func NewChildLogger(parent *slog.Logger, name string) *slog.Logger {
 		clone := *ph
 		return slog.New(newHandlerNode(newName, pnode, &clone))
 	case *slog.JSONHandler:
-		return slog.New(newHandlerNode(newName, pnode, ph.WithAttrs([]slog.Attr{slog.String("__name", newName)})))
+		clone := *ph
+		return slog.New(
+			newHandlerNode(
+				newName,
+				pnode,
+				// can't do something like
+				// ph.WithAttrs([]slog.Attr{slog.String("__name", newName)}),
+				// because json handler does not replace the attr,
+				// just appends one more with the same name
+				&clone,
+			),
+		)
 	default:
 		panic("NewSubLogger: parent logger must be DEVELOPMENT or JSON")
 	}
 }
 
-// NewRootHandler constructs the root handler
-func NewRootHandler(name string, level slog.Level, writer io.Writer, development bool) slog.Handler {
+func NewSibling(sibling *slog.Logger, name string) *slog.Logger {
+	if sibling == nil {
+		return nil
+	}
+	snode, ok := sibling.Handler().(*handlerNode)
+	if !ok {
+		panic("NewSibling: sibling logger must be created by logging.New* functions")
+	}
+
+	return NewChildLogger(slog.New(snode.parent), name)
+}
+
+func IsDevelopment(logger *slog.Logger) bool {
+	_, ok := logger.Handler().(*handlerNode).h.(*devHandler)
+	return ok
+}
+
+// newRootHandler constructs the root handler
+func newRootHandler(
+	name string,
+	level slog.Level,
+	writer io.Writer,
+	development bool,
+) slog.Handler {
 	if writer == nil {
 		return nil
 	}
@@ -104,78 +139,53 @@ func (h *handlerNode) Enabled(ctx context.Context, level slog.Level) bool {
 
 func (h *handlerNode) Handle(ctx context.Context, record slog.Record) error {
 
-	type frameInfo struct {
-		pkg  string
-		file string
-		line int
-	}
-
 	switch realH := h.h.(type) {
 	case *devHandler:
-		var pcs [20]uintptr
-		pcs_len := runtime.Callers(4, pcs[:])
-		frames := runtime.CallersFrames(pcs[:pcs_len])
-		packages := make([]frameInfo, 0)
-		for {
-			frame, more := frames.Next()
+		if record.NumAttrs() > 0 {
+			callers := callersFramesForLogging(5)
 
-			// frame.Function looks like: "://github.com"
-			pkgPath := frame.Function
-			if strings.Contains(pkgPath, "memoryd") && !strings.Contains(frame.File, ".gen.") {
-				// fmt.Printf("%#v %s:%d\n", pkgPath, frame.File, frame.Line)
+			// formatted := make([]string, 0, len(callers))
+			// for i, pkg := range callers {
+			// 	formatted = append(formatted, fmt.Sprintf("%s/%s:%d", pkg.pkg, pkg.file, pkg.line))
+			// }
+			// record.AddAttrs(slog.String("__source", strings.Join(formatted, " < ")))
 
-				// Find the last slash to ignore path slashes, then look for the first dot after it
-				lastSlash := strings.LastIndex(pkgPath, "/")
-				if lastSlash != -1 {
-					pkgPath = pkgPath[lastSlash+1:]
+			var pkgSpec strings.Builder
+
+			// format is like
+			// <innermost package>/file:line < (2nd innermost package/file:line) < package3 < ...
+			for i, pkg := range callers {
+				if i > 0 && callers[i-1].pkg == pkg.pkg {
+					continue
 				}
 
-				// find the dot in pkgName.funcName, must be there as calls are fully qualified
-				dotIndex := strings.Index(pkgPath, ".")
-				if dotIndex != -1 {
-					pkgPath = pkgPath[:dotIndex]
+				if i != 0 && len(callers) > 1 {
+					pkgSpec.WriteString(" < ")
+				}
+
+				if (i == 0 || i == 1) && pkg.pkg != "runtime" {
+					fmt.Fprintf(&pkgSpec, "%s/%s:%d", pkg.pkg, pkg.file, pkg.line)
 				} else {
-					break
-				}
-
-				if len(packages) == 0 || packages[len(packages)-1].pkg != pkgPath {
-					// reduce filename to just the last component
-					lastSlash := strings.LastIndex(frame.File, "/")
-					if lastSlash != -1 {
-						frame.File = frame.File[lastSlash+1:]
-					}
-					packages = append(packages, frameInfo{pkg: pkgPath, file: frame.File, line: frame.Line})
+					fmt.Fprint(&pkgSpec, pkg.pkg)
 				}
 			}
-			if pkgPath == "main" || pkgPath == "runtime" {
-				break
-			}
 
-			if !more {
-				break
-			}
-		}
-		slices.Reverse(packages)
-
-		// last component gets the file:line
-		// first component does not get the prefix " > "
-		pkgString := ""
-		for i, pkg := range packages {
-			if i != 0 && len(packages) > 1 {
-				pkgString += " > "
-			}
-
-			if i == len(packages)-1 {
-				pkgString += fmt.Sprintf("%s/%s:%d", pkg.pkg, pkg.file, pkg.line)
-			} else {
-				pkgString += fmt.Sprintf("%s", pkg.pkg)
-			}
+			record.AddAttrs(slog.String("__source", pkgSpec.String()))
 		}
 
-		record.Message = fmt.Sprintf(" %s [%s]", record.Message, pkgString)
+		// format: message [/path/to/logger/name]
+		msg := " " + record.Message
+		if h.name != "" {
+			msg += " [" + h.name + "]"
+		}
+		record.Message = msg
+
 		return realH.Handle(ctx, record)
+
 	case *slog.JSONHandler:
+		record.AddAttrs(slog.String("__name", h.name))
 		return realH.Handle(ctx, record)
+
 	default:
 		panic("handlerNode::Handle: logger must be DEVELOPMENT or JSON")
 	}
@@ -268,16 +278,30 @@ func (h *devHandler) writeJSONAttrs(line *strings.Builder, record slog.Record) {
 		return
 	}
 
-	encoded, err := json.MarshalIndent(object, "", "    ")
-	if err != nil {
-		encoded = []byte(
-			strconv.Quote(
+	encoded := func() string {
+		var buf strings.Builder
+		encoder := json.NewEncoder(&buf)
+		encoder.SetIndent("", "    ")
+		encoder.SetEscapeHTML(false)
+
+		err := encoder.Encode(object)
+		if err != nil {
+			buf.Reset()
+			buf.WriteString("{\n    ")
+			buf.WriteString("\"error\": ")
+			buf.WriteString(strconv.Quote(
 				fmt.Sprintf("could not encode log attributes: %v", err),
-			),
-		)
-	}
+			))
+			buf.WriteString("\n}")
+		}
+
+		// encoder adds a trailing newline it seems
+		result := strings.TrimRight(buf.String(), "\r\n")
+		return result
+	}()
+
 	line.WriteByte(' ')
-	line.Write(encoded)
+	line.WriteString(encoded)
 }
 
 func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
@@ -373,4 +397,73 @@ func writeMessage(line *strings.Builder, message string) {
 		return
 	}
 	line.WriteString(message)
+}
+
+type callerFrameInfo struct {
+	pkg  string
+	file string
+	line int
+}
+
+func callersFramesForLogging(skip int) []callerFrameInfo {
+	var pcs [30]uintptr
+	pcs_len := runtime.Callers(skip, pcs[:])
+	frames := runtime.CallersFrames(pcs[:pcs_len])
+
+	callers := make([]callerFrameInfo, 0, pcs_len)
+
+	for {
+		frame, more := frames.Next()
+		// fmt.Printf("%#v %s:%d\n", frame.Function, frame.File, frame.Line)
+
+		// frame.Function looks like: "/path/to/package.(*something).Name"
+		pkgPath := frame.Function
+
+		pkgInMemoryd := strings.Contains(pkgPath, "memoryd")
+		pkgIsMain := strings.HasPrefix(pkgPath, "main.")
+		pkgIsRuntime := strings.HasPrefix(pkgPath, "runtime.")
+		fileIsGenerated := strings.Contains(frame.File, "memoryd") && strings.Contains(frame.File, ".gen.")
+
+		// NOTE(antoxa): before using continue - check `more` variable
+
+		if (pkgInMemoryd || pkgIsRuntime || pkgIsMain) && !fileIsGenerated {
+			// Find the last slash to ignore path slashes, then look for the first dot after it
+			lastSlash := strings.LastIndex(pkgPath, "/")
+			if lastSlash != -1 {
+				pkgPath = pkgPath[lastSlash+1:]
+			}
+
+			// find the dot in pkgName.funcName, must be there as calls are fully qualified
+			dotIndex := strings.Index(pkgPath, ".")
+			if dotIndex != -1 {
+				pkgPath = pkgPath[:dotIndex]
+			} else {
+				break
+			}
+
+			// if len(callers) == 0 || callers[len(callers)-1].pkg != pkgPath {
+			{
+				// reduce filename to just the last component
+				lastSlash := strings.LastIndex(frame.File, "/")
+				if lastSlash != -1 {
+					frame.File = frame.File[lastSlash+1:]
+				}
+				callers = append(
+					callers,
+					callerFrameInfo{pkg: pkgPath, file: frame.File, line: frame.Line},
+				)
+			}
+
+			// single entry is enough for main and runtime
+			// if pkgPath == "main" || pkgPath == "runtime" {
+			// 	break
+			// }
+		}
+
+		if !more {
+			break
+		}
+	}
+
+	return callers
 }

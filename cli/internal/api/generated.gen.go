@@ -50,11 +50,8 @@ type Error struct {
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
-	Status HealthResponseStatus `json:"status"`
-
-	// VaultPath Human-readable vault location, when configured.
-	VaultPath *string `json:"vault_path,omitempty"`
-	Version   *string `json:"version,omitempty"`
+	Status  HealthResponseStatus `json:"status"`
+	Version *string              `json:"version,omitempty"`
 }
 
 // HealthResponseStatus defines model for HealthResponse.Status.
@@ -996,6 +993,8 @@ type GetMemoryContentResponse struct {
 	JSON404 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *Error
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *Error
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *GetMemoryContentResponse200Headers
 }
@@ -1008,6 +1007,11 @@ func (r GetMemoryContentResponse) GetJSON404() *Error {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r GetMemoryContentResponse) GetJSON500() *Error {
 	return r.JSON500
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r GetMemoryContentResponse) GetJSON507() *Error {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -1383,6 +1387,13 @@ func ParseGetMemoryContentResponse(rsp *http.Response) (*GetMemoryContentRespons
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 

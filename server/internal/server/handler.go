@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"mime"
 	"mime/multipart"
-	"net/http"
 	"strings"
 	"time"
 
@@ -97,7 +96,8 @@ func (h *Handler) BrowseMemories(
 }
 
 func (h *Handler) GetMemory(
-	ctx context.Context, request api.GetMemoryRequestObject,
+	ctx context.Context,
+	request api.GetMemoryRequestObject,
 ) (api.GetMemoryResponseObject, error) {
 
 	logger := logging.FromContext(ctx)
@@ -222,21 +222,21 @@ func (h *Handler) ImportMemory(
 		return badImport("invalid_multipart", "multipart request body is required"), nil
 	}
 
-	httpRequest, ok := ctx.Value(requestContextKey{}).(*http.Request)
-	if !ok {
+	apiCtx := apiRequestFromContext(ctx)
+	if apiCtx == nil {
 		return nil, errors.New("HTTP request missing from context")
 	}
 
 	logger.Debug(
 		"checking upload size",
-		"size", httpRequest.ContentLength,
+		"size", apiCtx.request.ContentLength,
 		"limit", MaxImportRequestBytes)
 
-	if httpRequest.ContentLength > MaxImportRequestBytes {
+	if apiCtx.request.ContentLength > MaxImportRequestBytes {
 		logger.InfoContext(ctx,
 			"Memory import rejected",
 			"reason", "upload too large",
-			"size", httpRequest.ContentLength,
+			"size", apiCtx.request.ContentLength,
 			"limit", MaxImportRequestBytes,
 		)
 		return uploadTooLarge(errUploadTooLarge.Error()), nil

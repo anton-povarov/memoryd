@@ -104,8 +104,8 @@ func TestDevelopmentFormatRequiresDevelopmentMode(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			handler := NewRootHandler("", slog.LevelInfo, &output, test.development)
-			logger := slog.New(handler)
+			handler := newRootHandler("", slog.LevelInfo, &output, test.development)
+			logger := slog.New(handler) 
 			logger.Info("hello")
 			gotDevFormat := strings.Contains(
 				output.String(),

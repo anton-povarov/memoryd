@@ -109,7 +109,6 @@ func Open(
 	}
 
 	logger = logging.NewChildLogger(logger, "vault")
-	logger = logging.NewChildLogger(logger, "yooo")
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -117,10 +116,7 @@ func Open(
 	}
 	db.SetMaxOpenConns(maxOpenConnections)
 
-	logger.DebugContext(ctx, "Opened Vault database",
-		"database_path", dbPath,
-		"blob_dir", contentDir,
-		"upload_dir", uploadDir)
+	logger.DebugContext(ctx, "Opened Vault database")
 
 	v := &Vault{
 		db:             db,
@@ -134,7 +130,12 @@ func Open(
 		return nil, err
 	}
 
-	logger.InfoContext(ctx, "Vault init done")
+	logger.InfoContext(ctx, "Vault init done",
+		"database_path", dbPath,
+		"blob_dir", contentDir,
+		"upload_dir", uploadDir,
+	)
+
 	return v, nil
 }
 
@@ -203,6 +204,7 @@ func (v *Vault) initialize(ctx context.Context) error {
 
 func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
 	v.logger.DebugContext(ctx, "Validating all blobrefs")
+
 	rows, err := v.db.QueryContext(ctx, `SELECT blob_hash FROM memories`)
 	if err != nil {
 		return fmt.Errorf("validate stored Blobrefs: %w", err)
@@ -234,6 +236,8 @@ func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
 }
 
 func (v *Vault) validateSchema(ctx context.Context) error {
+	v.logger.DebugContext(ctx, "Validating schema")
+
 	wantColumns := map[string][]string{
 		"memories": {
 			"id",
@@ -515,7 +519,7 @@ func (v *Vault) OpenContent(
 	id uuid.UUID,
 ) (Memory, io.ReadCloser, error) {
 	logger := logging.FromContext(ctx)
-	logger.DebugContext(ctx, "Opening Memory Blob", "memory_id", id)
+
 	memory, err := v.Memory(ctx, id)
 	if err != nil {
 		return Memory{}, nil, err

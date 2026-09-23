@@ -4,8 +4,8 @@ Implementation agent for bounded coding tasks with clear scope and constraints.
 Use after the relevant behavior and design decisions are sufficiently understood.
 """
 
-model = "gpt-5.6-luna"
-model_reasoning_effort = "high"
+model = "gpt-6-luna"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 
 developer_instructions = """
