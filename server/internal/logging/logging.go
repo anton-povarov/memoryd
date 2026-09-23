@@ -218,6 +218,20 @@ func sourceForCurrentCall() string {
 	return pkgSpec.String()
 }
 
+func (h *devHandler) flattenMap(object map[string]any) map[string]any {
+	flattened := make(map[string]any)
+	for k, v := range object {
+		if inner, ok := v.(map[string]any); ok {
+			for innerK, innerV := range h.flattenMap(inner) {
+				flattened[k+"."+innerK] = innerV
+			}
+		} else {
+			flattened[k] = v
+		}
+	}
+	return flattened
+}
+
 func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 	if len(h.attrs) == 0 && record.NumAttrs() == 0 {
 		return
@@ -237,6 +251,18 @@ func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 
 	// source needs to be top level always (i.e. not within a group, that might be on this logger)
 	object["__source"] = sourceForCurrentCall()
+
+	object = h.flattenMap(object)
+
+	// flatten groups
+	for k, v := range object {
+		if inner, ok := v.(map[string]any); ok {
+			for innerK, innerV := range inner {
+				object[k+"."+innerK] = innerV
+			}
+			delete(object, k)
+		}
+	}
 
 	encoded := func() string {
 		var buf strings.Builder
@@ -287,6 +313,8 @@ func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
 	if attr.Equal(slog.Attr{}) {
 		return
 	}
+
+	// fmt.Printf("attr: %v, groups: %v\n", attr, groups)
 	if attr.Value.Kind() == slog.KindGroup {
 		nestedGroups := groups
 		if attr.Key != "" {
@@ -310,6 +338,8 @@ func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
 		}
 		target = nested
 	}
+
+	// fmt.Printf("%v <== %#v [%v]\n", attr.Key, jsonValue(attr.Value), attr.Value.Kind())
 	target[attr.Key] = jsonValue(attr.Value)
 }
 
@@ -320,6 +350,12 @@ func jsonValue(value slog.Value) any {
 	if value.Kind() == slog.KindAny {
 		if err, ok := value.Any().(error); ok {
 			return err.Error()
+		}
+		if ptr, ok := value.Any().(*string); ok {
+			if ptr == nil {
+				return nil
+			}
+			return *ptr
 		}
 	}
 	return value.Any()

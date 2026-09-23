@@ -100,6 +100,11 @@ func (h *Handler) BrowseMemories(
 		}
 		response.NextCursor = &nextCursor
 	}
+
+	logger.WithGroup("results").DebugContext(ctx, "Memories listed",
+		"count", len(memories),
+		"cursor", response.NextCursor)
+
 	return response, nil
 }
 
