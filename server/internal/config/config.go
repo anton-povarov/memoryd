@@ -137,31 +137,12 @@ func validateAddress(address string) error {
 	if address == "" {
 		return fmt.Errorf("must not be empty")
 	}
-	host, port, err := net.SplitHostPort(address)
+	_, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("must be host:port: %w", err)
 	}
-	if host == "" {
-		return fmt.Errorf("must bind to a loopback host, not all interfaces")
-	}
 	if port == "" {
 		return fmt.Errorf("must include a port")
-	}
-	if strings.EqualFold(host, "localhost") {
-		return validatePort(port)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("host %q is not a loopback address", host)
-	}
-	return validatePort(port)
-}
-
-func validatePort(port string) error {
-	var n int
-	if _, err := fmt.Sscanf(port, "%d", &n); err != nil ||
-		n < 1 || n > maxTCPPort || fmt.Sprintf("%d", n) != port {
-		return fmt.Errorf("port %q is not in the range 1..65535", port)
 	}
 	return nil
 }

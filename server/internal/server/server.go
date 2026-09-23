@@ -275,9 +275,9 @@ func apiRequestMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 				if level > slog.LevelInfo {
 					color = ansiRed
 				}
-				message = debugColoredString(logger, "<< API request completed", color)
+				message = debugColoredString(requestLogger, "<< API request completed", color)
 
-				logger.LogAttrs(r.Context(),
+				requestLogger.LogAttrs(r.Context(),
 					level,
 					message,
 					logAttrs...,
