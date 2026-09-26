@@ -42,9 +42,9 @@ var (
 )
 
 type Import struct {
-	Content           io.Reader
-	DeclaredMediaType string
-	Context           ImportContext
+	Content       io.Reader
+	MediaTypeHint string
+	Context       ImportContext
 }
 
 // ImportContext preserves metadata observed by the importing client. Missing
@@ -59,11 +59,16 @@ type ImportContext struct {
 
 type Memory struct {
 	ID            uuid.UUID
-	BlobRef       Blobref
+	Blob          BlobInfo
 	ImportContext ImportContext
-	MediaType     string
-	ByteSize      int64
 	ImportedAt    time.Time
+}
+
+// BlobInfo describes the immutable Blob owned by a Memory.
+type BlobInfo struct {
+	Ref       Blobref
+	MediaType string
+	ByteSize  int64
 }
 
 // ListCursor identifies the last Memory observed by a caller. It is kept
@@ -356,7 +361,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("close temporary Blob: %w", closeErr)
 	}
 
-	mediaType, err := resolveMediaType(temporaryPath, candidate.DeclaredMediaType)
+	mediaType, err := resolveMediaType(temporaryPath, candidate.MediaTypeHint)
 	if err != nil {
 		return Memory{}, err
 	}
@@ -396,17 +401,15 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	now := time.Now().UTC()
 	memory := Memory{
 		ID:            uuid.New(),
-		BlobRef:       blobRef,
+		Blob:          BlobInfo{Ref: blobRef, MediaType: mediaType, ByteSize: byteSize},
 		ImportContext: importContext,
-		MediaType:     mediaType,
-		ByteSize:      byteSize,
 		ImportedAt:    now,
 	}
 
 	logger.DebugContext(ctx,
 		"Memory import started",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobRef.String(),
+		"blob_hash", memory.Blob.Ref.String(),
 		"original_filename", memory.ImportContext.OriginalFilename,
 	)
 
@@ -423,14 +426,14 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		durableContext,
 		insertSQL,
 		memory.ID.String(),
-		memory.BlobRef.String(),
+		memory.Blob.Ref.String(),
 		memory.ImportContext.OriginalFilename,
 		nullableString(memory.ImportContext.RelativePath),
 		nullableString(memory.ImportContext.FullPath),
 		nullableTime(memory.ImportContext.FilesystemCreated),
 		nullableTime(memory.ImportContext.FilesystemModified),
-		memory.MediaType,
-		memory.ByteSize,
+		memory.Blob.MediaType,
+		memory.Blob.ByteSize,
 		memory.ImportedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -447,7 +450,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		}
 		logger.InfoContext(durableContext, "Duplicate import rejected",
 			"memory_id", existing.ID,
-			"blob_hash", existing.BlobRef.String(),
+			"blob_hash", existing.Blob.Ref.String(),
 			"original_filename", existing.ImportContext.OriginalFilename,
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
@@ -455,9 +458,9 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 
 	logger.InfoContext(durableContext, "Memory imported",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobRef.String(),
-		"byte_size", memory.ByteSize,
-		"media_type", memory.MediaType,
+		"blob_hash", memory.Blob.Ref.String(),
+		"byte_size", memory.Blob.ByteSize,
+		"media_type", memory.Blob.MediaType,
 		"original_filename", memory.ImportContext.OriginalFilename,
 	)
 	return memory, nil
@@ -536,19 +539,24 @@ func (v *Vault) OpenContent(
 	if err != nil {
 		return Memory{}, nil, err
 	}
-	blobPath := v.blobPath(memory.BlobRef)
-	if err := verifyBlob(blobPath, memory.BlobRef, memory.ByteSize); err != nil {
+	blobPath := v.blobPath(memory.Blob.Ref)
+	if err := verifyBlob(blobPath, memory.Blob.Ref, memory.Blob.ByteSize); err != nil {
 		return Memory{}, nil, err
 	}
 	content, err := os.Open(blobPath)
 	if err != nil {
-		return Memory{}, nil, fmt.Errorf("%w: open %s: %v", ErrBlobUnavailable, memory.BlobRef, err)
+		return Memory{}, nil, fmt.Errorf(
+			"%w: open %s: %v",
+			ErrBlobUnavailable,
+			memory.Blob.Ref,
+			err,
+		)
 	}
 	logger.DebugContext(ctx, "Memory Blob opened",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobRef.String(),
-		"byte_size", memory.ByteSize,
-		"media_type", memory.MediaType,
+		"blob_hash", memory.Blob.Ref.String(),
+		"byte_size", memory.Blob.ByteSize,
+		"media_type", memory.Blob.MediaType,
 	)
 	return memory, content, nil
 }
@@ -583,25 +591,25 @@ func (v *Vault) Delete(ctx context.Context, id uuid.UUID) error {
 	if deleted == 0 {
 		return ErrMemoryNotFound
 	}
-	blobPath := v.blobPath(memory.BlobRef)
+	blobPath := v.blobPath(memory.Blob.Ref)
 	if err := os.Remove(blobPath); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			logger.WarnContext(ctx, "Could not remove deleted Memory Blob",
 				"memory_id", memory.ID,
-				"blob_hash", memory.BlobRef.String(),
+				"blob_hash", memory.Blob.Ref.String(),
 				"error", err,
 			)
 		}
 	} else if err := syncDirectory(filepath.Dir(blobPath)); err != nil {
 		logger.WarnContext(ctx, "Could not flush deleted Memory Blob directory",
 			"memory_id", memory.ID,
-			"blob_hash", memory.BlobRef.String(),
+			"blob_hash", memory.Blob.Ref.String(),
 			"error", err,
 		)
 	}
 	logger.InfoContext(ctx, "Memory deleted",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobRef.String(),
+		"blob_hash", memory.Blob.Ref.String(),
 		"original_filename", memory.ImportContext.OriginalFilename,
 	)
 	return nil
@@ -778,8 +786,8 @@ func scanMemory(row rowScanner) (Memory, error) {
 		&fullPath,
 		&createdAt,
 		&modifiedAt,
-		&memory.MediaType,
-		&memory.ByteSize,
+		&memory.Blob.MediaType,
+		&memory.Blob.ByteSize,
 		&importedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -788,7 +796,7 @@ func scanMemory(row rowScanner) (Memory, error) {
 	if err != nil {
 		return Memory{}, fmt.Errorf("read Memory: %w", err)
 	}
-	memory.BlobRef, err = ParseBlobref(blobHash)
+	memory.Blob.Ref, err = ParseBlobref(blobHash)
 	if err != nil {
 		return Memory{}, fmt.Errorf("read Memory Blobref: %w", err)
 	}

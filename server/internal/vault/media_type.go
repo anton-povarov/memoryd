@@ -14,11 +14,11 @@ const (
 	plainTextMediaType   = "text/plain"
 )
 
-var ErrInvalidMediaType = errors.New("invalid multipart file Content-Type")
+var ErrInvalidMediaType = errors.New("invalid Media Type hint")
 
 // resolveMediaType classifies staged bytes before their Memory metadata commits.
-// Generic detector results allow a specific client declaration to supply a type.
-func resolveMediaType(path, declared string) (string, error) {
+// Generic detector results allow a specific importer hint to supply a type.
+func resolveMediaType(path, hint string) (string, error) {
 	detected, err := mimetype.DetectFile(path)
 	if err != nil {
 		return "", fmt.Errorf("detect Blob media type: %w", err)
@@ -30,16 +30,16 @@ func resolveMediaType(path, declared string) (string, error) {
 	if mediaType != octetStreamMediaType && mediaType != plainTextMediaType {
 		return mediaType, nil
 	}
-	if declared == "" {
+	if hint == "" {
 		return mediaType, nil
 	}
 
-	parsed, _, err := mime.ParseMediaType(declared)
+	parsed, _, err := mime.ParseMediaType(hint)
 	if err != nil {
-		return "", fmt.Errorf("%w %q: %v", ErrInvalidMediaType, declared, err)
+		return "", fmt.Errorf("%w %q: %v", ErrInvalidMediaType, hint, err)
 	}
 	if strings.Count(parsed, "/") != 1 || strings.Contains(parsed, "*") {
-		return "", fmt.Errorf("%w %q: expected type/subtype", ErrInvalidMediaType, declared)
+		return "", fmt.Errorf("%w %q: expected type/subtype", ErrInvalidMediaType, hint)
 	}
 	if mediaType == plainTextMediaType && parsed == octetStreamMediaType {
 		return mediaType, nil

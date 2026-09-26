@@ -78,7 +78,7 @@ func TestDevelopmentHandlerFormat(t *testing.T) {
 	}
 }
 
-func TestDevelopmentHandlerPreservesAttrsAndGroups(t *testing.T) {
+func TestDevelopmentHandlerPreservesAttrsAndFlattensGroups(t *testing.T) {
 	var output bytes.Buffer
 	handler := newDevHandler(&output, slog.LevelInfo)
 	logger := slog.New(handler).
@@ -86,8 +86,7 @@ func TestDevelopmentHandlerPreservesAttrsAndGroups(t *testing.T) {
 		WithGroup("HTTP")
 	logger.Info("ready", "status", 200)
 	if !hasTabRow(output.String(), "application", "memory vault") ||
-		!hasTabRowKey(output.String(), "HTTP") ||
-		!strings.Contains(output.String(), "status:200") {
+		!hasTabRow(output.String(), "HTTP.status", "200") {
 		t.Fatalf("text output = %q", output.String())
 	}
 }
@@ -253,7 +252,7 @@ func TestForOperationInRequestAddsRequestIDAsJSONAttribute(t *testing.T) {
 	}
 }
 
-func TestDevelopmentTabWriterFormatsAttrsAndGroups(t *testing.T) {
+func TestDevelopmentTabWriterFormatsFlattenedGroups(t *testing.T) {
 	var output bytes.Buffer
 	handler := newDevHandler(&output, slog.LevelInfo)
 	logger := slog.New(handler).With("application", "memoryd").WithGroup("HTTP")
@@ -270,11 +269,10 @@ func TestDevelopmentTabWriterFormatsAttrsAndGroups(t *testing.T) {
 	got := output.String()
 	if !strings.Contains(got, "request \n") ||
 		!hasTabRow(got, "application", "memoryd") ||
-		!hasTabRowKey(got, "HTTP") ||
-		!strings.Contains(got, "latency:3.667µs") ||
-		!strings.Contains(got, "ok:true") ||
-		!strings.Contains(got, "status:200") {
-		t.Fatalf("text output = %q, want grouped tab output", got)
+		!hasTabRow(got, "HTTP.latency", "3.667µs") ||
+		!hasTabRow(got, "HTTP.ok", "true") ||
+		!hasTabRow(got, "HTTP.status", "200") {
+		t.Fatalf("text output = %q, want flattened group attributes", got)
 	}
 }
 

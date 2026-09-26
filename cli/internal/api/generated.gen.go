@@ -59,12 +59,9 @@ type HealthResponseStatus string
 
 // ImportContext Stored provenance from the first successful import.
 type ImportContext struct {
-	ByteSize             *int64     `json:"byte_size,omitempty"`
-	ContentHash          *string    `json:"content_hash,omitempty"`
 	FilesystemCreatedAt  *time.Time `json:"filesystem_created_at,omitempty"`
 	FilesystemModifiedAt *time.Time `json:"filesystem_modified_at,omitempty"`
 	FullPath             *string    `json:"full_path,omitempty"`
-	MediaType            *string    `json:"media_type,omitempty"`
 	OriginalFilename     string     `json:"original_filename"`
 	RelativePath         *string    `json:"relative_path,omitempty"`
 }

@@ -34,9 +34,8 @@ func TestSubcommandsUseGlobalServer(t *testing.T) {
 				ContentUrl: nil,
 				Memory:     testSummary(memoryID, int64(len(content)), "memory.pdf"),
 				ImportContext: api.ImportContext{
-					ByteSize: nil, ContentHash: nil,
 					FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
-					FullPath: nil, MediaType: nil,
+					FullPath:         nil,
 					OriginalFilename: "memory.pdf", RelativePath: nil,
 				},
 			})

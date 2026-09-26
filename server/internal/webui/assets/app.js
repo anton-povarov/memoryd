@@ -359,11 +359,8 @@
 
     elements.metadataList.replaceChildren();
     addMetadata("Original filename", context.original_filename);
-    addMetadata("Media type", context.media_type || memory.media_type);
-    addMetadata(
-      "Byte size",
-      formatBytes(context.byte_size ?? memory.byte_size),
-    );
+    addMetadata("Media type", memory.media_type);
+    addMetadata("Byte size", formatBytes(memory.byte_size));
     addMetadata("Imported", formatDate(memory.imported_at, "long"));
     addMetadata(
       "Original created",

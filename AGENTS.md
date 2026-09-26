@@ -10,8 +10,6 @@ Stage: MVP design, see `docs/MVP.md`.
 
 ## Go
 
-Coding standard: see `GO_CODING_STANDARD.md`.
-
 When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
 These commands would already perform `go fmt`, `go vet` so no need to run them separately.
 Fix issues. If you need to ignore a warning with `nolint` comment, explicitly report it to the user.
@@ -58,9 +56,9 @@ When spawning a `code-worker`:
   than passing the broader conversation.
 - Identify files or components likely involved when known, but let the worker
   verify the actual implementation.
-- Use high reasoning by default.
-- Use low or medium reasoning for mechanical or highly localized changes.
-- Use xhigh reasoning when implementation involves subtle lifetimes,
+- Use xhigh reasoning by default.
+- Use medium oh high reasoning for mechanical or highly localized changes.
+- Use max reasoning when implementation involves subtle lifetimes,
   concurrency, invariants, complex APIs, or non-obvious interactions.
 
 Parallelize implementation only when tasks have clearly separable ownership.

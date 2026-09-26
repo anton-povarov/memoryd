@@ -340,9 +340,8 @@ func testMemoryDetail(id uuid.UUID, size int64, filename string) api.MemoryDetai
 	return api.MemoryDetail{
 		ContentUrl: nil,
 		ImportContext: api.ImportContext{
-			ByteSize: nil, ContentHash: nil,
 			FilesystemCreatedAt: nil, FilesystemModifiedAt: nil,
-			FullPath: nil, MediaType: nil,
+			FullPath:         nil,
 			OriginalFilename: filename, RelativePath: nil,
 		},
 		Memory: testMemorySummary(id, size, filename),

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"mime/multipart"
@@ -178,12 +179,12 @@ func (h *Handler) GetMemoryContent(
 	disposition := mime.FormatMediaType("attachment", map[string]string{
 		"filename": memory.ImportContext.OriginalFilename,
 	})
-	etag := fmt.Sprintf("%q", memory.BlobRef.String())
+	etag := fmt.Sprintf("%q", memory.Blob.Ref.String())
 	logger.InfoContext(ctx, "Memory content download prepared",
 		"memory_id", memory.ID,
-		"blob_hash", memory.BlobRef.String(),
-		"byte_size", memory.ByteSize,
-		"media_type", memory.MediaType,
+		"blob_hash", memory.Blob.Ref.String(),
+		"byte_size", memory.Blob.ByteSize,
+		"media_type", memory.Blob.MediaType,
 	)
 	headers := api.GetMemoryContent200ResponseHeaders{
 		ContentDisposition: &disposition,
@@ -192,8 +193,8 @@ func (h *Handler) GetMemoryContent(
 	return api.GetMemoryContent200AsteriskResponse{
 		Body:          content,
 		Headers:       headers,
-		ContentType:   memory.MediaType,
-		ContentLength: memory.ByteSize,
+		ContentType:   memory.Blob.MediaType,
+		ContentLength: memory.Blob.ByteSize,
 	}, nil
 }
 
@@ -309,25 +310,21 @@ func (h *Handler) ImportMemory(
 			"at most one import_context JSON part is allowed",
 		), nil
 	}
-	var input vault.ImportContextInput
+	var importContext vault.ImportContext
 	if len(contextValues) == 1 {
-		decoder := json.NewDecoder(strings.NewReader(contextValues[0]))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			return badImport("invalid_import_context", "invalid import_context JSON"), nil
+		importContext, err = parseImportContext(contextValues[0], formFile.Filename)
+		if err != nil {
+			return badImport("invalid_import_context", err.Error()), nil
 		}
-	}
-	input.OriginalFilename = formFile.Filename
-	importContext, err := vault.ParseImportContext(input)
-	if err != nil {
-		return badImport("invalid_import_context", err.Error()), nil
+	} else {
+		importContext.OriginalFilename = formFile.Filename
 	}
 
 	// import the file and see what happens
 	candidate := vault.Import{
-		Content:           content,
-		DeclaredMediaType: formFile.Header.Get("Content-Type"),
-		Context:           importContext,
+		Content:       content,
+		MediaTypeHint: formFile.Header.Get("Content-Type"),
+		Context:       importContext,
 	}
 	memory, err := h.vault.Put(ctx, candidate)
 
@@ -386,6 +383,62 @@ func importInternalError(
 	}
 }
 
+type importContextWire struct {
+	RelativePath         string  `json:"relative_path"`
+	FullPath             string  `json:"full_path"`
+	FilesystemCreatedAt  *string `json:"filesystem_created_at"`
+	FilesystemModifiedAt *string `json:"filesystem_modified_at"`
+}
+
+func parseImportContext(raw, filename string) (vault.ImportContext, error) {
+	trimmed := strings.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return vault.ImportContext{}, errors.New("import_context must be a JSON object")
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var input importContextWire
+	if err := decoder.Decode(&input); err != nil {
+		return vault.ImportContext{}, fmt.Errorf("invalid import_context JSON: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return vault.ImportContext{}, errors.New("import_context must contain one JSON value")
+		}
+		return vault.ImportContext{}, fmt.Errorf("invalid import_context JSON: %w", err)
+	}
+
+	filesystemCreated, err := parseImportTimestamp(input.FilesystemCreatedAt)
+	if err != nil {
+		return vault.ImportContext{}, fmt.Errorf("filesystem_created_at: %w", err)
+	}
+	filesystemModified, err := parseImportTimestamp(input.FilesystemModifiedAt)
+	if err != nil {
+		return vault.ImportContext{}, fmt.Errorf("filesystem_modified_at: %w", err)
+	}
+
+	return vault.ImportContext{
+		OriginalFilename:   filename,
+		RelativePath:       input.RelativePath,
+		FullPath:           input.FullPath,
+		FilesystemCreated:  filesystemCreated,
+		FilesystemModified: filesystemModified,
+	}, nil
+}
+
+func parseImportTimestamp(value *string) (*time.Time, error) {
+	if value == nil || *value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, *value)
+	if err != nil {
+		return nil, fmt.Errorf("must be RFC3339: %w", err)
+	}
+	return &parsed, nil
+}
+
 func (h *Handler) health() api.HealthResponse {
 	return api.HealthResponse{Status: api.Ok, Version: &h.version}
 }
@@ -393,9 +446,9 @@ func (h *Handler) health() api.HealthResponse {
 func memorySummary(memory vault.Memory) api.MemorySummary {
 	return api.MemorySummary{
 		Id:                 memory.ID,
-		BlobHash:           memory.BlobRef.String(),
-		MediaType:          memory.MediaType,
-		ByteSize:           memory.ByteSize,
+		BlobHash:           memory.Blob.Ref.String(),
+		MediaType:          memory.Blob.MediaType,
+		ByteSize:           memory.Blob.ByteSize,
 		OriginalFilename:   memory.ImportContext.OriginalFilename,
 		ImportedAt:         memory.ImportedAt,
 		OriginalCreatedAt:  memory.ImportContext.FilesystemCreated,
@@ -405,16 +458,10 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 
 func memoryDetail(memory vault.Memory) api.MemoryDetail {
 	contentURL := api.ServerUrlLocalMemorydServer + "/memories/" + memory.ID.String() + "/content"
-	mediaType := memory.MediaType
-	byteSize := memory.ByteSize
-	contentHash := memory.BlobRef.String()
 	context := api.ImportContext{
-		ByteSize:             &byteSize,
-		ContentHash:          &contentHash,
 		FilesystemCreatedAt:  memory.ImportContext.FilesystemCreated,
 		FilesystemModifiedAt: memory.ImportContext.FilesystemModified,
 		FullPath:             nil,
-		MediaType:            &mediaType,
 		OriginalFilename:     memory.ImportContext.OriginalFilename,
 		RelativePath:         nil,
 	}

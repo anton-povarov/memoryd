@@ -1,0 +1,3 @@
+# Media Type is resolved by memoryd during import
+
+The Vault accepts any Blob within its size limit; content-addressed Blob storage is indifferent to format. During Memory import, memoryd detects Media Type from Blob bytes with a content classifier. When detection is generic, memoryd may use a valid, specific media-type hint from the importer. For HTTP imports, that hint comes from the multipart file part's `Content-Type`. This is a decision about server-side import behavior, not which Go package performs detection. Unknown formats remain durable without a fixed format list in the HTTP contract. The stored Media Type is returned on download, while extractors may support a narrower set of formats.

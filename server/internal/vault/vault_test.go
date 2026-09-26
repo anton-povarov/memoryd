@@ -176,8 +176,8 @@ func TestOpenContentLogsVaultOperationAndRequestID(t *testing.T) {
 	})
 
 	memory, err := v.Put(context.Background(), Import{
-		Content:           bytes.NewReader([]byte("hello")),
-		DeclaredMediaType: "",
+		Content:       bytes.NewReader([]byte("hello")),
+		MediaTypeHint: "",
 		Context: ImportContext{
 			OriginalFilename:   "note.txt",
 			RelativePath:       "",
@@ -227,15 +227,15 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir() // reused a couple times
 	wantBytes := []byte("%PDF-1.7\nbyte-exact memory\n%%EOF\n")
-	modifiedAt := time.Date(2026, 9, 15, 10, 11, 12, 0, time.UTC)
+	modifiedAt := time.Date(2026, 9, 15, 10, 11, 12, 0, time.FixedZone("GST", 4*60*60))
 
 	v, err := openVault(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	created, err := v.Put(ctx, Import{
-		Content:           bytes.NewReader(wantBytes),
-		DeclaredMediaType: "",
+		Content:       bytes.NewReader(wantBytes),
+		MediaTypeHint: "",
 		Context: ImportContext{
 			OriginalFilename:   "notes.pdf",
 			RelativePath:       "",
@@ -247,12 +247,16 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.MediaType != "application/pdf" {
+	if created.ImportContext.FilesystemModified == nil ||
+		created.ImportContext.FilesystemModified.Location() != time.UTC {
+		t.Fatalf("created Import Context time was not normalized: %#v", created.ImportContext)
+	}
+	if created.Blob.MediaType != "application/pdf" {
 		t.Fatalf("created Memory = %#v", created)
 	}
 	wantBlobref := NewSHA256Blobref(sha256.Sum256(wantBytes))
-	if created.BlobRef != wantBlobref {
-		t.Fatalf("Blobref = %s, want %s", created.BlobRef, wantBlobref)
+	if created.Blob.Ref != wantBlobref {
+		t.Fatalf("Blobref = %s, want %s", created.Blob.Ref, wantBlobref)
 	}
 	var storedRef string
 	if err := v.db.QueryRowContext(
@@ -262,13 +266,13 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	).Scan(&storedRef); err != nil {
 		t.Fatal(err)
 	}
-	if storedRef != created.BlobRef.String() {
-		t.Fatalf("stored Blobref = %q, want %q", storedRef, created.BlobRef)
+	if storedRef != created.Blob.Ref.String() {
+		t.Fatalf("stored Blobref = %q, want %q", storedRef, created.Blob.Ref)
 	}
 	if _, err := v.db.ExecContext(
 		ctx,
 		`UPDATE memories SET blob_hash = ? WHERE id = ?`,
-		created.BlobRef.digestHex(),
+		created.Blob.Ref.digestHex(),
 		created.ID.String(),
 	); err == nil {
 		t.Fatal("database accepted an unprefixed digest")
@@ -310,7 +314,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if !bytes.Equal(gotBytes, wantBytes) {
 		t.Fatalf("content = %q, want %q", gotBytes, wantBytes)
 	}
-	if opened.ID != created.ID || opened.BlobRef != created.BlobRef ||
+	if opened.ID != created.ID || opened.Blob.Ref != created.Blob.Ref ||
 		opened.ImportContext.OriginalFilename != "notes.pdf" {
 		t.Fatalf("reopened Memory = %#v, created = %#v", opened, created)
 	}
@@ -320,13 +324,9 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 		!opened.ImportContext.FilesystemModified.Equal(modifiedAt) {
 		t.Fatalf("reopened Import Context = %#v", opened.ImportContext)
 	}
-	if facts := opened.ImportContext.Facts(); len(facts) != 3 {
-		t.Fatalf("reopened provenance Facts = %#v", facts)
-	}
-
 	_, err = v.Put(ctx, Import{
-		Content:           bytes.NewReader(wantBytes),
-		DeclaredMediaType: "",
+		Content:       bytes.NewReader(wantBytes),
+		MediaTypeHint: "",
 		Context: ImportContext{
 			OriginalFilename:   "renamed.pdf",
 			RelativePath:       "",
@@ -364,8 +364,8 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 
 	wantBytes := []byte("%PDF-1.7\ndelete me\n%%EOF\n")
 	memory, err := v.Put(ctx, Import{
-		Content:           bytes.NewReader(wantBytes),
-		DeclaredMediaType: "",
+		Content:       bytes.NewReader(wantBytes),
+		MediaTypeHint: "",
 		Context: ImportContext{
 			OriginalFilename:   "remove.pdf",
 			RelativePath:       "",
@@ -392,7 +392,7 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobPath := v.blobPath(memory.BlobRef)
+	blobPath := v.blobPath(memory.Blob.Ref)
 	if _, err := os.Stat(blobPath); err != nil {
 		t.Fatal(err)
 	}
@@ -460,13 +460,13 @@ func TestVaultPutAcceptsExactlyOneHundredMiB(t *testing.T) {
 			FilesystemCreated:  nil,
 			FilesystemModified: nil,
 		},
-		DeclaredMediaType: "application/octet-stream",
+		MediaTypeHint: "application/octet-stream",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if memory.ByteSize != MaxBlobBytes {
-		t.Fatalf("ByteSize = %d, want %d", memory.ByteSize, MaxBlobBytes)
+	if memory.Blob.ByteSize != MaxBlobBytes {
+		t.Fatalf("ByteSize = %d, want %d", memory.Blob.ByteSize, MaxBlobBytes)
 	}
 }
 
@@ -671,7 +671,7 @@ func TestPutRejectsCorruptExistingBlob(t *testing.T) {
 			FilesystemCreated:  nil,
 			FilesystemModified: nil,
 		},
-		DeclaredMediaType: "application/octet-stream",
+		MediaTypeHint: "application/octet-stream",
 	})
 	if !errors.Is(err, ErrBlobUnavailable) {
 		t.Fatalf("Put() error = %v, want ErrBlobUnavailable", err)
@@ -713,7 +713,7 @@ func TestConcurrentIdenticalImportsPublishOneBlobAndMemory(t *testing.T) {
 					FilesystemCreated:  nil,
 					FilesystemModified: nil,
 				},
-				DeclaredMediaType: "text/plain",
+				MediaTypeHint: "text/plain",
 			})
 			errorsFromImports <- err
 		}()
@@ -813,12 +813,12 @@ func TestOpenContentDiagnosesMissingAndCorruptBlob(t *testing.T) {
 			FilesystemCreated:  nil,
 			FilesystemModified: nil,
 		},
-		DeclaredMediaType: "text/plain",
+		MediaTypeHint: "text/plain",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := v.blobPath(memory.BlobRef)
+	path := v.blobPath(memory.Blob.Ref)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -855,7 +855,7 @@ func TestInterruptedCommitLeavesPublishedOrphanForRestart(t *testing.T) {
 			FilesystemCreated:  nil,
 			FilesystemModified: nil,
 		},
-		DeclaredMediaType: "text/plain",
+		MediaTypeHint: "text/plain",
 	})
 	if err == nil || !strings.Contains(err.Error(), "commit Memory") {
 		t.Fatalf("Put() error = %v, want failed Memory commit", err)

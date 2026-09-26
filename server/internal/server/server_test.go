@@ -65,8 +65,8 @@ func TestRequestLogsKeepSystemOwnershipAndRequestID(t *testing.T) {
 		}
 	})
 	memory, err := memoryVault.Put(context.Background(), vault.Import{
-		Content:           strings.NewReader("hello"),
-		DeclaredMediaType: "",
+		Content:       strings.NewReader("hello"),
+		MediaTypeHint: "",
 		Context: vault.ImportContext{
 			OriginalFilename:   "note.txt",
 			RelativePath:       "",
