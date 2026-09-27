@@ -14,7 +14,7 @@ import (
 func TestNewWithWriterUsesJSONAndLevel(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "")
 	var output bytes.Buffer
-	logger := NewRoot(slog.LevelWarn, &output)
+	logger := New(slog.LevelWarn, &output)
 	logger.Info("hidden")
 	logger.Warn("visible", "count", 2)
 	var record map[string]any
@@ -29,7 +29,7 @@ func TestNewWithWriterUsesJSONAndLevel(t *testing.T) {
 func TestNewWithWriterUsesDevelopmentFormat(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "true")
 	var output bytes.Buffer
-	logger := NewRoot(slog.LevelDebug, &output)
+	logger := New(slog.LevelDebug, &output)
 	logger.Debug("hello", "answer", 42)
 	if !strings.Contains(output.String(), "\x1b[34mDBG\x1b[0m hello \n") ||
 		!hasTabRow(output.String(), "answer", "42") ||
@@ -70,8 +70,11 @@ func TestDevelopmentHandlerFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "2026-09-14 23:57:33 .288000 \x1b[32mINF\x1b[0m HTTP request \n" +
-		"      latency    3.667µs\n      method     GET\n" +
-		"      path       /docs\n      status     308\n"
+		"      __source   \n" +
+		"      latency    3.667µs\n" +
+		"      method     GET\n" +
+		"      path       /docs\n" +
+		"      status     308\n"
 	got := withoutSourceLine(output.String())
 	if got != want {
 		t.Fatalf("text output = %q, want %q", got, want)
@@ -151,7 +154,7 @@ func TestDevelopmentSpecialAttrsUseMessageSuffix(t *testing.T) {
 func TestProductionSpecialAttrsRemainJSONFields(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "false")
 	var output bytes.Buffer
-	logger := NewRoot(slog.LevelInfo, &output).With(
+	logger := New(slog.LevelInfo, &output).With(
 		System("api"),
 		SysOperation("operation-7"),
 	)
@@ -168,12 +171,9 @@ func TestProductionSpecialAttrsRemainJSONFields(t *testing.T) {
 
 func TestIsDevelopmentAndWithSupportArbitraryLogger(t *testing.T) {
 	var output bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&output, nil)).With("request_id", "req-1")
-	if IsDevelopment(logger) {
-		t.Fatal("IsDevelopment returned true for a standard JSON logger")
-	}
-	if IsDevelopment(nil) {
-		t.Fatal("IsDevelopment returned true for a nil logger")
+	logger := New(slog.LevelDebug, &output).With("request_id", "req-1")
+	if logger.IsDevelopment() {
+		t.Fatal("IsDevelopment returned true without env var")
 	}
 	logger.Info("request")
 
@@ -190,7 +190,7 @@ func TestForOperationInRequestWithoutRequestIDMatchesForOperation(t *testing.T) 
 	t.Setenv("MEMORYD_DEV", "false")
 
 	var operationOutput bytes.Buffer
-	operationBase := NewRoot(slog.LevelInfo, &operationOutput).With(System("api"))
+	operationBase := New(slog.LevelInfo, &operationOutput).With(System("api"))
 	ForOperation(operationBase, "Search").Info(
 		"search completed",
 		"status",
@@ -198,7 +198,7 @@ func TestForOperationInRequestWithoutRequestIDMatchesForOperation(t *testing.T) 
 	)
 
 	var requestOutput bytes.Buffer
-	requestBase := NewRoot(slog.LevelInfo, &requestOutput).With(System("api"))
+	requestBase := New(slog.LevelInfo, &requestOutput).With(System("api"))
 	ForOperationInRequest(
 		requestBase,
 		"Search",
@@ -227,7 +227,7 @@ func TestForOperationInRequestWithoutRequestIDMatchesForOperation(t *testing.T) 
 func TestForOperationInRequestAddsRequestIDAsJSONAttribute(t *testing.T) {
 	t.Setenv("MEMORYD_DEV", "false")
 	var output bytes.Buffer
-	base := NewRoot(slog.LevelInfo, &output).With(System("api"))
+	base := New(slog.LevelInfo, &output).With(System("api"))
 	ctx := ContextWithRequestID(context.Background(), "req-42")
 	ForOperationInRequest(base, "Search", ctx).Info(
 		"search completed",

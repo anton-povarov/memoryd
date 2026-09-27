@@ -16,46 +16,84 @@ import (
 	"text/tabwriter"
 )
 
-type requestIDContextKey struct{}
+type Level = slog.Level
 
-// ContextWithRequestID associates a request ID with work derived from ctx.
-func ContextWithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, requestIDContextKey{}, id)
-}
-
-// ForOperation derives a logger with the reserved operation attribute.
-func ForOperation(base *slog.Logger, operation string) *slog.Logger {
-	return base.With(SysOperation(operation))
-}
-
-// ForOperationInRequest derives an operation logger and includes the request
-// ID as an ordinary attribute when one is present in ctx.
-func ForOperationInRequest(
-	base *slog.Logger,
-	operation string,
-	ctx context.Context,
-) *slog.Logger {
-	logger := ForOperation(base, operation)
-	if requestID, ok := ctx.Value(requestIDContextKey{}).(string); ok && requestID != "" {
-		logger = logger.With("request_id", requestID)
-	}
-
-	return logger
+type Logger struct {
+	*slog.Logger
+	err error
 }
 
 // NewRoot creates a root logger at level, writing to writer.
-func NewRoot(level slog.Level, writer io.Writer) *slog.Logger {
+func New(level slog.Level, writer io.Writer) *Logger {
 	if developmentEnabled(os.Getenv("MEMORYD_DEV")) {
-		return slog.New(newDevHandler(writer, level))
+		return NewFromSlog(slog.New(newDevHandler(writer, level)))
 	}
-	return slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
+	return NewFromSlog(slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
 		Level: level, AddSource: false, ReplaceAttr: nil,
-	}))
+	})))
+}
+
+func NewFromSlog(logger *slog.Logger) *Logger {
+	return &Logger{Logger: logger, err: nil}
+}
+
+func (l *Logger) IsDevelopment() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.Handler().(*devHandler)
+	return ok
+}
+
+func (l *Logger) WithError(err error) *Logger {
+	return &Logger{Logger: l.Logger.With("error", err), err: err}
+}
+
+func (l *Logger) Enabled(ctx context.Context, level slog.Level) bool {
+	if l.err != nil {
+		return l.Logger.Enabled(ctx, slog.LevelError)
+	}
+	return l.Logger.Enabled(ctx, level)
+}
+
+func (l *Logger) maybeErrorLevel(requestedLevel slog.Level) slog.Level {
+	if l.err != nil {
+		return slog.LevelError
+	}
+	return requestedLevel
+}
+
+func (l *Logger) Log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	l.Logger.Log(ctx, level, msg, attrs...)
+}
+
+func (l *Logger) LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) {
+	l.Logger.LogAttrs(ctx, level, msg, attrs...)
+}
+
+func (l *Logger) DebugContext(ctx context.Context, msg string, attrs ...any) {
+	l.Logger.Log(ctx, l.maybeErrorLevel(slog.LevelDebug), msg, attrs...)
+}
+
+func (l *Logger) InfoContext(ctx context.Context, msg string, attrs ...any) {
+	l.Logger.Log(ctx, l.maybeErrorLevel(slog.LevelInfo), msg, attrs...)
+}
+
+func (l *Logger) WarnContext(ctx context.Context, msg string, attrs ...any) {
+	l.Logger.Log(ctx, l.maybeErrorLevel(slog.LevelWarn), msg, attrs...)
+}
+
+func (l *Logger) ErrorContext(ctx context.Context, msg string, attrs ...any) {
+	l.Logger.Log(ctx, l.maybeErrorLevel(slog.LevelError), msg, attrs...)
+}
+
+func (l *Logger) With(attrs ...any) *Logger {
+	return &Logger{Logger: l.Logger.With(attrs...), err: l.err}
 }
 
 const (
-	systemKey       = "__system"
-	sysOperationKey = "__sys_operation"
+	systemKey       = "__sys"
+	sysOperationKey = "__sys_op"
 )
 
 // System returns the reserved attribute used to identify a log system.
@@ -68,13 +106,7 @@ func SysOperation(operation string) slog.Attr {
 	return slog.String(sysOperationKey, operation)
 }
 
-func IsDevelopment(logger *slog.Logger) bool {
-	if logger == nil {
-		return false
-	}
-	_, ok := logger.Handler().(*devHandler)
-	return ok
-}
+// -------------------------------------------------------------------------------------------------
 
 func newDevHandler(writer io.Writer, level slog.Level) *devHandler {
 	return &devHandler{
@@ -94,11 +126,12 @@ func developmentEnabled(value string) bool {
 const timestampLayout = "2006-01-02 15:04:05 .000000"
 
 const (
-	ansiReset  = "\x1b[0m"
-	ansiBlue   = "\x1b[34m"
-	ansiGreen  = "\x1b[32m"
-	ansiYellow = "\x1b[33m"
-	ansiRed    = "\x1b[31m"
+	ansiReset         = "\x1b[0m"
+	ansiBlue          = "\x1b[34m"
+	ansiGreen         = "\x1b[32m"
+	ansiYellow        = "\x1b[33m"
+	ansiRed           = "\x1b[31m"
+	ansiSqlBoundParam = "\x1b[48;5;240m" // grey background
 )
 
 // devHandler keeps development logs readable while retaining structured
@@ -157,7 +190,7 @@ func (h *devHandler) specialAttrs(record slog.Record) devSpecialAttrs {
 }
 
 func visitSpecialAttrs(attr slog.Attr, special *devSpecialAttrs) {
-	attr.Value = attr.Value.Resolve()
+	attr.Value = resolveDebugValue(attr.Value)
 	if attr.Key == systemKey {
 		special.system = attrString(attr.Value)
 		return
@@ -195,7 +228,7 @@ func writeSpecialSuffix(line *strings.Builder, special devSpecialAttrs) {
 }
 
 func sourceForCurrentCall() string {
-	callers := callersFramesForLogging(5)
+	callers := callersFramesForLogging(8)
 	var pkgSpec strings.Builder
 
 	// format is like: <innermost package>/file:line < package2/file:line < ...
@@ -225,6 +258,7 @@ func (h *devHandler) flattenMap(object map[string]any) map[string]any {
 			for innerK, innerV := range h.flattenMap(inner) {
 				flattened[k+"."+innerK] = innerV
 			}
+			delete(object, k)
 		} else {
 			flattened[k] = v
 		}
@@ -252,17 +286,18 @@ func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 	// source needs to be top level always (i.e. not within a group, that might be on this logger)
 	object["__source"] = sourceForCurrentCall()
 
-	object = h.flattenMap(object)
-
-	// flatten groups
-	for k, v := range object {
-		if inner, ok := v.(map[string]any); ok {
-			for innerK, innerV := range inner {
-				object[k+"."+innerK] = innerV
-			}
-			delete(object, k)
+	// top level error key, generates a red message
+	// and changes log level to error (see Logger methods)
+	if e, ok := object["error"]; ok {
+		switch e := e.(type) {
+		case error:
+			object["error"] = ansiRed + e.Error() + ansiReset
+		case string:
+			object["error"] = ansiRed + e + ansiReset
 		}
 	}
+
+	object = h.flattenMap(object)
 
 	encoded := func() string {
 		var buf strings.Builder
@@ -292,7 +327,8 @@ func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 			// <empty>    <value to 2nd newline>
 			// ...
 			valstr = strings.ReplaceAll(valstr, "\r", "")
-			valstr = strings.ReplaceAll(valstr, "\n", "\n\t\t")
+			valstr = strings.ReplaceAll(valstr, "\t", "  ")
+			valstr = strings.ReplaceAll(valstr, "\n", "\n\t\t\t")
 			fmt.Fprintf(w, "\t\t%s\t%v\n", k, valstr)
 		}
 
@@ -303,13 +339,60 @@ func (h *devHandler) writeAttrs(line *strings.Builder, record slog.Record) {
 	}()
 
 	line.WriteByte(' ')
-	// fmt.Fprintf(line, "%#v\n", object)
-	// _ = encoded
 	line.WriteString(encoded)
 }
 
+type debugValue interface {
+	DebugLogValue() slog.Value
+}
+
+func resolveDebugValue(v slog.Value) (rv slog.Value) {
+	orig := v
+	defer func() {
+		if r := recover(); r != nil {
+			rv = slog.AnyValue(fmt.Errorf("LogValue panicked\n%s", resolveDebugValueStack(3, 5)))
+		}
+	}()
+
+	for i := 0; i < 100; i++ {
+		if v.Kind() == slog.KindAny || v.Kind() == slog.KindLogValuer {
+			if dv, ok := v.Any().(debugValue); ok {
+				v = dv.DebugLogValue()
+				continue
+			}
+		}
+		return v
+	}
+	err := fmt.Errorf("resolveValue called too many times on Value of type %T", orig.Any())
+	return slog.AnyValue(err)
+}
+
+func resolveDebugValueStack(skip, nFrames int) string {
+	pcs := make([]uintptr, nFrames+1)
+	n := runtime.Callers(skip+1, pcs)
+	if n == 0 {
+		return "(no stack)"
+	}
+	frames := runtime.CallersFrames(pcs[:n])
+	var b strings.Builder
+	i := 0
+	for {
+		frame, more := frames.Next()
+		fmt.Fprintf(&b, "called from %s (%s:%d)\n", frame.Function, frame.File, frame.Line)
+		if !more {
+			break
+		}
+		i++
+		if i >= nFrames {
+			fmt.Fprintf(&b, "(rest of stack elided)\n")
+			break
+		}
+	}
+	return b.String()
+}
+
 func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
-	attr.Value = attr.Value.Resolve()
+	attr.Value = resolveDebugValue(attr.Value)
 	if attr.Equal(slog.Attr{}) {
 		return
 	}

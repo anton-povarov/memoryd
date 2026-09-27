@@ -39,8 +39,8 @@ func run() error {
 		}
 	}
 
-	logger := logging.NewRoot(cfg.Logging.Level, os.Stderr)
-	slog.SetDefault(logger)
+	logger := logging.New(cfg.Logging.Level, os.Stderr)
+	slog.SetDefault(logger.Logger)
 
 	memoryVault, err := vault.Open(
 		context.Background(),

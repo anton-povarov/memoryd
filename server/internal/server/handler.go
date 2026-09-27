@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"mime/multipart"
 	"strings"
@@ -32,11 +31,11 @@ var (
 
 type Handler struct {
 	version string
-	logger  *slog.Logger
+	logger  *logging.Logger
 	vault   *vault.Vault
 }
 
-func NewHandler(version string, logger *slog.Logger, memoryVault *vault.Vault) *Handler {
+func NewHandler(version string, logger *logging.Logger, memoryVault *vault.Vault) *Handler {
 	return &Handler{
 		version: version,
 		logger:  logger,
@@ -373,7 +372,7 @@ func (h *Handler) ImportMemory(
 
 func importInternalError(
 	ctx context.Context,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	err error,
 ) api.ImportMemoryResponseObject {
 	logger.ErrorContext(ctx, "Memory import failed", "error", err)

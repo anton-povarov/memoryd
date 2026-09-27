@@ -24,13 +24,13 @@ const requestIDHeader = "X-Request-ID"
 type Server struct {
 	config     config.ServerConfig
 	httpServer *http.Server
-	logger     *slog.Logger
+	logger     *logging.Logger
 }
 
 func New(
 	version string,
 	cfg config.Config,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	memoryVault *vault.Vault,
 ) (*Server, error) {
 	if logger == nil {
@@ -194,8 +194,8 @@ const (
 	ansiRed    = "\x1b[31m"
 )
 
-func debugColoredString(logger *slog.Logger, msg string, color string) string {
-	if logging.IsDevelopment(logger) {
+func debugColoredString(logger *logging.Logger, msg string, color string) string {
+	if logger.IsDevelopment() {
 		return fmt.Sprintf("%s%s%s", color, msg, ansiReset)
 	}
 	return msg
@@ -210,7 +210,7 @@ func responseLogLevel(response *responseRecorder) slog.Level {
 	return slog.LevelInfo
 }
 
-func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) http.Handler {
+func apiRequestMiddleware(logger, apiLogger *logging.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
 
@@ -264,13 +264,13 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 						slog.Int("status", http.StatusInternalServerError))
 				}
 
-				message := ""
-				level := responseLogLevel(response)
+				level := slog.LevelInfo
 				color := ansiGreen
-				if level > slog.LevelInfo {
+				if rctx.Err != nil {
+					level = responseLogLevel(response)
 					color = ansiRed
 				}
-				message = debugColoredString(requestLogger, "<< API request completed", color)
+				message := debugColoredString(requestLogger, "<< API request completed", color)
 
 				requestLogger.LogAttrs(r.Context(),
 					level,
@@ -309,7 +309,7 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 
 			// very short logging if everything is ok in developer mode
 			// don't want to flood the log with unimportant stuff
-			if logging.IsDevelopment(staticLogger) && response.status < http.StatusBadRequest {
+			if staticLogger.IsDevelopment() && response.status < http.StatusBadRequest {
 				staticLogger.DebugContext(r.Context(),
 					fmt.Sprintf("HTTP static asset: %d %s", response.status, r.URL.Path))
 			} else {
@@ -333,7 +333,7 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 	})
 }
 
-func panicRecoveryMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func panicRecoveryMiddleware(logger *logging.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {

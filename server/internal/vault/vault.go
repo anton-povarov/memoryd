@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -90,13 +89,13 @@ type Vault struct {
 	db             *sql.DB
 	blobDir        string
 	uploadDir      string
-	logger         *slog.Logger
+	logger         *logging.Logger
 	blobMutationMu sync.Mutex
 }
 
 func Open(
 	ctx context.Context,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	dbPath, blobDir, uploadDir string,
 ) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
@@ -168,6 +167,8 @@ func (v *Vault) initialize(ctx context.Context) error {
 		byte_size INTEGER NOT NULL,
 		imported_at TEXT NOT NULL
 	);
+	CREATE INDEX IF NOT EXISTS memories_imported_at ON memories (imported_at);
+
 	CREATE TABLE IF NOT EXISTS understanding_runs (
 		id TEXT PRIMARY KEY,
 		memory_id TEXT NOT NULL,
@@ -416,26 +417,52 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	// The Blob is durable now. The Memory commit must survive client
 	// disconnection so successful storage is never reported as a failed import.
 	insertSQL := `INSERT INTO memories (
-		id, blob_hash, original_filename, relative_path, full_path,
-		filesystem_created_at, filesystem_modified_at, media_type, byte_size,
-		imported_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`
+		id, blob_hash, imported_at,
+		media_type, byte_size,
+		original_filename, relative_path, full_path,
+		filesystem_created_at, filesystem_modified_at
+	) VALUES (
+	 	@id, @blob_hash, @imported_at,
+	 	@media_type, @byte_size,
+	 	@original_filename, @relative_path, @full_path,
+		@filesystem_created_at, @filesystem_modified_at)
+	ON CONFLICT(blob_hash) DO NOTHING`
+
+	insertArguments := []any{
+		sql.NamedArg{Name: "id", Value: memory.ID.String()},
+		sql.NamedArg{Name: "blob_hash", Value: memory.Blob.Ref.String()},
+		sql.NamedArg{Name: "imported_at", Value: memory.ImportedAt.Format(time.RFC3339Nano)},
+		sql.NamedArg{Name: "media_type", Value: memory.Blob.MediaType},
+		sql.NamedArg{Name: "byte_size", Value: memory.Blob.ByteSize},
+		sql.NamedArg{Name: "original_filename", Value: memory.ImportContext.OriginalFilename},
+		sql.NamedArg{
+			Name:  "relative_path",
+			Value: nullableString(memory.ImportContext.RelativePath),
+		},
+		sql.NamedArg{Name: "full_path", Value: nullableString(memory.ImportContext.FullPath)},
+		sql.NamedArg{
+			Name:  "filesystem_created_at",
+			Value: nullableTime(memory.ImportContext.FilesystemCreated),
+		},
+		sql.NamedArg{
+			Name:  "filesystem_modified_at",
+			Value: nullableTime(memory.ImportContext.FilesystemModified),
+		},
+	}
 
 	durableContext := context.WithoutCancel(ctx)
 	result, err := v.db.ExecContext(
 		durableContext,
 		insertSQL,
-		memory.ID.String(),
-		memory.Blob.Ref.String(),
-		memory.ImportContext.OriginalFilename,
-		nullableString(memory.ImportContext.RelativePath),
-		nullableString(memory.ImportContext.FullPath),
-		nullableTime(memory.ImportContext.FilesystemCreated),
-		nullableTime(memory.ImportContext.FilesystemModified),
-		memory.Blob.MediaType,
-		memory.Blob.ByteSize,
-		memory.ImportedAt.Format(time.RFC3339Nano),
+		insertArguments...,
 	)
+	logger.
+		WithError(err).
+		DebugContext(ctx, "Memory import query executed",
+			logging.SqlQuery(insertSQL, insertArguments),
+			// logging.SqlQueryArgs(insertArguments),
+		)
+
 	if err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
 	}
@@ -468,7 +495,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 
 func (v *Vault) Memory(ctx context.Context, id uuid.UUID) (Memory, error) {
 	return scanMemory(
-		v.db.QueryRowContext(ctx, selectMemory+` WHERE id = ?`, id.String()),
+		v.db.QueryRowContext(ctx, selectMemorySQL+` WHERE id = ?`, id.String()),
 	)
 }
 
@@ -482,27 +509,30 @@ func (v *Vault) ListMemories(
 	if limit <= 0 || limit > MaxListLimit {
 		limit = DefaultListLimit
 	}
-	query := selectMemory
+	query := selectMemorySQL
 	arguments := []any{}
 	if after != nil {
-		query += ` WHERE julianday(imported_at) < julianday(?) OR ` +
-			`(julianday(imported_at) = julianday(?) AND id < ?)`
+		query += " WHERE " +
+			"\n   julianday(imported_at) < julianday(@time) OR " +
+			"\n   (julianday(imported_at) = julianday(@time) AND id < @id)"
 		encodedTime := after.ImportedAt.Format(time.RFC3339Nano)
-		arguments = append(
-			arguments,
-			encodedTime,
-			encodedTime,
-			after.ID.String(),
+		arguments = append(arguments,
+			sql.Named("time", encodedTime),
+			sql.Named("id", after.ID.String()),
 		)
 	}
-	query += ` ORDER BY julianday(imported_at) DESC, id DESC LIMIT ?`
-	arguments = append(arguments, limit+1)
-
-	logger.DebugContext(ctx, "sqlite query",
-		"query", query,
-		"arguments", arguments)
+	query += " ORDER BY julianday(imported_at) DESC, id DESC"
+	query += " LIMIT @limit"
+	arguments = append(arguments, sql.Named("limit", limit+1))
 
 	rows, err := v.db.QueryContext(ctx, query, arguments...)
+
+	logger.
+		WithError(err).
+		DebugContext(ctx, "list memories query",
+			logging.SqlQuery(query, arguments),
+		)
+
 	if err != nil {
 		return nil, false, fmt.Errorf("list Memories: %w", err)
 	}
@@ -576,11 +606,23 @@ func (v *Vault) Delete(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+
+	deleteSQL := `DELETE FROM memories WHERE id = @id`
+	deleteArguments := []any{
+		sql.NamedArg{Name: "id", Value: id.String()},
+	}
+
 	result, err := v.db.ExecContext(
 		ctx,
-		`DELETE FROM memories WHERE id = ?`,
-		id.String(),
+		deleteSQL,
+		deleteArguments...,
 	)
+	logger.
+		WithError(err).
+		DebugContext(ctx, "Memory delete query executed",
+			logging.SqlQuery(deleteSQL, deleteArguments),
+		)
+
 	if err != nil {
 		return fmt.Errorf("delete Memory: %w", err)
 	}
@@ -768,9 +810,11 @@ func (v *Vault) blobPath(ref Blobref) string {
 	)
 }
 
-const selectMemory = `SELECT id, blob_hash, original_filename, relative_path, full_path,
+const selectMemorySQL = `
+SELECT id, blob_hash, original_filename, relative_path, full_path,
 	filesystem_created_at, filesystem_modified_at, media_type, byte_size, imported_at
-	FROM memories`
+FROM memories
+`
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -826,7 +870,7 @@ func scanMemory(row rowScanner) (Memory, error) {
 
 func (v *Vault) memoryByHash(ctx context.Context, ref Blobref) (Memory, error) {
 	return scanMemory(
-		v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, ref.String()),
+		v.db.QueryRowContext(ctx, selectMemorySQL+` WHERE blob_hash = ?`, ref.String()),
 	)
 }
 

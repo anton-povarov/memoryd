@@ -16,6 +16,7 @@ import (
 
 	"github.com/anton-povarov/memoryd/server/internal/api"
 	"github.com/anton-povarov/memoryd/server/internal/config"
+	"github.com/anton-povarov/memoryd/server/internal/logging"
 	"github.com/anton-povarov/memoryd/server/internal/vault"
 )
 
@@ -106,7 +107,7 @@ func TestParseImportContext(t *testing.T) {
 func TestImportMemoryHTTPStoresContextAndSeparatesBlobFields(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := logging.New(slog.LevelDebug, io.Discard)
 	memoryVault, err := vault.Open(
 		context.Background(), logger,
 		filepath.Join(root, "memoryd.sqlite"),
