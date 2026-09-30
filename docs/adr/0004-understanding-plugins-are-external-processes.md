@@ -1,7 +1,9 @@
 # Understanding Plugins are external processes
 
-Status: deferred beyond the MVP.
+Status: active for the MVP's first PDF extractor.
 
-Specialized enrichment plugins run behind a small process protocol rather than inside memoryd's application process, this keeps plugins language-independent, allows them to integrate without coupling to memoryd internals and fail without affecting memoryd.
-A versioned manifest from a plugin declares it's capabilities.
-Memoryd and plugins communicate over a stream of structured messages and events (other ADRs will define the protocol when ready).
+Understanding Plugins run as child processes behind a small JSON-over-standard-streams protocol. This lets memoryd use extraction tools written in other languages and contain a plugin crash without crashing the server.
+
+For the MVP, memoryd starts executables named explicitly in local configuration. The first plugin produces Derived Content from PDFs. It may extract text, perform OCR, or describe visual content, and it need not assert Facts. Memoryd bounds the total number of concurrent understanding processes and owns durable scheduling and Run commits.
+
+Plugin discovery, installation, and capability manifests are deferred. The proposed first request and result schema, process lifetime, and failure rules are in [Understanding plugin protocol v1](../understanding-plugin-v1.md).

@@ -101,7 +101,7 @@ func TestResolveMediaType(t *testing.T) {
 			if err := os.WriteFile(path, test.content, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			got, err := resolveMediaType(path, test.declared)
+			got, err := ResolveMediaType(path, test.declared)
 			if test.invalid {
 				if !errors.Is(err, ErrInvalidMediaType) {
 					t.Fatalf("resolveMediaType() error = %v, want invalid media type", err)
@@ -392,7 +392,8 @@ func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.ExecContext(ctx, `CREATE TABLE memories (
-		id TEXT PRIMARY KEY, blob_hash TEXT NOT NULL UNIQUE
+		id TEXT PRIMARY KEY, blob_hash TEXT NOT NULL UNIQUE,
+		imported_at TEXT NOT NULL DEFAULT ''
 	)`)
 	if err != nil {
 		t.Fatal(err)

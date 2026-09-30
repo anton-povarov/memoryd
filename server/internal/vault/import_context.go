@@ -8,7 +8,8 @@ import (
 
 var ErrInvalidImportContext = errors.New("invalid Import Context")
 
-func (context ImportContext) normalized() (ImportContext, error) {
+// Normalized applies the same filename and timestamp rules as Vault imports.
+func (context ImportContext) Normalized() (ImportContext, error) {
 	if strings.TrimSpace(context.OriginalFilename) == "" {
 		return ImportContext{}, fmt.Errorf(
 			"%w: original_filename is required", ErrInvalidImportContext,

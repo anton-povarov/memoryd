@@ -14,6 +14,7 @@ Import personal files into a durable local Vault, understand them as well as cur
 - Import individual Blobs up to 100 MiB (104857600 bytes) through the CLI or web UI.
 - Preserve each imported Blob durably as a Memory with its Import Context.
 - Perform best-effort Document Understanding in the background.
+- Produce searchable Derived Content from PDFs as the first Document Understanding capability.
 - Browse Memories and inspect their metadata, Derived Content, Facts, and Understanding Run.
 - Search using natural language and inspect the resulting Query Plan.
 - Open or download the whole original Memory.
@@ -22,7 +23,7 @@ Import personal files into a durable local Vault, understand them as well as cur
 ### Out of scope
 
 - Memory lifecycle: Rebuild, deletion, garbage collection, and user Fact corrections.
-- Understanding extensibility: Understanding Plugins and Codex enhancement.
+- Understanding extensibility: plugin discovery, dynamic installation, and Codex enhancement.
 - Search sophistication: embeddings, relevance ranking, query relaxation, relationship aliases, and cross-language retrieval.
 - Productization: multiple users, authentication, remote access, and production-grade UI polish.
 
@@ -52,8 +53,9 @@ The first useful demonstration imports personal files, then answers variations o
 
 ## Document Understanding
 
-- Document Understanding makes a best-effort attempt for every imported Blob and produces Derived Content and Facts.
+- Document Understanding makes a best-effort attempt for every imported Blob and may produce Derived Content and Facts.
 - An opaque or partially understood Blob is a valid result. An Understanding Run may be sparse and contain only information derived from basic Blob properties and Import Context.
+- The first extraction increment targets PDFs and does not need to assert structured Facts. A plugin may extract embedded text, perform OCR, or describe visual content. Source text and generated descriptions remain distinguishable Derived Content.
 - Each successful interpretation creates an immutable Understanding Run.
 - A coherent Run may include warnings. An understanding attempt fails only when an operational issue prevents it from committing a coherent Run; the failure produces an informative execution log and does not invalidate the Memory.
 - After the Blob and Memory commit, Document Understanding may run durably in the background, independently of the import request and client connection.
@@ -92,11 +94,16 @@ The MVP web UI is a basic interface that will evolve through use. Its initial ca
 - The UI is the human-readable view over the Vault; the filesystem CAS has no filename mirror.
 - Production-grade polish is not required.
 
+### Plugin development tool
+
+The standalone `mem-understand` tool runs an Understanding Plugin executable supplied by path against a local file without a server or server configuration, prints its interpreted result, and saves the raw protocol exchange for inspection. It is not a Vault client.
+
 ## Implementation constraints
 
 - Implement the main server in Go, with SQLite/FTS5 and filesystem content-addressed storage.
 - Use Ollama as the initial model runtime for Document Understanding and Search Planning.
 - The Go server uses `destel/rill` to bound concurrent understanding across requests and startup recovery, but introduces no persistent queue table, separate worker service, or external queue.
+- Initial Understanding Plugins are configured executable paths launched as child processes by memoryd. They exchange JSON over standard streams. Plugin discovery, manifests, and a general plugin framework are deferred.
 - Require no application login in the MVP.
 - Treat a checked-in `openapi.yaml` as the API source of truth and generate Go handler interfaces and request/response types from it.
 

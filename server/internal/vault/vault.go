@@ -325,7 +325,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if candidate.Content == nil {
 		return Memory{}, errors.New("blob content is required")
 	}
-	importContext, err := candidate.Context.normalized()
+	importContext, err := candidate.Context.Normalized()
 	if err != nil {
 		return Memory{}, err
 	}
@@ -362,7 +362,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("close temporary Blob: %w", closeErr)
 	}
 
-	mediaType, err := resolveMediaType(temporaryPath, candidate.MediaTypeHint)
+	mediaType, err := ResolveMediaType(temporaryPath, candidate.MediaTypeHint)
 	if err != nil {
 		return Memory{}, err
 	}
