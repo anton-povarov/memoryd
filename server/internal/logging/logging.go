@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+
+	"github.com/kylelemons/godebug/pretty"
 )
 
 type Level = slog.Level
@@ -432,60 +434,34 @@ func slogValueToAnyValue(value slog.Value) any {
 		return value.Duration().String()
 	}
 	anyValue := value.Any()
+
 	if value.Kind() == slog.KindAny {
 		if err, ok := anyValue.(error); ok {
 			return err.Error()
 		}
-		return reflectValueStringer(reflect.ValueOf(anyValue), nil)
+
+		// pointer to a primitive type
+		rv := reflect.ValueOf(anyValue)
+		if rv.Kind() == reflect.Pointer {
+			switch rv.Type().Elem().Kind() {
+			case reflect.Bool, reflect.String,
+				reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+				reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
+				if rv.IsNil() {
+					return nil
+				}
+				return rv.Elem().Interface()
+			}
+		}
+
+		pretty.DefaultConfig.IncludeUnexported = true
+		pretty.DefaultConfig.PrintStringers = true
+		pretty.DefaultConfig.PrintTextMarshalers = true
+		// pretty.DefaultConfig.Compact = true // strings become too long, esp for arrays :-/
+		return pretty.Sprint(anyValue)
 	}
 	return anyValue
-}
-
-func reflectValueStringer(v reflect.Value, parents []reflect.Value) any {
-	if !v.IsValid() {
-		return nil
-	}
-	if v.Kind() == reflect.Interface {
-		return reflectValueStringer(v.Elem(), parents)
-	}
-	if v.Kind() == reflect.Pointer {
-		switch v.Type().Elem().Kind() {
-		case reflect.Bool, reflect.String,
-			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Struct:
-			if v.IsNil() {
-				return nil
-			}
-			if v.Type().Elem().Kind() == reflect.Struct {
-				// ponytail: O(depth²) path scans; use a pointer/type set if deep graphs matter.
-				for _, parent := range parents {
-					if parent.Type() == v.Type() && parent.Pointer() == v.Pointer() {
-						return "<cycle>"
-					}
-				}
-				parents = append(parents, v)
-			}
-			v = v.Elem()
-		}
-	}
-	if v.Kind() == reflect.Struct {
-		var text strings.Builder
-		typ := v.Type()
-		text.WriteByte('{')
-		for i := range v.NumField() {
-			if i > 0 {
-				text.WriteString(", ")
-			}
-			fmt.Fprintf(&text, "%s: %v", typ.Field(i).Name, reflectValueStringer(v.Field(i), parents))
-		}
-		text.WriteByte('}')
-		return text.String()
-	}
-	if v.CanInterface() {
-		return v.Interface()
-	}
-	return v
 }
 
 func writeLevel(line *strings.Builder, level slog.Level) {
