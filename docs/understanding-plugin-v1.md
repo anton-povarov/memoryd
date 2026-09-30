@@ -1,6 +1,6 @@
 # Understanding plugin protocol v1
 
-Status: proposal for the first implementation. This specifies the smallest useful process seam; it does not prescribe how a plugin extracts text, performs OCR, or generates a description.
+Status: implemented. This specifies the v1 process seam; it does not prescribe how a plugin extracts text, performs OCR, or generates a description.
 
 ## Scope
 
@@ -10,7 +10,7 @@ The `document_text` and `description` kinds use UTF-8 Markdown (`text/markdown`)
 
 ## Configuration and selection
 
-Configure trusted local executables explicitly; there is no discovery or manifest. A possible YAML shape is:
+Configure trusted local executables explicitly; there is no discovery or manifest:
 
 ```yaml
 understanding:
@@ -18,18 +18,12 @@ understanding:
   plugins:
     pdf:
       media_types: [application/pdf]
-      command: [/absolute/path/to/pdf-understand]
-
-models:
-  document_understanding:
-    provider: ollama
-    endpoint: http://127.0.0.1:11434
-    model: configured-model
+      command: [/absolute/path/to/pdf-understand, --mode, strict]
 ```
 
-The `plugins` map key (`pdf` here) is the plugin ID. It is a stable, locally chosen name used to associate attempts and artifact provenance with this configured program; it is not discovered from the executable. Map keys make IDs unique. `command` is an argument vector, never a shell command. In v1, exactly one configured plugin may match a Media Type; overlapping declarations are a configuration error. The plugin may call other tools or a model internally. When it uses a model, memoryd passes the centrally configured `document_understanding` Model Task Category settings in the request. The `models` section is proposed configuration to implement alongside the worker; today's config parser does not accept it yet.
+The `plugins` map key is the nonempty, stable plugin ID associated with attempts and artifacts. `command` is an argument vector launched directly, never a shell command; its executable must be absolute. Each plugin declares one or more exact canonical Media Types, and a Media Type may belong to only one plugin. `max_concurrent` defaults to `1` and limits all workers across imports and startup recovery.
 
-Memoryd validates the configuration's shape and Media Type conflicts at startup but does not launch or probe plugin executables then. A missing executable fails its first attempt and is recorded. A Blob with no matching plugin receives a sparse, successful Run with an unsupported-format warning. Adding a plugin later does not automatically rebuild earlier Runs.
+Memoryd validates configuration at startup but does not launch or probe plugin executables. A missing executable fails its first attempt and is recorded. A Blob with no matching plugin receives a successful Run with a warning naming its unsupported Media Type. Adding a plugin later does not automatically rebuild earlier Runs. Plugins may use models internally; memoryd does not route models.
 
 ## Process lifetime and transport
 
@@ -114,7 +108,8 @@ Example result:
       "kind": "document_text",
       "media_type": "text/markdown",
       "content": "# Account statement\n...",
-      "provenance": { "method": "pdf extraction", "tool": "example-tool", "tool_version": "1.0" }
+      "provenance": { "method": "pdf extraction", "tool": "example-tool", "tool_version": "1.0" },
+      "scope": { "page": 1 }
     },
     {
       "kind": "description",
@@ -156,7 +151,7 @@ counts must sum to the cumulative cache-write count. When cumulative usage
 omits that optional field, cache-write counts are not compared. An empty
 `turn_usage` array contains no breakdown and does not undergo sum validation.
 
-Each artifact has its own kind, representation, content, and provenance. The configured plugin ID, reported plugin version, Blob identity, and attempt ID are also recorded for each stored artifact by memoryd. The plugin may produce multiple artifacts of the same kind, for example one per page. Page or region references can be added as optional artifact scope when an extractor can provide them.
+Each artifact has its own kind, representation, content, and provenance. An optional `scope` object carries plugin-defined page or region references and is retained as supplied. The configured plugin ID, reported plugin version, Blob identity, and attempt ID are also recorded for each stored artifact by memoryd. A plugin may produce multiple artifacts of the same kind, for example one per page.
 
 The result is one complete response, not a progress stream. The UI can initially show queued, running, done, or failed. The protocol can gain progress events only if actual processing times make them useful.
 
@@ -191,4 +186,4 @@ The command prints the result as a readable report: selected plugin, input metad
 - Memoryd stages and publishes derived Blobs, then commits the immutable Understanding Run, artifact references, and active-Run selection in one SQLite transaction. A crash after publication but before that transaction may leave an orphan derived Blob, as with import. Search indexes are projections of the committed active Run.
 - SQLite, rather than an in-memory queue, records attempts. On import commit and startup, memoryd finds Memories needing an attempt. An attempt interrupted by shutdown is retried; a committed Run is not silently rerun.
 
-The existing `understanding_runs` and `active_understanding_runs` tables are only the start of this model. Implementation will need storage for attempts and Derived Content references, plus the derived Blob directory. The HTTP import request still ends after the Memory is committed.
+The Vault persists attempts, derived-content references, immutable Runs, and active-Run selection in SQLite. Import responses end after Memory commit while detached workers process queued attempts; startup recovery requeues interrupted or failed work once, with no in-session retries.

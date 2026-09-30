@@ -13,9 +13,10 @@ import (
 // rawConfig keeps duration as text because YAML has no native duration type;
 // it is converted with time.ParseDuration after strict decoding.
 type rawConfig struct {
-	Server  *rawServer  `yaml:"server"`
-	Storage *rawStorage `yaml:"storage"`
-	Logging *rawLogging `yaml:"logging"`
+	Server        *rawServer        `yaml:"server"`
+	Storage       *rawStorage       `yaml:"storage"`
+	Logging       *rawLogging       `yaml:"logging"`
+	Understanding *rawUnderstanding `yaml:"understanding"`
 }
 
 type rawServer struct {
@@ -32,6 +33,16 @@ type rawStorage struct {
 
 type rawLogging struct {
 	Level *string `yaml:"level"`
+}
+
+type rawUnderstanding struct {
+	MaxConcurrent *int                              `yaml:"max_concurrent"`
+	Plugins       map[string]rawUnderstandingPlugin `yaml:"plugins"`
+}
+
+type rawUnderstandingPlugin struct {
+	Command    []string `yaml:"command"`
+	MediaTypes []string `yaml:"media_types"`
 }
 
 func parseYAMLConfig(data []byte) (Config, error) {
@@ -98,6 +109,20 @@ func parseYAMLConfig(data []byte) (Config, error) {
 				return Config{}, err
 			}
 			c.Logging.Level = level
+		}
+	}
+	if raw.Understanding != nil {
+		if raw.Understanding.MaxConcurrent != nil {
+			c.Understanding.MaxConcurrent = *raw.Understanding.MaxConcurrent
+		}
+		if raw.Understanding.Plugins != nil {
+			c.Understanding.Plugins = make(
+				map[string]UnderstandingPluginConfig,
+				len(raw.Understanding.Plugins),
+			)
+			for pluginID, plugin := range raw.Understanding.Plugins {
+				c.Understanding.Plugins[pluginID] = UnderstandingPluginConfig(plugin)
+			}
 		}
 	}
 	return c.withDerivedPaths(), nil

@@ -17,6 +17,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for DerivedContentMediaType.
+const (
+	Applicationjson DerivedContentMediaType = "application/json"
+	Textmarkdown    DerivedContentMediaType = "text/markdown"
+)
+
+// Valid indicates whether the value is a known member of the DerivedContentMediaType enum.
+func (e DerivedContentMediaType) Valid() bool {
+	switch e {
+	case Applicationjson:
+		return true
+	case Textmarkdown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	Ok HealthResponseStatus = "ok"
@@ -31,6 +49,71 @@ func (e HealthResponseStatus) Valid() bool {
 		return false
 	}
 }
+
+// Defines values for UnderstandingAttemptStatus.
+const (
+	UnderstandingAttemptStatusDone    UnderstandingAttemptStatus = "done"
+	UnderstandingAttemptStatusFailed  UnderstandingAttemptStatus = "failed"
+	UnderstandingAttemptStatusQueued  UnderstandingAttemptStatus = "queued"
+	UnderstandingAttemptStatusRunning UnderstandingAttemptStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingAttemptStatus enum.
+func (e UnderstandingAttemptStatus) Valid() bool {
+	switch e {
+	case UnderstandingAttemptStatusDone:
+		return true
+	case UnderstandingAttemptStatusFailed:
+		return true
+	case UnderstandingAttemptStatusQueued:
+		return true
+	case UnderstandingAttemptStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UnderstandingDetailsStatus.
+const (
+	UnderstandingDetailsStatusDone    UnderstandingDetailsStatus = "done"
+	UnderstandingDetailsStatusFailed  UnderstandingDetailsStatus = "failed"
+	UnderstandingDetailsStatusQueued  UnderstandingDetailsStatus = "queued"
+	UnderstandingDetailsStatusRunning UnderstandingDetailsStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingDetailsStatus enum.
+func (e UnderstandingDetailsStatus) Valid() bool {
+	switch e {
+	case UnderstandingDetailsStatusDone:
+		return true
+	case UnderstandingDetailsStatusFailed:
+		return true
+	case UnderstandingDetailsStatusQueued:
+		return true
+	case UnderstandingDetailsStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// DerivedContent Independent Derived Content belonging to its containing Run, not another Memory or verified Fact.
+type DerivedContent struct {
+	BlobHash string `json:"blob_hash"`
+	ByteSize int64  `json:"byte_size"`
+
+	// Content UTF-8 Markdown or serialized JSON object, according to media_type.
+	Content    string                  `json:"content"`
+	Id         openapi_types.UUID      `json:"id"`
+	Kind       string                  `json:"kind"`
+	MediaType  DerivedContentMediaType `json:"media_type"`
+	Provenance map[string]interface{}  `json:"provenance"`
+	Scope      *map[string]interface{} `json:"scope,omitempty"`
+}
+
+// DerivedContentMediaType defines model for DerivedContent.MediaType.
+type DerivedContentMediaType string
 
 // DuplicateMemory defines model for DuplicateMemory.
 type DuplicateMemory struct {
@@ -95,8 +178,9 @@ type MemoryDetail struct {
 	ContentUrl *string `json:"content_url,omitempty"`
 
 	// ImportContext Stored provenance from the first successful import.
-	ImportContext ImportContext `json:"import_context"`
-	Memory        MemorySummary `json:"memory"`
+	ImportContext ImportContext        `json:"import_context"`
+	Memory        MemorySummary        `json:"memory"`
+	Understanding UnderstandingDetails `json:"understanding"`
 }
 
 // MemoryPage defines model for MemoryPage.
@@ -116,6 +200,58 @@ type MemorySummary struct {
 	OriginalCreatedAt  *time.Time         `json:"original_created_at,omitempty"`
 	OriginalFilename   string             `json:"original_filename"`
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
+}
+
+// UnderstandingAttempt defines model for UnderstandingAttempt.
+type UnderstandingAttempt struct {
+	CompletedAt *time.Time                `json:"completed_at,omitempty"`
+	Diagnostics *UnderstandingDiagnostics `json:"diagnostics,omitempty"`
+	Id          openapi_types.UUID        `json:"id"`
+
+	// PluginId Configured plugin ID; empty when no plugin is selected.
+	PluginId  string                     `json:"plugin_id"`
+	QueuedAt  time.Time                  `json:"queued_at"`
+	StartedAt *time.Time                 `json:"started_at,omitempty"`
+	Status    UnderstandingAttemptStatus `json:"status"`
+}
+
+// UnderstandingAttemptStatus defines model for UnderstandingAttempt.Status.
+type UnderstandingAttemptStatus string
+
+// UnderstandingDetails defines model for UnderstandingDetails.
+type UnderstandingDetails struct {
+	// ActiveRun The last complete successful Run; failed attempts do not replace it.
+	ActiveRun     *UnderstandingRun          `json:"active_run"`
+	LatestAttempt *UnderstandingAttempt      `json:"latest_attempt"`
+	Status        UnderstandingDetailsStatus `json:"status"`
+}
+
+// UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
+type UnderstandingDetailsStatus string
+
+// UnderstandingDiagnostics defines model for UnderstandingDiagnostics.
+type UnderstandingDiagnostics struct {
+	Error    string `json:"error"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+
+	// Stderr Captured plugin diagnostics; may contain private source content.
+	Stderr string `json:"stderr"`
+
+	// Stdout Captured plugin stdout, including invalid protocol output.
+	Stdout string `json:"stdout"`
+}
+
+// UnderstandingRun defines model for UnderstandingRun.
+type UnderstandingRun struct {
+	Artifacts     []DerivedContent   `json:"artifacts"`
+	AttemptId     openapi_types.UUID `json:"attempt_id"`
+	CompletedAt   time.Time          `json:"completed_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	Id            openapi_types.UUID `json:"id"`
+	PluginId      string             `json:"plugin_id"`
+	PluginVersion string             `json:"plugin_version"`
+	SourceBlobref string             `json:"source_blobref"`
+	Warnings      []string           `json:"warnings"`
 }
 
 // Cursor defines model for Cursor.

@@ -5,9 +5,9 @@ This Understanding Plugin accepts a v1 Blob and returns two artifacts:
 - `document_md`: concise English description and summary, plus a Markdown table of relevant structured values.
 - `document_data`: source-grounded JSON using compact positional rows for facts, events, references, and signals, plus string uncertainties.
 
-It stages the original Blob in a temporary directory and uses exactly two conversation turns on one ephemeral thread. Each turn sends a separate local document path as text alongside its unchanged prompt. The staged file remains available at that path for both turns. The first turn returns Markdown; the second uses the same thread and local path while requesting JSON constrained by a schema, with the first-turn Markdown as guidance. The disk name uses the original basename; import context retains the full original filename and other metadata. There is no native PDF upload: ordinary shell tools can parse or render a local PDF, and image viewing can inspect rendered pages. Tool work can require multiple model calls within one turn.
+Supported binary source formats are PDF (`application/pdf`), PNG (`image/png`), and JPEG (`image/jpeg`). The plugin stages original bytes unchanged. It uses the original basename when supplied; if `import_context.original_filename` is missing or blank, staged names retain usable suffixes: `document.pdf`, `document.png`, or `document.jpg`. Codex can inspect PDFs with available local shell tools; for PNG/JPEG, the extraction prompt tells Codex to call `view_image` on the supplied local path. There is no added conversion or image-extraction pipeline. For images with no readable text or structured data, the prompt asks for a visual description only and empty structured-data categories, without invented text or facts. Tool work can require multiple model calls within one turn.
 
-The second-turn schema defines each row's fixed order and length, without changing the extraction prompts:
+The second-turn schema fixes each row's order and length; extraction prompts specify how to ground values in the source:
 
 - `facts`: `[key, value, evidence]`
 - `events`: `[action, date, details, evidence]`
@@ -28,7 +28,32 @@ go run ./server/cmd/mem-understand ./document.pdf \
   --app-server-command="$(command -v codex)"
 ```
 
-The plugin explicitly enables `shell_tool`, `unified_exec`, and `view_image`; it disables skill search, multi-agent, plugin, app, browser, computer-use, and image-generation features, and disables web search. Each turn uses the temporary directory as its only writable root with network access disabled. Codex uses the user's existing local sign-in. Token totals and per-turn usage are included when the app-server reports complete snapshots.
+Public smoke inputs: [W3C dummy PDF](https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf) and [Wikimedia flower JPEG](https://upload.wikimedia.org/wikipedia/commons/3/3f/JPEG_example_flower.jpg). On macOS, use the built-in `sips` to produce PNG from that same image:
+
+```sh
+mkdir -p /tmp/codex-extractor-smoke
+curl -fL https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf \
+  -o /tmp/codex-extractor-smoke/dummy.pdf
+curl -fL https://upload.wikimedia.org/wikipedia/commons/3/3f/JPEG_example_flower.jpg \
+  -o /tmp/codex-extractor-smoke/flower.jpg
+sips -s format png /tmp/codex-extractor-smoke/flower.jpg \
+  --out /tmp/codex-extractor-smoke/flower.png
+
+for source in /tmp/codex-extractor-smoke/dummy.pdf \
+  /tmp/codex-extractor-smoke/flower.jpg \
+  /tmp/codex-extractor-smoke/flower.png; do
+  go run ./server/cmd/mem-understand "$source" \
+    --plugin="$(pwd)/plugins/codex-extractor/mem-understand-codex-extractor" \
+    --model-provider=codex_app_server \
+    --model-name=gpt-6-luna \
+    --model-effort=medium \
+    --app-server-command="$(command -v codex)"
+done
+```
+
+This requires Go, Python 3.12+, `uv`, `curl`, macOS `sips` for PNG conversion, and a locally installed, signed-in `codex` executable. Replace model flags with an available Codex model if needed.
+
+The plugin explicitly enables `shell_tool`, `unified_exec`, and `view_image`; for PNG/JPEG, Codex invokes `view_image` with the staged local path. It disables skill search, multi-agent, plugin, app, browser, computer-use, and image-generation features, and disables web search. Each turn uses the temporary directory as its only writable root with network access disabled. Codex uses the user's existing local sign-in. Token totals and per-turn usage are included when the app-server reports complete snapshots.
 
 Startup first uses an app-server process to discover skill paths and effective MCP settings without starting any model turns. It then restarts app-server with transient configuration disabling every discovered skill (including PDF) and configured MCP server. It checks that no skills remain enabled before extraction. This keeps the skill catalog out of the model conversation and leaves the user's normal Codex settings unchanged. See [Codex skill configuration](https://learn.chatgpt.com/docs/build-skills).
 

@@ -139,12 +139,13 @@ func BuildRequest(
 	return request, requestBytes, nil
 }
 
-// Artifact is one independently attributed Markdown output from a plugin.
+// Artifact is one independently attributed plugin output.
 type Artifact struct {
 	Kind       string
 	MediaType  string
 	Content    string
 	Provenance map[string]json.RawMessage
+	Scope      map[string]json.RawMessage
 }
 
 // Result is one complete protocol v1 response.
@@ -561,6 +562,14 @@ func decodeArtifact(raw json.RawMessage) (Artifact, error) {
 	}
 	if err := json.Unmarshal(provenanceJSON, &artifact.Provenance); err != nil {
 		return Artifact{}, fmt.Errorf("decode provenance: %w", err)
+	}
+	if scopeJSON, exists := fields["scope"]; exists {
+		if !jsonBeginsWith(scopeJSON, '{') {
+			return Artifact{}, errors.New("scope must be a JSON object")
+		}
+		if err := json.Unmarshal(scopeJSON, &artifact.Scope); err != nil {
+			return Artifact{}, fmt.Errorf("decode scope: %w", err)
+		}
 	}
 	return artifact, nil
 }

@@ -304,6 +304,37 @@ func TestValidateResultSupportsJSONDocumentData(t *testing.T) {
 	}
 }
 
+func TestValidateResultRetainsObjectArtifactScope(t *testing.T) {
+	resultBytes := []byte(
+		`{"protocol_version":1,"plugin_version":"test-1","artifacts":[{"kind":"document_text","media_type":"text/markdown","content":"page text","provenance":{},"scope":{"page":2,"region":[1,2,3,4]}}],"warnings":[]}`,
+	)
+	result, err := ValidateResult(resultBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := result.Artifacts[0].Scope
+	var page int
+	if err := json.Unmarshal(scope["page"], &page); err != nil || page != 2 {
+		t.Fatalf("scope page = %q, decode error = %v", scope["page"], err)
+	}
+	if string(scope["region"]) != "[1,2,3,4]" {
+		t.Fatalf("scope region = %s", scope["region"])
+	}
+}
+
+func TestValidateResultRejectsNonObjectArtifactScope(t *testing.T) {
+	const valid = `{"protocol_version":1,"plugin_version":"test-1","artifacts":[{"kind":"document_text","media_type":"text/markdown","content":"page text","provenance":{},"scope":{"page":2}}],"warnings":[]}`
+	for _, scope := range []string{"null", "[]", `"page"`} {
+		t.Run(scope, func(t *testing.T) {
+			input := []byte(strings.Replace(valid, `"scope":{"page":2}`, `"scope":`+scope, 1))
+			_, err := ValidateResult(input)
+			if err == nil || !strings.Contains(err.Error(), "scope must be a JSON object") {
+				t.Fatalf("ValidateResult error = %v, want object scope error", err)
+			}
+		})
+	}
+}
+
 func TestValidateResultRejectsInvalidJSONArtifactContent(t *testing.T) {
 	for _, test := range []struct {
 		name    string

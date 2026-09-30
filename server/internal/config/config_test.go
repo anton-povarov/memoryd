@@ -29,6 +29,52 @@ func TestDefaultsAreSafe(t *testing.T) {
 	}
 }
 
+func TestParseRejectsInvalidUnderstandingPlugins(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "zero worker limit",
+			yaml: "understanding:\n  max_concurrent: 0\n",
+			want: "max_concurrent",
+		},
+		{
+			name: "relative executable",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [pdf]\n      media_types: [application/pdf]\n",
+			want: "absolute executable",
+		},
+		{
+			name: "noncanonical media type",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [Application/PDF]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "media type missing subtype",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [pdf]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "media type parameters",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [application/pdf; charset=utf-8]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "overlapping media types",
+			yaml: "understanding:\n  plugins:\n    first:\n      command: [/opt/first]\n      media_types: [application/pdf]\n    second:\n      command: [/opt/second]\n      media_types: [application/pdf]\n",
+			want: "configured by both plugins",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse([]byte(test.yaml))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Parse error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestLoadAppliesValuesAndDerivedPaths(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memoryd.yaml")
 	contents := `server:

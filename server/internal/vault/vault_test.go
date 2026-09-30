@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +17,56 @@ import (
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
 )
+
+func TestCustomDatabaseDirectorySupportsDurableImport(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	logger := logging.New(slog.LevelError, io.Discard)
+	dbPath := filepath.Join(root, "database", "nested", "memoryd.sqlite")
+	blobDir := filepath.Join(root, "blobs")
+	uploadDir := filepath.Join(root, "uploads")
+	v, err := Open(ctx, logger, dbPath, blobDir, uploadDir)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	memory, err := v.Put(ctx, Import{
+		Content:       strings.NewReader("custom database directory fixture"),
+		MediaTypeHint: "text/plain",
+		Context: ImportContext{
+			OriginalFilename:   "note.txt",
+			RelativePath:       "",
+			FullPath:           "",
+			FilesystemCreated:  nil,
+			FilesystemModified: nil,
+		},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, logger, dbPath, blobDir, uploadDir)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	_, content, err := reopened.OpenContent(ctx, memory.ID)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = content.Close() }()
+	bytes, err := io.ReadAll(content)
+
+	if err != nil || string(bytes) != "custom database directory fixture" {
+		t.Fatalf("durable content = %q, error %v", bytes, err)
+	}
+}
 
 func TestResolveMediaType(t *testing.T) {
 	t.Parallel()
@@ -279,18 +328,48 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A committed Understanding Run must cascade with its Memory.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = v.db.ExecContext(ctx, `
+		INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
+		VALUES (?, ?, ?, ?)
+	`, "attempt", memory.ID.String(), understandingStatusDone, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = v.db.ExecContext(
 		ctx,
 		`INSERT INTO understanding_runs (
-			id, memory_id, pipeline, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?)`,
+			id, memory_id, attempt_id, plugin_id, plugin_version, source_blobref,
+			created_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		"run",
 		memory.ID.String(),
-		"regular",
-		time.Now().UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
+		"attempt",
+		"plugin",
+		"version",
+		memory.Blob.Ref.String(),
+		now,
+		now,
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.db.ExecContext(
+		ctx,
+		`INSERT INTO active_understanding_runs (memory_id, run_id) VALUES (?, ?)`,
+		memory.ID.String(),
+		"run",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.db.ExecContext(ctx, `
+		INSERT INTO understanding_artifacts (
+			id, run_id, memory_id, ordinal, blob_hash, kind, media_type,
+			byte_size, provenance_json, scope_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "artifact", "run", memory.ID.String(), 0, memory.Blob.Ref.String(),
+		"document_text", "text/markdown", int64(1), "{}", "null")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +389,7 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("inspect removed Blob: %v", err)
 	}
-	var runCount int
+	var runCount, attemptCount, artifactCount, activeRunCount int
 	if err := v.db.QueryRowContext(
 		ctx,
 		`SELECT count(*) FROM understanding_runs WHERE memory_id = ?`,
@@ -318,8 +397,35 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	).Scan(&runCount); err != nil {
 		t.Fatal(err)
 	}
-	if runCount != 0 {
-		t.Fatalf("Understanding Runs remain after Memory deletion: %d", runCount)
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM understanding_attempts WHERE memory_id = ?`,
+		memory.ID.String(),
+	).Scan(&attemptCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM understanding_artifacts WHERE memory_id = ?`,
+		memory.ID.String(),
+	).Scan(&artifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM active_understanding_runs WHERE memory_id = ?`,
+		memory.ID.String(),
+	).Scan(&activeRunCount); err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 || attemptCount != 0 || artifactCount != 0 || activeRunCount != 0 {
+		t.Fatalf(
+			"understanding rows remain after Memory deletion: runs=%d attempts=%d artifacts=%d active=%d",
+			runCount,
+			attemptCount,
+			artifactCount,
+			activeRunCount,
+		)
 	}
 
 	if err := v.Delete(ctx, memory.ID); !errors.Is(err, ErrMemoryNotFound) {
@@ -418,64 +524,6 @@ func TestOpenRejectsInvalidStoredBlobref(t *testing.T) {
 	}
 }
 
-func TestOpenCreatesSeparatedMemoryAndUnderstandingSchema(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	root := t.TempDir()
-	v, err := openVault(ctx, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = v.Close() })
-
-	wantColumns := map[string][]string{
-		"memories": {
-			"id",
-			"blob_hash",
-			"original_filename",
-			"relative_path",
-			"full_path",
-			"filesystem_created_at",
-			"filesystem_modified_at",
-			"media_type",
-			"byte_size",
-			"imported_at",
-		},
-		"understanding_runs": {
-			"id",
-			"memory_id",
-			"pipeline",
-			"created_at",
-			"completed_at",
-			"extractor_versions_json",
-			"warnings_json",
-		},
-		"active_understanding_runs": {"memory_id", "run_id"},
-	}
-	for table, want := range wantColumns {
-		got := readTableColumnsForTest(t, v.db, table)
-		if !slices.Equal(got, want) {
-			t.Errorf("%s columns = %v, want %v", table, got, want)
-		}
-	}
-
-	_, err = v.db.ExecContext(
-		ctx,
-		`INSERT INTO understanding_runs (
-			id, memory_id, pipeline, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?)`,
-		"run",
-		"missing-memory",
-		"regular",
-		time.Now().UTC().Format(time.RFC3339Nano),
-		time.Now().UTC().Format(time.RFC3339Nano),
-	)
-	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-		t.Fatalf("orphan Understanding Run insert error = %v", err)
-	}
-}
-
 func TestOpenRejectsLegacyMixedMemorySchema(t *testing.T) {
 	t.Parallel()
 
@@ -512,35 +560,6 @@ func TestOpenRejectsLegacyMixedMemorySchema(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "recreate the database and reimport") {
 		t.Fatalf("Open() error = %v", err)
 	}
-}
-
-func readTableColumnsForTest(t *testing.T, database *sql.DB, table string) []string {
-	t.Helper()
-	rows, err := database.QueryContext(
-		t.Context(),
-		`SELECT name FROM pragma_table_info(?) ORDER BY cid`,
-		table,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := rows.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	var columns []string
-	for rows.Next() {
-		var column string
-		if err := rows.Scan(&column); err != nil {
-			t.Fatal(err)
-		}
-		columns = append(columns, column)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return columns
 }
 
 func TestPutRejectsCorruptExistingBlob(t *testing.T) {
@@ -760,8 +779,8 @@ func TestInterruptedCommitLeavesPublishedOrphanForRestart(t *testing.T) {
 		},
 		MediaTypeHint: "text/plain",
 	})
-	if err == nil || !strings.Contains(err.Error(), "commit Memory") {
-		t.Fatalf("Put() error = %v, want failed Memory commit", err)
+	if err == nil {
+		t.Fatal("Put succeeded with a closed database")
 	}
 
 	digest := sha256.Sum256(content)

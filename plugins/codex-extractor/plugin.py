@@ -65,6 +65,8 @@ Analyze the attached original artefact and import context below.
 
 Reply with a concise description and a grounded summary, both in English.
 
+For PNG or JPEG inputs, use Codex's `view_image` tool on the supplied local document path. Do not treat image bytes as text. If an image has no readable text or structured data, describe only visible content and say so; do not invent text, numbers, identifiers, or context.
+
 Do not preserve original document layout.
 Do not invent missing content or details.
 
@@ -99,7 +101,7 @@ Import context:
 {import_context}
 """
 
-JSON_PROMPT = """Return the document's relevant structured data as JSON matching the response schema. The original document remains attached in this thread and is authoritative; use the first-turn Markdown only as a guide, and correct it against the source. Preserve original-language values, use English semantic keys, and include only grounded information. Return JSON only."""
+JSON_PROMPT = """Return the document's relevant structured data as JSON matching the response schema. The original document remains attached in this thread and is authoritative; use the first-turn Markdown only as a guide, and correct it against the source. Preserve original-language values, use English semantic keys, and include only grounded information. For PNG or JPEG inputs, inspect the supplied local path with Codex's `view_image` tool. If the image has no readable text or structured data, leave facts, events, references, and signals empty and note the absence in uncertainties; do not invent text or data. Return JSON only."""
 
 
 DOCUMENT_DATA_SCHEMA = {
@@ -536,6 +538,8 @@ def staged_filename(import_context, media_type):
     if not isinstance(supplied, str) or not supplied.strip():
         default_names = {
             "application/pdf": "document.pdf",
+            "image/png": "document.png",
+            "image/jpeg": "document.jpg",
             "application/json": "document.json",
             "text/plain": "document.txt",
             "text/markdown": "document.md",

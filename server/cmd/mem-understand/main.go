@@ -64,7 +64,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		failure = err.Error()
 	}
 	if failure == "" {
-		execution := understanding.Run(context.Background(), options.plugin, requestBytes, stderr)
+		execution := understanding.Run(
+			context.Background(),
+			[]string{options.plugin},
+			requestBytes,
+			stderr,
+		)
 		stdoutBytes = execution.Stdout
 		stderrBytes = execution.Stderr
 		metadata.Execution = executionMetadata{

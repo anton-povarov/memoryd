@@ -30,16 +30,18 @@ var (
 )
 
 type Handler struct {
-	version string
-	logger  *logging.Logger
-	vault   *vault.Vault
+	version       string
+	logger        *logging.Logger
+	vault         *vault.Vault
+	understanding *understandingWorker
 }
 
 func NewHandler(version string, logger *logging.Logger, memoryVault *vault.Vault) *Handler {
 	return &Handler{
-		version: version,
-		logger:  logger,
-		vault:   memoryVault,
+		version:       version,
+		logger:        logger,
+		vault:         memoryVault,
+		understanding: nil,
 	}
 }
 
@@ -130,7 +132,15 @@ func (h *Handler) GetMemory(
 	if err != nil {
 		return nil, err
 	}
-	return api.GetMemory200JSONResponse(memoryDetail(memory)), nil
+	understanding, err := h.vault.Understanding(ctx, memory.ID)
+
+	if errors.Is(err, vault.ErrMemoryNotFound) {
+		return api.GetMemory404JSONResponse(notFoundError()), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return api.GetMemory200JSONResponse(memoryDetail(memory, understanding)), nil
 }
 
 func (h *Handler) GetMemoryContent(
@@ -367,6 +377,10 @@ func (h *Handler) ImportMemory(
 		return importInternalError(ctx, logger, err), nil
 	}
 
+	if h.understanding != nil {
+		h.understanding.Wake()
+	}
+
 	return api.ImportMemory201JSONResponse(memorySummary(memory)), nil
 }
 
@@ -455,7 +469,7 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 	}
 }
 
-func memoryDetail(memory vault.Memory) api.MemoryDetail {
+func memoryDetail(memory vault.Memory, understanding vault.UnderstandingDetails) api.MemoryDetail {
 	contentURL := api.ServerUrlLocalMemorydServer + "/memories/" + memory.ID.String() + "/content"
 	context := api.ImportContext{
 		FilesystemCreatedAt:  memory.ImportContext.FilesystemCreated,
@@ -474,7 +488,80 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 		Memory:        memorySummary(memory),
 		ContentUrl:    &contentURL,
 		ImportContext: context,
+		Understanding: understandingDetail(understanding),
 	}
+}
+
+func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDetails {
+	result := api.UnderstandingDetails{
+		Status:        api.UnderstandingDetailsStatus(details.Status),
+		LatestAttempt: nil,
+		ActiveRun:     nil,
+	}
+
+	if attempt := details.Attempt; attempt != nil {
+		result.LatestAttempt = &api.UnderstandingAttempt{
+			Id:          attempt.ID,
+			PluginId:    attempt.PluginID,
+			Status:      api.UnderstandingAttemptStatus(attempt.Status),
+			QueuedAt:    attempt.QueuedAt,
+			StartedAt:   attempt.StartedAt,
+			CompletedAt: attempt.CompletedAt,
+			Diagnostics: nil,
+		}
+
+		if diagnostics := attempt.Diagnostics; diagnostics != nil {
+			result.LatestAttempt.Diagnostics = &api.UnderstandingDiagnostics{
+				Error:    diagnostics.Error,
+				Stdout:   diagnostics.Stdout,
+				Stderr:   diagnostics.Stderr,
+				ExitCode: diagnostics.ExitCode,
+			}
+		}
+	}
+	if run := details.ActiveRun; run != nil {
+		artifacts := make([]api.DerivedContent, 0, len(run.Artifacts))
+
+		for _, artifact := range run.Artifacts {
+			var scope *map[string]any
+
+			if artifact.Scope != nil {
+				object := jsonObject(artifact.Scope)
+				scope = &object
+			}
+			artifacts = append(artifacts, api.DerivedContent{
+				Id:         artifact.ID,
+				BlobHash:   artifact.Blob.Ref.String(),
+				ByteSize:   artifact.Blob.ByteSize,
+				Kind:       artifact.Kind,
+				MediaType:  api.DerivedContentMediaType(artifact.Blob.MediaType),
+				Content:    artifact.Content,
+				Provenance: jsonObject(artifact.Provenance),
+				Scope:      scope,
+			})
+		}
+		result.ActiveRun = &api.UnderstandingRun{
+			Id:            run.ID,
+			AttemptId:     run.AttemptID,
+			PluginId:      run.PluginID,
+			PluginVersion: run.PluginVersion,
+			SourceBlobref: run.SourceBlobref.String(),
+			CreatedAt:     run.CreatedAt,
+			CompletedAt:   run.CompletedAt,
+			Warnings:      run.Warnings,
+			Artifacts:     artifacts,
+		}
+	}
+	return result
+}
+
+func jsonObject(fields map[string]json.RawMessage) map[string]any {
+	object := make(map[string]any, len(fields))
+
+	for key, value := range fields {
+		object[key] = value
+	}
+	return object
 }
 
 func notFoundError() api.Error {

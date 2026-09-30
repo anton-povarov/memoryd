@@ -29,6 +29,24 @@ import (
 // ServerUrlLocalMemorydServer defines the Server URL for Local memoryd server
 const ServerUrlLocalMemorydServer = "/api/v0"
 
+// Defines values for DerivedContentMediaType.
+const (
+	Applicationjson DerivedContentMediaType = "application/json"
+	Textmarkdown    DerivedContentMediaType = "text/markdown"
+)
+
+// Valid indicates whether the value is a known member of the DerivedContentMediaType enum.
+func (e DerivedContentMediaType) Valid() bool {
+	switch e {
+	case Applicationjson:
+		return true
+	case Textmarkdown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	Ok HealthResponseStatus = "ok"
@@ -43,6 +61,71 @@ func (e HealthResponseStatus) Valid() bool {
 		return false
 	}
 }
+
+// Defines values for UnderstandingAttemptStatus.
+const (
+	UnderstandingAttemptStatusDone    UnderstandingAttemptStatus = "done"
+	UnderstandingAttemptStatusFailed  UnderstandingAttemptStatus = "failed"
+	UnderstandingAttemptStatusQueued  UnderstandingAttemptStatus = "queued"
+	UnderstandingAttemptStatusRunning UnderstandingAttemptStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingAttemptStatus enum.
+func (e UnderstandingAttemptStatus) Valid() bool {
+	switch e {
+	case UnderstandingAttemptStatusDone:
+		return true
+	case UnderstandingAttemptStatusFailed:
+		return true
+	case UnderstandingAttemptStatusQueued:
+		return true
+	case UnderstandingAttemptStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UnderstandingDetailsStatus.
+const (
+	UnderstandingDetailsStatusDone    UnderstandingDetailsStatus = "done"
+	UnderstandingDetailsStatusFailed  UnderstandingDetailsStatus = "failed"
+	UnderstandingDetailsStatusQueued  UnderstandingDetailsStatus = "queued"
+	UnderstandingDetailsStatusRunning UnderstandingDetailsStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingDetailsStatus enum.
+func (e UnderstandingDetailsStatus) Valid() bool {
+	switch e {
+	case UnderstandingDetailsStatusDone:
+		return true
+	case UnderstandingDetailsStatusFailed:
+		return true
+	case UnderstandingDetailsStatusQueued:
+		return true
+	case UnderstandingDetailsStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// DerivedContent Independent Derived Content belonging to its containing Run, not another Memory or verified Fact.
+type DerivedContent struct {
+	BlobHash string `json:"blob_hash"`
+	ByteSize int64  `json:"byte_size"`
+
+	// Content UTF-8 Markdown or serialized JSON object, according to media_type.
+	Content    string                  `json:"content"`
+	Id         openapi_types.UUID      `json:"id"`
+	Kind       string                  `json:"kind"`
+	MediaType  DerivedContentMediaType `json:"media_type"`
+	Provenance map[string]interface{}  `json:"provenance"`
+	Scope      *map[string]interface{} `json:"scope,omitempty"`
+}
+
+// DerivedContentMediaType defines model for DerivedContent.MediaType.
+type DerivedContentMediaType string
 
 // DuplicateMemory defines model for DuplicateMemory.
 type DuplicateMemory struct {
@@ -107,8 +190,9 @@ type MemoryDetail struct {
 	ContentUrl *string `json:"content_url,omitempty"`
 
 	// ImportContext Stored provenance from the first successful import.
-	ImportContext ImportContext `json:"import_context"`
-	Memory        MemorySummary `json:"memory"`
+	ImportContext ImportContext        `json:"import_context"`
+	Memory        MemorySummary        `json:"memory"`
+	Understanding UnderstandingDetails `json:"understanding"`
 }
 
 // MemoryPage defines model for MemoryPage.
@@ -128,6 +212,58 @@ type MemorySummary struct {
 	OriginalCreatedAt  *time.Time         `json:"original_created_at,omitempty"`
 	OriginalFilename   string             `json:"original_filename"`
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
+}
+
+// UnderstandingAttempt defines model for UnderstandingAttempt.
+type UnderstandingAttempt struct {
+	CompletedAt *time.Time                `json:"completed_at,omitempty"`
+	Diagnostics *UnderstandingDiagnostics `json:"diagnostics,omitempty"`
+	Id          openapi_types.UUID        `json:"id"`
+
+	// PluginId Configured plugin ID; empty when no plugin is selected.
+	PluginId  string                     `json:"plugin_id"`
+	QueuedAt  time.Time                  `json:"queued_at"`
+	StartedAt *time.Time                 `json:"started_at,omitempty"`
+	Status    UnderstandingAttemptStatus `json:"status"`
+}
+
+// UnderstandingAttemptStatus defines model for UnderstandingAttempt.Status.
+type UnderstandingAttemptStatus string
+
+// UnderstandingDetails defines model for UnderstandingDetails.
+type UnderstandingDetails struct {
+	// ActiveRun The last complete successful Run; failed attempts do not replace it.
+	ActiveRun     *UnderstandingRun          `json:"active_run"`
+	LatestAttempt *UnderstandingAttempt      `json:"latest_attempt"`
+	Status        UnderstandingDetailsStatus `json:"status"`
+}
+
+// UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
+type UnderstandingDetailsStatus string
+
+// UnderstandingDiagnostics defines model for UnderstandingDiagnostics.
+type UnderstandingDiagnostics struct {
+	Error    string `json:"error"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+
+	// Stderr Captured plugin diagnostics; may contain private source content.
+	Stderr string `json:"stderr"`
+
+	// Stdout Captured plugin stdout, including invalid protocol output.
+	Stdout string `json:"stdout"`
+}
+
+// UnderstandingRun defines model for UnderstandingRun.
+type UnderstandingRun struct {
+	Artifacts     []DerivedContent   `json:"artifacts"`
+	AttemptId     openapi_types.UUID `json:"attempt_id"`
+	CompletedAt   time.Time          `json:"completed_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	Id            openapi_types.UUID `json:"id"`
+	PluginId      string             `json:"plugin_id"`
+	PluginVersion string             `json:"plugin_version"`
+	SourceBlobref string             `json:"source_blobref"`
+	Warnings      []string           `json:"warnings"`
 }
 
 // Cursor defines model for Cursor.
@@ -1036,43 +1172,52 @@ func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"rjb/HwA=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

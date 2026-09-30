@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -23,30 +24,57 @@ type Execution struct {
 	Stderr       []byte
 }
 
-// Run executes one plugin process with requestBytes on stdin and captures both
+const processWaitDelay = time.Second
+
+// Run executes one plugin command with requestBytes on stdin and captures both
 // output streams concurrently through os/exec. A process failure is recorded
 // in Execution so callers can persist the available exchange before reporting it.
 func Run(
 	ctx context.Context,
-	executable string,
+	argv []string,
 	requestBytes []byte,
 	liveStderr io.Writer,
 ) Execution {
 	startedAt := time.Now().UTC()
-	execution := Execution{StartedAt: startedAt}
-	if !filepath.IsAbs(executable) {
+	execution := Execution{
+		StartedAt:    startedAt,
+		CompletedAt:  time.Time{},
+		Duration:     0,
+		ExitCode:     nil,
+		ProcessError: "",
+		Stdout:       nil,
+		Stderr:       nil,
+	}
+	if len(argv) == 0 {
+		execution.ProcessError = "plugin command must contain an executable"
+		execution.CompletedAt = time.Now().UTC()
+		execution.Duration = execution.CompletedAt.Sub(startedAt)
+		return execution
+	}
+	if !filepath.IsAbs(argv[0]) {
 		execution.ProcessError = "plugin executable path must be absolute"
 		execution.CompletedAt = time.Now().UTC()
 		execution.Duration = execution.CompletedAt.Sub(startedAt)
 		return execution
 	}
 
-	command := exec.CommandContext(ctx, executable)
+	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	configureProcess(command)
+	command.WaitDelay = processWaitDelay
 	command.Stdin = bytes.NewReader(requestBytes)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = stderrCapture{capture: &stderr, forward: liveStderr}
 	err := command.Run()
+	// A parent can exit while descendants still hold output pipes or keep
+	// running with redirected output. Release the worker slot only after
+	// terminating the remaining process group.
+	if command.Process != nil {
+		if cleanupErr := command.Cancel(); cleanupErr != nil &&
+			!errors.Is(cleanupErr, os.ErrProcessDone) {
+			err = errors.Join(err, fmt.Errorf("stop plugin descendants: %w", cleanupErr))
+		}
+	}
 	execution.CompletedAt = time.Now().UTC()
 	execution.Duration = execution.CompletedAt.Sub(startedAt)
 	execution.Stdout = stdout.Bytes()

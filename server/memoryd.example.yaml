@@ -12,3 +12,12 @@ storage:
 
 logging:
   level: info
+
+understanding:
+  max_concurrent: 1
+  plugins: {}
+  # Example plugin:
+  # plugins:
+  #   pdf:
+  #     command: [/absolute/path/to/pdf-understand]
+  #     media_types: [application/pdf]

@@ -70,7 +70,7 @@ paths:
       summary: Get committed Memory details
       responses:
         "200":
-          description: The Memory and its stored Import Context.
+          description: The Memory, its Import Context, and background understanding status and active Run.
           content:
             application/json:
               schema:
@@ -341,7 +341,7 @@ components:
 
     MemoryDetail:
       type: object
-      required: [memory, import_context]
+      required: [memory, import_context, understanding]
       properties:
         memory:
           $ref: "#/components/schemas/MemorySummary"
@@ -350,6 +350,132 @@ components:
           description: Relative URL of the content download endpoint.
         import_context:
           $ref: "#/components/schemas/ImportContext"
+        understanding:
+          $ref: "#/components/schemas/UnderstandingDetails"
+
+    UnderstandingDetails:
+      type: object
+      required: [status, latest_attempt, active_run]
+      properties:
+        status:
+          type: string
+          enum: [queued, running, done, failed]
+        latest_attempt:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingAttempt"
+          nullable: true
+        active_run:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingRun"
+          nullable: true
+          description: The last complete successful Run; failed attempts do not replace it.
+
+    UnderstandingAttempt:
+      type: object
+      required: [id, plugin_id, status, queued_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+          description: Configured plugin ID; empty when no plugin is selected.
+        status:
+          type: string
+          enum: [queued, running, done, failed]
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        diagnostics:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingDiagnostics"
+          nullable: true
+
+    UnderstandingDiagnostics:
+      type: object
+      required: [error, stdout, stderr]
+      properties:
+        error:
+          type: string
+        stdout:
+          type: string
+          description: Captured plugin stdout, including invalid protocol output.
+        stderr:
+          type: string
+          description: Captured plugin diagnostics; may contain private source content.
+        exit_code:
+          type: integer
+          nullable: true
+
+    UnderstandingRun:
+      type: object
+      required: [id, attempt_id, plugin_id, plugin_version, source_blobref, created_at, completed_at, warnings, artifacts]
+      properties:
+        id:
+          type: string
+          format: uuid
+        attempt_id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+        plugin_version:
+          type: string
+        source_blobref:
+          type: string
+          pattern: "^sha256-[a-f0-9]{64}$"
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        warnings:
+          type: array
+          items:
+            type: string
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DerivedContent"
+
+    DerivedContent:
+      type: object
+      required: [id, blob_hash, byte_size, kind, media_type, content, provenance]
+      description: Independent Derived Content belonging to its containing Run, not another Memory or verified Fact.
+      properties:
+        id:
+          type: string
+          format: uuid
+        blob_hash:
+          type: string
+          pattern: "^sha256-[a-f0-9]{64}$"
+        byte_size:
+          type: integer
+          format: int64
+          minimum: 0
+        kind:
+          type: string
+        media_type:
+          type: string
+          enum: [text/markdown, application/json]
+        content:
+          type: string
+          description: UTF-8 Markdown or serialized JSON object, according to media_type.
+        provenance:
+          type: object
+          additionalProperties: true
+        scope:
+          type: object
+          additionalProperties: true
 
     ImportContext:
       type: object

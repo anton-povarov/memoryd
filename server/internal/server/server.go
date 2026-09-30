@@ -22,9 +22,10 @@ import (
 const requestIDHeader = "X-Request-ID"
 
 type Server struct {
-	config     config.ServerConfig
-	httpServer *http.Server
-	logger     *logging.Logger
+	config        config.ServerConfig
+	httpServer    *http.Server
+	logger        *logging.Logger
+	understanding *understandingWorker
 }
 
 func New(
@@ -35,6 +36,9 @@ func New(
 ) (*Server, error) {
 	if logger == nil {
 		panic("server.New: must provide a logger")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	httpLogger := logger.With(logging.System("http"))
@@ -111,11 +115,18 @@ func New(
 	httpServer.Handler = handler
 	httpServer.ErrorLog = slog.NewLogLogger(
 		logging.ForOperation(httpLogger, "ServeHTTP").Handler(), slog.LevelError)
+	worker, err := newUnderstandingWorker(memoryVault, cfg.Understanding, logger)
+
+	if err != nil {
+		return nil, err
+	}
+	httpHandler.understanding = worker
 
 	return &Server{
-		config:     cfg.Server,
-		httpServer: httpServer,
-		logger:     httpLogger,
+		config:        cfg.Server,
+		httpServer:    httpServer,
+		logger:        httpLogger,
+		understanding: worker,
 	}, nil
 }
 
@@ -124,9 +135,18 @@ func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
+// Close stops background understanding and HTTP serving before the Vault closes.
+// Run calls this automatically; embedders using Handler must call it themselves.
+func (s *Server) Close() error {
+	s.understanding.Close()
+	return s.httpServer.Close()
+}
+
 // Run serves until ctx is cancelled or the listener fails. Cancellation starts
 // graceful shutdown and bounds request draining by the configured timeout.
 func (s *Server) Run(ctx context.Context) error {
+	defer func() { _ = s.Close() }()
+
 	logger := logging.ForOperation(s.logger, "Run")
 	errorsFromServer := make(chan error, 1)
 	go func() {

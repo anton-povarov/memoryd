@@ -122,6 +122,7 @@ func TestImportMemoryHTTPStoresContextAndSeparatesBlobFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = s.Close() })
 
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
