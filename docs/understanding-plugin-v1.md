@@ -23,7 +23,9 @@ understanding:
 
 The `plugins` map key is the nonempty, stable plugin ID associated with attempts and artifacts. `command` is an argument vector launched directly, never a shell command; its executable must be absolute. Each plugin declares one or more exact canonical Media Types, and a Media Type may belong to only one plugin. `max_concurrent` defaults to `1` and limits all workers across imports and startup recovery.
 
-Memoryd validates configuration at startup but does not launch or probe plugin executables. A missing executable fails its first attempt and is recorded. A Blob with no matching plugin receives a successful Run with a warning naming its unsupported Media Type. Adding a plugin later does not automatically rebuild earlier Runs. Plugins may use models internally; memoryd does not route models.
+Memoryd validates configuration at startup but does not launch or probe plugin executables. A missing executable fails its first attempt and is recorded. A Blob with no matching plugin receives a successful Run with a warning naming its unsupported Media Type. Adding a plugin later does not automatically rebuild earlier Runs.
+
+Server configuration optionally supplies `models.document_understanding`, passed as the request's `model` to the selected plugin. Its fields are `provider: codex_app_server`, `name`, `reasoning_effort`, and `command: [/absolute/path/to/codex, app-server, --stdio]`; see [`server/memoryd.example.yaml`](../server/memoryd.example.yaml). The Codex extractor requires this section; model-free plugins may omit it. Codex uses the server user's local sign-in. Credentials and extra app-server arguments are rejected. There is no automatic provider/model fallback.
 
 ## Process lifetime and transport
 

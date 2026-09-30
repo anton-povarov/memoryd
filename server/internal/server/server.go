@@ -115,7 +115,9 @@ func New(
 	httpServer.Handler = handler
 	httpServer.ErrorLog = slog.NewLogLogger(
 		logging.ForOperation(httpLogger, "ServeHTTP").Handler(), slog.LevelError)
-	worker, err := newUnderstandingWorker(memoryVault, cfg.Understanding, logger)
+	worker, err := newUnderstandingWorker(
+		memoryVault, cfg.Understanding, cfg.Models.DocumentUnderstanding, logger,
+	)
 
 	if err != nil {
 		return nil, err

@@ -15,9 +15,20 @@ logging:
 
 understanding:
   max_concurrent: 1
-  plugins: {}
-  # Example plugin:
-  # plugins:
-  #   pdf:
-  #     command: [/absolute/path/to/pdf-understand]
-  #     media_types: [application/pdf]
+  plugins:
+    pdf:
+      media_types: [application/pdf]
+      # Replace with the absolute path to this repository's Codex extractor.
+      command: [/absolute/path/to/memoryd/plugins/codex-extractor/mem-understand-codex-extractor]
+
+# Required by the Codex extractor. Omit this section for a model-free plugin.
+# Both executable paths above/below must be replaced for your installation.
+# YAML does not expand ~, environment variables, or shell expressions.
+models:
+  document_understanding:
+    provider: codex_app_server
+    name: gpt-6-luna
+    reasoning_effort: medium
+    # Run `command -v codex` as the server user to locate this executable.
+    # Codex uses that user's existing local sign-in; no credentials belong here.
+    command: [/absolute/path/to/codex, app-server, --stdio]

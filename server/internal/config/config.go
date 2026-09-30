@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/anton-povarov/memoryd/server/internal/understanding"
 )
 
 const (
@@ -34,6 +36,11 @@ type Config struct {
 	Storage       StorageConfig       `yaml:"storage"`
 	Logging       LoggingConfig       `yaml:"logging"`
 	Understanding UnderstandingConfig `yaml:"understanding"`
+	Models        ModelsConfig        `yaml:"models"`
+}
+
+type ModelsConfig struct {
+	DocumentUnderstanding *understanding.RequestModel `yaml:"document_understanding"`
 }
 
 type ServerConfig struct {
@@ -82,6 +89,7 @@ func Defaults() Config {
 			MaxConcurrent: DefaultUnderstandingMaxConcurrent,
 			Plugins:       nil,
 		},
+		Models: ModelsConfig{DocumentUnderstanding: nil},
 	}
 	return c.withDerivedPaths()
 }
@@ -134,6 +142,11 @@ func (c Config) Validate() error {
 	}
 	if err := validateUnderstandingConfig(c.Understanding); err != nil {
 		return fmt.Errorf("understanding: %w", err)
+	}
+	if model := c.Models.DocumentUnderstanding; model != nil {
+		if err := model.Validate(); err != nil {
+			return fmt.Errorf("models.document_understanding: %w", err)
+		}
 	}
 	return nil
 }

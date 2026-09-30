@@ -213,12 +213,10 @@ if ! mkdir "$1/active"; then
 fi
 trap 'rmdir "$1/active"' EXIT
 echo "$$" >> "$1/starts"
-sleep 60 &
+sleep 60 >/dev/null 2>&1 &
 child=$!
 echo "$child" > "$1/child"
 while [ ! -f "$1/release" ]; do sleep 0.01; done
-kill "$child"
-wait "$child" || true
 printf '%s\n' '` + completeUnderstandingResult + `'
 `
 	plugin := writeUnderstandingPlugin(t, root, "gated-extract", body)

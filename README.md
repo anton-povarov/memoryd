@@ -21,7 +21,9 @@ go mod download
 go run ./server/cmd/memoryd
 ```
 
-Or with config file:
+Or with a config file: replace both executable paths in
+`server/memoryd.example.yaml` and choose a model available to your signed-in
+local Codex installation before importing documents.
 ```sh
 go run ./server/cmd/memoryd -c server/memoryd.example.yaml
 ```
@@ -52,6 +54,18 @@ section of the example server configuration. Commands are argument vectors
 launched without a shell. `max_concurrent` bounds both new imports and recovered
 attempts; the default is one. Executables are not probed at startup.
 
+Model-assisted plugins receive `models.document_understanding` from central
+server configuration. The example config supplies the Codex extractor with
+`provider`, `name`, `reasoning_effort`, and the absolute Codex app-server command.
+Omit this section for model-free plugins; the Codex extractor requires it.
+Codex uses the server user's existing local sign-in, not credentials in YAML.
+
+At `info` level, logs show configuration counts, queueing, attempt and plugin
+start/exit, completion, warnings, and failures. Failures include captured plugin
+stderr; `debug` also exposes stderr from successful plugins. Treat these logs as
+private: plugin diagnostics may contain source content. Stderr is captured until
+process exit, not streamed live.
+
 `GET /api/v0/memories/{id}` includes `understanding.status` (`queued`, `running`,
 `done`, or `failed`), `latest_attempt`, and `active_run`. Each active artifact
 includes its content, derived Blobref, kind, Media Type, independent provenance,
@@ -68,8 +82,9 @@ migrations. Preserve existing data before recreating a Vault and reimporting.
 
 For standalone extraction without a server or Vault, use `mem-understand`.
 The [Codex extractor](plugins/codex-extractor/README.md) accepts PDFs, PNGs, and
-JPEGs through this command with a locally authenticated Codex model. Server-side
-model routing and client presentation of understanding remain separate work.
+JPEGs with a locally authenticated Codex model, either through this command or
+configured server plugins. Client presentation of understanding remains separate
+work.
 
 ## Development
 

@@ -75,6 +75,23 @@ func TestParseRejectsInvalidUnderstandingPlugins(t *testing.T) {
 	}
 }
 
+func TestParseRejectsUnsafeDocumentUnderstandingModelCommand(t *testing.T) {
+	_, err := Parse([]byte(`models:
+  document_understanding:
+    provider: codex_app_server
+    name: configured-model
+    reasoning_effort: medium
+    command: [/opt/codex, app-server, --stdio, --token, secret]
+`))
+
+	if err == nil || !strings.Contains(err.Error(), "models.document_understanding") {
+		t.Fatalf(
+			"unsafe model command accepted or error did not identify model configuration: %v",
+			err,
+		)
+	}
+}
+
 func TestLoadAppliesValuesAndDerivedPaths(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memoryd.yaml")
 	contents := `server:

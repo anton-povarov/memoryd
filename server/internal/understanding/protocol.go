@@ -36,10 +36,10 @@ type Request struct {
 // plugin. Command contains only the executable and fixed app-server arguments;
 // authentication remains in the local Codex installation.
 type RequestModel struct {
-	Provider        string   `json:"provider"`
-	Name            string   `json:"name"`
-	ReasoningEffort string   `json:"reasoning_effort"`
-	Command         []string `json:"command"`
+	Provider        string   `json:"provider" yaml:"provider"`
+	Name            string   `json:"name" yaml:"name"`
+	ReasoningEffort string   `json:"reasoning_effort" yaml:"reasoning_effort"`
+	Command         []string `json:"command" yaml:"command"`
 }
 
 // Validate checks that a model selection is complete and cannot carry

@@ -17,6 +17,7 @@ type rawConfig struct {
 	Storage       *rawStorage       `yaml:"storage"`
 	Logging       *rawLogging       `yaml:"logging"`
 	Understanding *rawUnderstanding `yaml:"understanding"`
+	Models        *ModelsConfig     `yaml:"models"`
 }
 
 type rawServer struct {
@@ -124,6 +125,9 @@ func parseYAMLConfig(data []byte) (Config, error) {
 				c.Understanding.Plugins[pluginID] = UnderstandingPluginConfig(plugin)
 			}
 		}
+	}
+	if raw.Models != nil {
+		c.Models = *raw.Models
 	}
 	return c.withDerivedPaths(), nil
 }

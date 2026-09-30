@@ -378,6 +378,10 @@ func (h *Handler) ImportMemory(
 	}
 
 	if h.understanding != nil {
+		logger.InfoContext(ctx, "Memory queued for Document Understanding",
+			"memory_id", memory.ID.String(),
+			"media_type", memory.Blob.MediaType,
+		)
 		h.understanding.Wake()
 	}
 
