@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -210,7 +211,7 @@ func attrString(value slog.Value) string {
 	if value.Kind() == slog.KindString {
 		return value.String()
 	}
-	return fmt.Sprint(jsonValue(value))
+	return fmt.Sprint(slogValueToAnyValue(value))
 }
 
 func writeSpecialSuffix(line *strings.Builder, special devSpecialAttrs) {
@@ -423,25 +424,68 @@ func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
 	}
 
 	// fmt.Printf("%v <== %#v [%v]\n", attr.Key, jsonValue(attr.Value), attr.Value.Kind())
-	target[attr.Key] = jsonValue(attr.Value)
+	target[attr.Key] = slogValueToAnyValue(attr.Value)
 }
 
-func jsonValue(value slog.Value) any {
+func slogValueToAnyValue(value slog.Value) any {
 	if value.Kind() == slog.KindDuration {
 		return value.Duration().String()
 	}
+	anyValue := value.Any()
 	if value.Kind() == slog.KindAny {
-		if err, ok := value.Any().(error); ok {
+		if err, ok := anyValue.(error); ok {
 			return err.Error()
 		}
-		if ptr, ok := value.Any().(*string); ok {
-			if ptr == nil {
+		return reflectValueStringer(reflect.ValueOf(anyValue), nil)
+	}
+	return anyValue
+}
+
+func reflectValueStringer(v reflect.Value, parents []reflect.Value) any {
+	if !v.IsValid() {
+		return nil
+	}
+	if v.Kind() == reflect.Interface {
+		return reflectValueStringer(v.Elem(), parents)
+	}
+	if v.Kind() == reflect.Pointer {
+		switch v.Type().Elem().Kind() {
+		case reflect.Bool, reflect.String,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Struct:
+			if v.IsNil() {
 				return nil
 			}
-			return *ptr
+			if v.Type().Elem().Kind() == reflect.Struct {
+				// ponytail: O(depth²) path scans; use a pointer/type set if deep graphs matter.
+				for _, parent := range parents {
+					if parent.Type() == v.Type() && parent.Pointer() == v.Pointer() {
+						return "<cycle>"
+					}
+				}
+				parents = append(parents, v)
+			}
+			v = v.Elem()
 		}
 	}
-	return value.Any()
+	if v.Kind() == reflect.Struct {
+		var text strings.Builder
+		typ := v.Type()
+		text.WriteByte('{')
+		for i := range v.NumField() {
+			if i > 0 {
+				text.WriteString(", ")
+			}
+			fmt.Fprintf(&text, "%s: %v", typ.Field(i).Name, reflectValueStringer(v.Field(i), parents))
+		}
+		text.WriteByte('}')
+		return text.String()
+	}
+	if v.CanInterface() {
+		return v.Interface()
+	}
+	return v
 }
 
 func writeLevel(line *strings.Builder, level slog.Level) {
