@@ -70,6 +70,7 @@ type UnderstandingConfig struct {
 type UnderstandingPluginConfig struct {
 	Command    []string `yaml:"command"`
 	MediaTypes []string `yaml:"media_types"`
+	LogDir     string   `yaml:"log_dir"`
 }
 
 func Defaults() Config {
@@ -168,9 +169,9 @@ func validateUnderstandingConfig(understanding UnderstandingConfig) error {
 		}
 
 		plugin := understanding.Plugins[pluginID]
-		if len(plugin.Command) == 0 || !filepath.IsAbs(plugin.Command[0]) {
+		if len(plugin.Command) == 0 || strings.TrimSpace(plugin.Command[0]) == "" {
 			return fmt.Errorf(
-				"plugin %q command must contain an absolute executable",
+				"plugin %q command must contain a nonempty executable",
 				pluginID,
 			)
 		}

@@ -46,13 +46,32 @@ type UnderstandingAttempt struct {
 	Diagnostics *UnderstandingDiagnostics
 }
 
+type Statistics struct {
+	Usage *TokenUsage `json:"usage,omitempty"`
+}
+
+type TokenUsage struct {
+	InputTokens           *int64 `json:"input_tokens,omitempty"`
+	CachedInputTokens     *int64 `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens *int64 `json:"cache_write_input_tokens,omitempty"`
+	OutputTokens          *int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens *int64 `json:"reasoning_output_tokens,omitempty"`
+	TotalTokens           *int64 `json:"total_tokens,omitempty"`
+}
+
+type CostEstimate struct {
+	AmountUSD   float64 `json:"amount_usd"`
+	Basis       string  `json:"basis"`
+	PricingDate string  `json:"pricing_date,omitempty"`
+	PricingURL  string  `json:"pricing_url,omitempty"`
+}
+
 type DerivedContent struct {
 	ID         uuid.UUID
 	Blob       BlobInfo
-	Kind       string
 	Content    string
-	Provenance map[string]json.RawMessage
-	Scope      map[string]json.RawMessage
+	Provenance json.RawMessage
+	Scope      json.RawMessage
 }
 
 type UnderstandingRun struct {
@@ -65,7 +84,14 @@ type UnderstandingRun struct {
 	CreatedAt     time.Time
 	CompletedAt   time.Time
 	Warnings      []string
+	Statistics    *Statistics
+	CostEstimate  *CostEstimate
 	Artifacts     []DerivedContent
+}
+
+type understandingRunReporting struct {
+	Statistics   *Statistics   `json:"statistics,omitempty"`
+	CostEstimate *CostEstimate `json:"cost_estimate,omitempty"`
 }
 
 type UnderstandingDetails struct {
@@ -217,9 +243,12 @@ func (v *Vault) SetUnderstandingPlugin(
 func (v *Vault) FinishUnderstanding(
 	ctx context.Context,
 	attempt UnderstandingAttempt,
+	runID uuid.UUID,
 	pluginVersion string,
 	artifacts []DerivedContent,
 	warnings []string,
+	statistics *Statistics,
+	costEstimate *CostEstimate,
 ) error {
 	if attempt.Status != understandingStatusRunning {
 		return ErrUnderstandingAttemptNotRunning
@@ -244,28 +273,25 @@ func (v *Vault) FinishUnderstanding(
 	if err != nil {
 		return fmt.Errorf("encode understanding warnings: %w", err)
 	}
+	var reportingJSON []byte
+	if statistics != nil || costEstimate != nil {
+		reportingJSON, err = json.Marshal(understandingRunReporting{
+			Statistics:   statistics,
+			CostEstimate: costEstimate,
+		})
+		if err != nil {
+			return fmt.Errorf("encode Understanding Run reporting: %w", err)
+		}
+	}
 	storedArtifacts := make([]storedUnderstandingArtifact, len(artifacts))
 	for index, artifact := range artifacts {
-		provenance := artifact.Provenance
-		if provenance == nil {
-			provenance = map[string]json.RawMessage{}
-		}
-		provenanceJSON, err := json.Marshal(provenance)
-		if err != nil {
-			return fmt.Errorf("encode artifact provenance: %w", err)
-		}
-		scopeJSON, err := json.Marshal(artifact.Scope)
-		if err != nil {
-			return fmt.Errorf("encode artifact scope: %w", err)
-		}
 		storedArtifacts[index] = storedUnderstandingArtifact{
 			id:             uuid.New(),
 			ordinal:        index,
-			kind:           artifact.Kind,
 			content:        artifact.Content,
-			mediaType:      artifact.Blob.MediaType,
-			provenanceJSON: string(provenanceJSON),
-			scopeJSON:      string(scopeJSON),
+			contentType:    artifact.Blob.MediaType,
+			provenanceJSON: rawJSONArgument(artifact.Provenance),
+			scopeJSON:      rawJSONArgument(artifact.Scope),
 			blob:           BlobInfo{},
 		}
 	}
@@ -276,7 +302,7 @@ func (v *Vault) FinishUnderstanding(
 		blob, err := v.publishDerivedBlob(
 			ctx,
 			storedArtifacts[index].content,
-			storedArtifacts[index].mediaType,
+			storedArtifacts[index].contentType,
 		)
 		if err != nil {
 			return fmt.Errorf("publish derived Blob: %w", err)
@@ -299,7 +325,6 @@ func (v *Vault) FinishUnderstanding(
 	}
 
 	now := time.Now().UTC()
-	runID := uuid.New()
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO understanding_runs (
 			id, memory_id, attempt_id, plugin_id, plugin_version, source_blobref,
@@ -311,15 +336,24 @@ func (v *Vault) FinishUnderstanding(
 	if err != nil {
 		return fmt.Errorf("insert Understanding Run: %w", err)
 	}
+	if len(reportingJSON) > 0 {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO understanding_run_statistics (run_id, statistics_json)
+			VALUES (?, ?)
+		`, runID.String(), string(reportingJSON))
+		if err != nil {
+			return fmt.Errorf("insert Understanding Run reporting: %w", err)
+		}
+	}
 	for _, artifact := range storedArtifacts {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO understanding_artifacts (
-				id, run_id, memory_id, ordinal, blob_hash, kind, media_type,
+				id, run_id, memory_id, ordinal, blob_hash, content_type,
 				byte_size, provenance_json, scope_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, artifact.id.String(), runID.String(), memory.ID.String(), artifact.ordinal,
-			artifact.blob.Ref.String(), artifact.kind, artifact.blob.MediaType,
-			artifact.blob.ByteSize, artifact.provenanceJSON, artifact.scopeJSON)
+			artifact.blob.Ref.String(), artifact.blob.MediaType, artifact.blob.ByteSize,
+			artifact.provenanceJSON, artifact.scopeJSON)
 		if err != nil {
 			return fmt.Errorf("insert derived artifact: %w", err)
 		}
@@ -399,12 +433,18 @@ func runningUnderstandingAttempt(
 type storedUnderstandingArtifact struct {
 	id             uuid.UUID
 	ordinal        int
-	kind           string
 	content        string
-	mediaType      string
-	provenanceJSON string
-	scopeJSON      string
+	contentType    string
+	provenanceJSON any
+	scopeJSON      any
 	blob           BlobInfo
+}
+
+func rawJSONArgument(value json.RawMessage) any {
+	if value == nil {
+		return nil
+	}
+	return string(value)
 }
 
 func (v *Vault) publishDerivedBlob(
@@ -556,10 +596,12 @@ func (v *Vault) Understanding(
 	run, err := scanUnderstandingRun(tx.QueryRowContext(ctx, `
 		SELECT run.id, run.memory_id, run.attempt_id, run.plugin_id,
 			run.plugin_version, run.source_blobref, run.created_at,
-			run.completed_at, run.warnings_json
+			run.completed_at, run.warnings_json, statistics.statistics_json
 		FROM active_understanding_runs active
 		JOIN understanding_runs run
 			ON run.id = active.run_id AND run.memory_id = active.memory_id
+		LEFT JOIN understanding_run_statistics statistics
+			ON statistics.run_id = run.id
 		WHERE active.memory_id = ?
 	`, memoryID.String()))
 	switch {
@@ -639,6 +681,7 @@ func scanUnderstandingRun(row rowScanner) (UnderstandingRun, error) {
 	var run UnderstandingRun
 	var id, memoryID, attemptID, sourceBlobref string
 	var createdAt, completedAt, warningsJSON string
+	var statisticsJSON sql.NullString
 	if err := row.Scan(
 		&id,
 		&memoryID,
@@ -649,6 +692,7 @@ func scanUnderstandingRun(row rowScanner) (UnderstandingRun, error) {
 		&createdAt,
 		&completedAt,
 		&warningsJSON,
+		&statisticsJSON,
 	); err != nil {
 		return UnderstandingRun{}, err
 	}
@@ -674,6 +718,14 @@ func scanUnderstandingRun(row rowScanner) (UnderstandingRun, error) {
 	if err := json.Unmarshal([]byte(warningsJSON), &run.Warnings); err != nil {
 		return UnderstandingRun{}, fmt.Errorf("read Understanding Run warnings: %w", err)
 	}
+	if statisticsJSON.Valid {
+		var reporting understandingRunReporting
+		if err := json.Unmarshal([]byte(statisticsJSON.String), &reporting); err != nil {
+			return UnderstandingRun{}, fmt.Errorf("read Understanding Run reporting: %w", err)
+		}
+		run.Statistics = reporting.Statistics
+		run.CostEstimate = reporting.CostEstimate
+	}
 	if run.Warnings == nil {
 		run.Warnings = []string{}
 	}
@@ -687,7 +739,7 @@ func (v *Vault) readUnderstandingArtifacts(
 	run *UnderstandingRun,
 ) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, blob_hash, kind, media_type, byte_size, provenance_json, scope_json
+		SELECT id, blob_hash, content_type, byte_size, provenance_json, scope_json
 		FROM understanding_artifacts
 		WHERE run_id = ? AND memory_id = ? ORDER BY ordinal
 	`, run.ID.String(), run.MemoryID.String())
@@ -697,11 +749,11 @@ func (v *Vault) readUnderstandingArtifacts(
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var artifact DerivedContent
-		var id, blobHash, provenanceJSON, scopeJSON string
+		var id, blobHash string
+		var provenanceJSON, scopeJSON sql.NullString
 		if err := rows.Scan(
 			&id,
 			&blobHash,
-			&artifact.Kind,
 			&artifact.Blob.MediaType,
 			&artifact.Blob.ByteSize,
 			&provenanceJSON,
@@ -715,14 +767,11 @@ func (v *Vault) readUnderstandingArtifacts(
 		if artifact.Blob.Ref, err = ParseBlobref(blobHash); err != nil {
 			return fmt.Errorf("read derived artifact Blobref: %w", err)
 		}
-		if err := json.Unmarshal([]byte(provenanceJSON), &artifact.Provenance); err != nil {
-			return fmt.Errorf("read derived artifact provenance: %w", err)
+		if provenanceJSON.Valid {
+			artifact.Provenance = json.RawMessage(provenanceJSON.String)
 		}
-		if artifact.Provenance == nil {
-			artifact.Provenance = map[string]json.RawMessage{}
-		}
-		if err := json.Unmarshal([]byte(scopeJSON), &artifact.Scope); err != nil {
-			return fmt.Errorf("read derived artifact scope: %w", err)
+		if scopeJSON.Valid {
+			artifact.Scope = json.RawMessage(scopeJSON.String)
 		}
 		artifact.Content, err = readVerifiedBlob(
 			v.derivedBlobPath(artifact.Blob.Ref),

@@ -237,19 +237,20 @@ func (v *Vault) initialize(ctx context.Context) error {
 			substr(blob_hash, 1, 7) = 'sha256-' AND
 			substr(blob_hash, 8) NOT GLOB '*[^0-9a-f]*'
 		),
-		kind TEXT NOT NULL,
-		media_type TEXT NOT NULL,
+		content_type TEXT NOT NULL,
 		byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
-		provenance_json TEXT NOT NULL
-			CHECK (json_valid(provenance_json) AND json_type(provenance_json) = 'object'),
-		scope_json TEXT NOT NULL
-			CHECK (
-				json_valid(scope_json) AND
-				json_type(scope_json) IN ('object', 'null')
-			),
+		provenance_json TEXT CHECK (json_valid(provenance_json)),
+		scope_json TEXT CHECK (json_valid(scope_json)),
 		UNIQUE (run_id, ordinal),
 		FOREIGN KEY (run_id, memory_id)
 			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS understanding_run_statistics (
+		run_id TEXT PRIMARY KEY NOT NULL,
+		statistics_json TEXT NOT NULL CHECK (
+			json_valid(statistics_json) AND json_type(statistics_json) = 'object'
+		),
+		FOREIGN KEY (run_id) REFERENCES understanding_runs(id) ON DELETE CASCADE
 	)`
 
 	logger.DebugContext(ctx, "Initializing schema")
@@ -349,12 +350,12 @@ func (v *Vault) validateSchema(ctx context.Context) error {
 			"memory_id",
 			"ordinal",
 			"blob_hash",
-			"kind",
-			"media_type",
+			"content_type",
 			"byte_size",
 			"provenance_json",
 			"scope_json",
 		},
+		"understanding_run_statistics": {"run_id", "statistics_json"},
 	}
 	for table, want := range wantColumns {
 		got, err := tableColumns(ctx, v.db, table)

@@ -136,7 +136,7 @@ Because the MVP has one server writer, memoryd could initially require a single 
 
 ### Bounded understanding prototype
 
-After the SQLite-authoritative [plugin pipeline](../understanding-plugin-v1.md) is implemented, try this storage direction in a separate prototype. Memoryd would validate a plugin result, store each artifact as a derived Blob, then store a normalized `UnderstandingRun/v1` Blob with artifact content replaced by blobrefs. Retaining the original inline plugin response as another Blob is unnecessary unless an audit need emerges.
+After the SQLite-authoritative [plugin pipeline](../understanding-plugin-v2.md) is implemented, try this storage direction in a separate prototype. Memoryd would validate a plugin result, store each artifact as a derived Blob, then store a normalized `UnderstandingRun/v1` Blob with artifact content replaced by blobrefs. Retaining the original inline plugin response as another Blob is unnecessary unless an audit need emerges.
 
 Run Blobs alone cannot tell a rebuilder which ones were committed or active. Publish a small, durable per-Memory revision reference outside SQLite as the final commit marker. A crash before that publication leaves ignorable orphan Blobs; a crash after it leaves a SQLite projection to catch up. Prototype acceptance is rebuilding the understanding tables and search projection from those references, while retaining the current SQLite `memories` table, and comparing active Runs and per-artifact provenance. Rebuilding *all* of SQLite still requires authoritative Memory manifests at import.
 

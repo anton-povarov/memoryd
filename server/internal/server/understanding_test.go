@@ -62,7 +62,29 @@ func TestUnsupportedUnderstandingSurvivesRestart(t *testing.T) {
 	}
 }
 
-const completeUnderstandingResult = `{"protocol_version":1,"plugin_version":"fixture-1","artifacts":[{"kind":"document_text","media_type":"text/markdown","content":"# Harbour invoice\nTotal AED 125.00\n","provenance":{"method":"embedded-text"},"scope":{"page":1}},{"kind":"description","media_type":"text/markdown","content":"# Harbour invoice\nTotal AED 125.00\n","provenance":{"method":"model-summary"}},{"kind":"document_data","media_type":"application/json","content":"{\"total\":\"125.00\",\"currency\":\"AED\"}","provenance":{"method":"field-extraction"}}],"warnings":["image coverage limited"]}`
+const completeUnderstandingResult = `{
+  "protocol_version": 2,
+  "plugin_version": "fixture-1",
+  "artifacts": [
+    {
+      "content_type": "text/markdown",
+      "content": "# Harbour invoice\nTotal AED 125.00\n",
+      "provenance": { "method": "embedded-text" },
+      "scope": { "page": 1 }
+    },
+    {
+      "content_type": "text/markdown",
+      "content": "# Harbour invoice\nTotal AED 125.00\n",
+      "provenance": { "method": "model-summary" }
+    },
+    {
+      "content_type": "application/json",
+      "content": "{\"total\":\"125.00\",\"currency\":\"AED\"}",
+      "provenance": { "method": "field-extraction" }
+    }
+  ],
+  "warnings": ["image coverage limited"]
+}`
 
 func TestDerivedContentRetainsIndependentProvenanceAfterRestart(t *testing.T) {
 	root := t.TempDir()
@@ -89,12 +111,10 @@ func TestDerivedContentRetainsIndependentProvenanceAfterRestart(t *testing.T) {
 
 	if text.ID == description.ID || text.BlobHash != description.BlobHash ||
 		text.Provenance["method"] != "embedded-text" || description.Provenance["method"] != "model-summary" ||
-		text.Scope["page"] != float64(
-			1,
-		) || text.Kind != "document_text" || description.Kind != "description" {
+		text.Scope["page"] != float64(1) {
 		t.Fatalf("independent artifact provenance lost: %#v", run.Artifacts)
 	}
-	if data.Kind != "document_data" || data.MediaType != "application/json" ||
+	if data.ContentType != "application/json" ||
 		data.Content != `{"total":"125.00","currency":"AED"}` {
 		t.Fatalf("JSON Derived Content = %#v", data)
 	}
@@ -378,13 +398,12 @@ type understandingWireDetail struct {
 			SourceBlobref string   `json:"source_blobref"`
 			Warnings      []string `json:"warnings"`
 			Artifacts     []struct {
-				ID         string         `json:"id"`
-				BlobHash   string         `json:"blob_hash"`
-				Kind       string         `json:"kind"`
-				MediaType  string         `json:"media_type"`
-				Content    string         `json:"content"`
-				Provenance map[string]any `json:"provenance"`
-				Scope      map[string]any `json:"scope"`
+				ID          string         `json:"id"`
+				BlobHash    string         `json:"blob_hash"`
+				ContentType string         `json:"content_type"`
+				Content     string         `json:"content"`
+				Provenance  map[string]any `json:"provenance"`
+				Scope       map[string]any `json:"scope"`
 			} `json:"artifacts"`
 		} `json:"active_run"`
 	} `json:"understanding"`

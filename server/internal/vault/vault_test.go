@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -365,11 +366,18 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	}
 	_, err = v.db.ExecContext(ctx, `
 		INSERT INTO understanding_artifacts (
-			id, run_id, memory_id, ordinal, blob_hash, kind, media_type,
+			id, run_id, memory_id, ordinal, blob_hash, content_type,
 			byte_size, provenance_json, scope_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, "artifact", "run", memory.ID.String(), 0, memory.Blob.Ref.String(),
-		"document_text", "text/markdown", int64(1), "{}", "null")
+		"text/markdown", int64(1), "{}", "null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.db.ExecContext(ctx, `
+		INSERT INTO understanding_run_statistics (run_id, statistics_json)
+		VALUES (?, ?)
+	`, "run", `{"usage":{"input_tokens":1}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,18 +426,154 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	).Scan(&activeRunCount); err != nil {
 		t.Fatal(err)
 	}
-	if runCount != 0 || attemptCount != 0 || artifactCount != 0 || activeRunCount != 0 {
+	var statisticsCount int
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM understanding_run_statistics WHERE run_id = ?`,
+		"run",
+	).Scan(&statisticsCount); err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 || attemptCount != 0 || artifactCount != 0 ||
+		activeRunCount != 0 || statisticsCount != 0 {
 		t.Fatalf(
-			"understanding rows remain after Memory deletion: runs=%d attempts=%d artifacts=%d active=%d",
+			"understanding rows remain after Memory deletion: runs=%d attempts=%d artifacts=%d active=%d statistics=%d",
 			runCount,
 			attemptCount,
 			artifactCount,
 			activeRunCount,
+			statisticsCount,
 		)
 	}
-
 	if err := v.Delete(ctx, memory.ID); !errors.Is(err, ErrMemoryNotFound) {
 		t.Fatalf("second delete = %v, want ErrMemoryNotFound", err)
+	}
+}
+
+func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := openVault(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := v
+	t.Cleanup(func() { _ = initial.Close() })
+
+	put := func(filename, content string) Memory {
+		t.Helper()
+		memory, err := v.Put(ctx, Import{
+			Content:       strings.NewReader(content),
+			MediaTypeHint: "text/plain",
+			Context: ImportContext{
+				OriginalFilename: filename,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return memory
+	}
+	finish := func(memory Memory, statistics *Statistics, costEstimate *CostEstimate) {
+		t.Helper()
+		_, attempt, err := v.ClaimUnderstanding(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt.MemoryID != memory.ID {
+			t.Fatalf("claimed Memory ID = %s, want %s", attempt.MemoryID, memory.ID)
+		}
+		if err := v.SetUnderstandingPlugin(ctx, attempt.ID, "codex"); err != nil {
+			t.Fatal(err)
+		}
+		if err := v.FinishUnderstanding(ctx, attempt, attempt.ID, "1.0", []DerivedContent{{
+			Content: "# Derived\n",
+			Blob:    BlobInfo{MediaType: "text/markdown"},
+		}}, nil, statistics, costEstimate); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	withReporting := put("with-reporting.txt", "first memory")
+	inputTokens, cachedInputTokens, cacheWriteInputTokens := int64(13), int64(2), int64(3)
+	outputTokens, reasoningOutputTokens, totalTokens := int64(5), int64(1), int64(18)
+	wantStatistics := &Statistics{Usage: &TokenUsage{
+		InputTokens:           &inputTokens,
+		CachedInputTokens:     &cachedInputTokens,
+		CacheWriteInputTokens: &cacheWriteInputTokens,
+		OutputTokens:          &outputTokens,
+		ReasoningOutputTokens: &reasoningOutputTokens,
+		TotalTokens:           &totalTokens,
+	}}
+	wantCostEstimate := &CostEstimate{
+		AmountUSD:   0.0012,
+		Basis:       "API-equivalent list pricing",
+		PricingDate: "2026-09-30",
+		PricingURL:  "https://example.invalid/pricing",
+	}
+	finish(withReporting, wantStatistics, wantCostEstimate)
+	withoutReporting := put("without-reporting.txt", "second memory")
+	finish(withoutReporting, nil, nil)
+
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	v, err = openVault(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := v
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	details, err := v.Understanding(ctx, withReporting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.ActiveRun == nil ||
+		!reflect.DeepEqual(details.ActiveRun.Statistics, wantStatistics) ||
+		!reflect.DeepEqual(details.ActiveRun.CostEstimate, wantCostEstimate) {
+		t.Fatalf("reopened Run reporting = %#v", details.ActiveRun)
+	}
+	details, err = v.Understanding(ctx, withoutReporting.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.ActiveRun == nil || details.ActiveRun.Statistics != nil ||
+		details.ActiveRun.CostEstimate != nil || len(details.ActiveRun.Artifacts) != 1 {
+		t.Fatalf("Run without reporting = %#v", details.ActiveRun)
+	}
+
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(root, "memoryd.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `DROP TABLE understanding_run_statistics`); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	v, err = openVault(ctx, root)
+	if err != nil {
+		t.Fatalf("reopen pre-statistics schema: %v", err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	details, err = v.Understanding(ctx, withReporting.ID)
+	if err != nil {
+		t.Fatalf("read existing Run after additive schema creation: %v", err)
+	}
+	if details.ActiveRun == nil || details.ActiveRun.Statistics != nil ||
+		details.ActiveRun.CostEstimate != nil ||
+		len(
+			details.ActiveRun.Artifacts,
+		) != 1 || details.ActiveRun.Artifacts[0].Content != "# Derived\n" {
+		t.Fatalf("existing Run after schema upgrade = %#v", details.ActiveRun)
 	}
 }
 

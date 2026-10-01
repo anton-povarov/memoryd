@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
 )
 
@@ -47,12 +46,6 @@ func Run(
 	}
 	if len(argv) == 0 {
 		execution.ProcessError = "plugin command must contain an executable"
-		execution.CompletedAt = time.Now().UTC()
-		execution.Duration = execution.CompletedAt.Sub(startedAt)
-		return execution
-	}
-	if !filepath.IsAbs(argv[0]) {
-		execution.ProcessError = "plugin executable path must be absolute"
 		execution.CompletedAt = time.Now().UTC()
 		execution.Duration = execution.CompletedAt.Sub(startedAt)
 		return execution

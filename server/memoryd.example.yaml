@@ -18,17 +18,18 @@ understanding:
   plugins:
     pdf:
       media_types: [application/pdf]
-      # Replace with the absolute path to this repository's Codex extractor.
-      command: [/absolute/path/to/memoryd/plugins/codex-extractor/mem-understand-codex-extractor]
+      # Optional raw stdout/stderr logs, written when each plugin process exits.
+      # log_dir: ./server/data/understanding-logs
+      # Relative to the server's working directory (here, the repository root).
+      command: [./plugins/codex-extractor/mem-understand-codex-extractor]
 
 # Required by the Codex extractor. Omit this section for a model-free plugin.
-# Both executable paths above/below must be replaced for your installation.
+# Codex is resolved through PATH; an absolute or relative executable path also works.
 # YAML does not expand ~, environment variables, or shell expressions.
 models:
   document_understanding:
     provider: codex_app_server
     name: gpt-6-luna
     reasoning_effort: medium
-    # Run `command -v codex` as the server user to locate this executable.
-    # Codex uses that user's existing local sign-in; no credentials belong here.
-    command: [/absolute/path/to/codex, app-server, --stdio]
+    # Codex uses the server user's existing local sign-in; no credentials belong here.
+    command: [codex, app-server, --stdio]

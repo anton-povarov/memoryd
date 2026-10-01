@@ -442,6 +442,14 @@ components:
           type: array
           items:
             type: string
+        statistics:
+          allOf:
+            - $ref: "#/components/schemas/Statistics"
+          description: Optional plugin-reported Run totals.
+        cost_estimate:
+          allOf:
+            - $ref: "#/components/schemas/CostEstimate"
+          description: Optional API-equivalent estimate, not subscription charges.
         artifacts:
           type: array
           items:
@@ -449,8 +457,8 @@ components:
 
     DerivedContent:
       type: object
-      required: [id, blob_hash, byte_size, kind, media_type, content, provenance]
-      description: Independent Derived Content belonging to its containing Run, not another Memory or verified Fact.
+      required: [id, blob_hash, byte_size, content_type, content]
+      description: Independent text artifact belonging to its containing Run.
       properties:
         id:
           type: string
@@ -462,20 +470,68 @@ components:
           type: integer
           format: int64
           minimum: 0
-        kind:
+        content_type:
           type: string
-        media_type:
-          type: string
-          enum: [text/markdown, application/json]
         content:
           type: string
-          description: UTF-8 Markdown or serialized JSON object, according to media_type.
+          description: Literal UTF-8 text content.
         provenance:
-          type: object
-          additionalProperties: true
+          description: Optional opaque plugin-defined JSON metadata.
         scope:
-          type: object
-          additionalProperties: true
+          description: Optional opaque plugin-defined JSON metadata.
+    Statistics:
+      type: object
+      additionalProperties: false
+      properties:
+        usage:
+          allOf:
+            - $ref: "#/components/schemas/TokenUsage"
+
+    TokenUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cached_input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cache_write_input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        reasoning_output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        total_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+
+    CostEstimate:
+      type: object
+      required: [amount_usd, basis]
+      additionalProperties: false
+      properties:
+        amount_usd:
+          type: number
+          format: double
+          minimum: 0
+        basis:
+          type: string
+          minLength: 1
+        pricing_date:
+          type: string
+        pricing_url:
+          type: string
 
     ImportContext:
       type: object

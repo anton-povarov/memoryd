@@ -17,24 +17,6 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for DerivedContentMediaType.
-const (
-	Applicationjson DerivedContentMediaType = "application/json"
-	Textmarkdown    DerivedContentMediaType = "text/markdown"
-)
-
-// Valid indicates whether the value is a known member of the DerivedContentMediaType enum.
-func (e DerivedContentMediaType) Valid() bool {
-	switch e {
-	case Applicationjson:
-		return true
-	case Textmarkdown:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for HealthResponseStatus.
 const (
 	Ok HealthResponseStatus = "ok"
@@ -98,22 +80,30 @@ func (e UnderstandingDetailsStatus) Valid() bool {
 	}
 }
 
-// DerivedContent Independent Derived Content belonging to its containing Run, not another Memory or verified Fact.
+// CostEstimate defines model for CostEstimate.
+type CostEstimate struct {
+	AmountUsd   float64 `json:"amount_usd"`
+	Basis       string  `json:"basis"`
+	PricingDate *string `json:"pricing_date,omitempty"`
+	PricingUrl  *string `json:"pricing_url,omitempty"`
+}
+
+// DerivedContent Independent text artifact belonging to its containing Run.
 type DerivedContent struct {
 	BlobHash string `json:"blob_hash"`
 	ByteSize int64  `json:"byte_size"`
 
-	// Content UTF-8 Markdown or serialized JSON object, according to media_type.
-	Content    string                  `json:"content"`
-	Id         openapi_types.UUID      `json:"id"`
-	Kind       string                  `json:"kind"`
-	MediaType  DerivedContentMediaType `json:"media_type"`
-	Provenance map[string]interface{}  `json:"provenance"`
-	Scope      *map[string]interface{} `json:"scope,omitempty"`
-}
+	// Content Literal UTF-8 text content.
+	Content     string             `json:"content"`
+	ContentType string             `json:"content_type"`
+	Id          openapi_types.UUID `json:"id"`
 
-// DerivedContentMediaType defines model for DerivedContent.MediaType.
-type DerivedContentMediaType string
+	// Provenance Optional opaque plugin-defined JSON metadata.
+	Provenance interface{} `json:"provenance,omitempty"`
+
+	// Scope Optional opaque plugin-defined JSON metadata.
+	Scope interface{} `json:"scope,omitempty"`
+}
 
 // DuplicateMemory defines model for DuplicateMemory.
 type DuplicateMemory struct {
@@ -202,6 +192,21 @@ type MemorySummary struct {
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
 }
 
+// Statistics defines model for Statistics.
+type Statistics struct {
+	Usage *TokenUsage `json:"usage,omitempty"`
+}
+
+// TokenUsage defines model for TokenUsage.
+type TokenUsage struct {
+	CacheWriteInputTokens *int64 `json:"cache_write_input_tokens,omitempty"`
+	CachedInputTokens     *int64 `json:"cached_input_tokens,omitempty"`
+	InputTokens           *int64 `json:"input_tokens,omitempty"`
+	OutputTokens          *int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens *int64 `json:"reasoning_output_tokens,omitempty"`
+	TotalTokens           *int64 `json:"total_tokens,omitempty"`
+}
+
 // UnderstandingAttempt defines model for UnderstandingAttempt.
 type UnderstandingAttempt struct {
 	CompletedAt *time.Time                `json:"completed_at,omitempty"`
@@ -243,15 +248,21 @@ type UnderstandingDiagnostics struct {
 
 // UnderstandingRun defines model for UnderstandingRun.
 type UnderstandingRun struct {
-	Artifacts     []DerivedContent   `json:"artifacts"`
-	AttemptId     openapi_types.UUID `json:"attempt_id"`
-	CompletedAt   time.Time          `json:"completed_at"`
+	Artifacts   []DerivedContent   `json:"artifacts"`
+	AttemptId   openapi_types.UUID `json:"attempt_id"`
+	CompletedAt time.Time          `json:"completed_at"`
+
+	// CostEstimate Optional API-equivalent estimate, not subscription charges.
+	CostEstimate  *CostEstimate      `json:"cost_estimate,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"`
 	Id            openapi_types.UUID `json:"id"`
 	PluginId      string             `json:"plugin_id"`
 	PluginVersion string             `json:"plugin_version"`
 	SourceBlobref string             `json:"source_blobref"`
-	Warnings      []string           `json:"warnings"`
+
+	// Statistics Optional plugin-reported Run totals.
+	Statistics *Statistics `json:"statistics,omitempty"`
+	Warnings   []string    `json:"warnings"`
 }
 
 // Cursor defines model for Cursor.

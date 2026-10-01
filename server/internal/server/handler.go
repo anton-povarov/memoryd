@@ -524,24 +524,54 @@ func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDe
 		}
 	}
 	if run := details.ActiveRun; run != nil {
+		var statistics *api.Statistics
+		if run.Statistics != nil {
+			statistics = &api.Statistics{}
+			if usage := run.Statistics.Usage; usage != nil {
+				statistics.Usage = &api.TokenUsage{
+					InputTokens:           usage.InputTokens,
+					CachedInputTokens:     usage.CachedInputTokens,
+					CacheWriteInputTokens: usage.CacheWriteInputTokens,
+					OutputTokens:          usage.OutputTokens,
+					ReasoningOutputTokens: usage.ReasoningOutputTokens,
+					TotalTokens:           usage.TotalTokens,
+				}
+			}
+		}
+		var costEstimate *api.CostEstimate
+		if estimate := run.CostEstimate; estimate != nil {
+			var pricingDate, pricingURL *string
+			if estimate.PricingDate != "" {
+				pricingDate = &estimate.PricingDate
+			}
+			if estimate.PricingURL != "" {
+				pricingURL = &estimate.PricingURL
+			}
+			costEstimate = &api.CostEstimate{
+				AmountUsd:   estimate.AmountUSD,
+				Basis:       estimate.Basis,
+				PricingDate: pricingDate,
+				PricingUrl:  pricingURL,
+			}
+		}
 		artifacts := make([]api.DerivedContent, 0, len(run.Artifacts))
 
 		for _, artifact := range run.Artifacts {
-			var scope *map[string]any
-
+			var provenance, scope any
+			if artifact.Provenance != nil {
+				provenance = artifact.Provenance
+			}
 			if artifact.Scope != nil {
-				object := jsonObject(artifact.Scope)
-				scope = &object
+				scope = artifact.Scope
 			}
 			artifacts = append(artifacts, api.DerivedContent{
-				Id:         artifact.ID,
-				BlobHash:   artifact.Blob.Ref.String(),
-				ByteSize:   artifact.Blob.ByteSize,
-				Kind:       artifact.Kind,
-				MediaType:  api.DerivedContentMediaType(artifact.Blob.MediaType),
-				Content:    artifact.Content,
-				Provenance: jsonObject(artifact.Provenance),
-				Scope:      scope,
+				Id:          artifact.ID,
+				BlobHash:    artifact.Blob.Ref.String(),
+				ByteSize:    artifact.Blob.ByteSize,
+				ContentType: artifact.Blob.MediaType,
+				Content:     artifact.Content,
+				Provenance:  provenance,
+				Scope:       scope,
 			})
 		}
 		result.ActiveRun = &api.UnderstandingRun{
@@ -553,19 +583,12 @@ func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDe
 			CreatedAt:     run.CreatedAt,
 			CompletedAt:   run.CompletedAt,
 			Warnings:      run.Warnings,
+			Statistics:    statistics,
+			CostEstimate:  costEstimate,
 			Artifacts:     artifacts,
 		}
 	}
 	return result
-}
-
-func jsonObject(fields map[string]json.RawMessage) map[string]any {
-	object := make(map[string]any, len(fields))
-
-	for key, value := range fields {
-		object[key] = value
-	}
-	return object
 }
 
 func notFoundError() api.Error {

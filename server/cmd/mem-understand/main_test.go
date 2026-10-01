@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anton-povarov/memoryd/server/internal/understanding"
+	"github.com/anton-povarov/memoryd/server/internal/vault"
 )
 
 func TestExternalCommandCapturesPluginExchange(t *testing.T) {
@@ -24,9 +24,11 @@ func TestExternalCommandCapturesPluginExchange(t *testing.T) {
 	}
 
 	requestCopyPath := filepath.Join(temporaryDirectory, "plugin-request.json")
-	expectedPluginStdout := []byte(
-		`{"protocol_version":1,"plugin_version":"smoke-1","usage":{"input_tokens":31531,"cached_input_tokens":23040,"cache_write_input_tokens":0,"output_tokens":107,"reasoning_output_tokens":0,"total_tokens":31638},"turn_usage":[{"turn":2,"usage":{"input_tokens":16000,"cached_input_tokens":10040,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":16050}},{"turn":1,"usage":{"input_tokens":15531,"cached_input_tokens":13000,"cache_write_input_tokens":0,"output_tokens":57,"reasoning_output_tokens":0,"total_tokens":15588}}],"cost_estimate":{"amount_usd":0.001133789,"basis":"standard_api_equivalent_short_context","pricing_date":"2026-09-28","pricing_url":"https://example.com/pricing"},"artifacts":[{"kind":"description","media_type":"text/markdown","content":"# Smoke result\nA readable artifact.","provenance":{"method":"smoke test","tool":"fake-plugin"}},{"kind":"document_text","media_type":"text/markdown","content":"## Other piece\nIndependent words.","provenance":{"method":"separate method","tool":"fake-plugin"}},{"kind":"document_data","media_type":"application/json","content":"{\n  \"title\": \"Statement\",\n  \"pages\": [1, 2]\n}","provenance":{"method":"structured extraction","tool":"fake-plugin"}}],"warnings":["limited coverage"]}`,
-	)
+	expectedPluginStdout := []byte(strings.ReplaceAll(
+		`{"protocol_version":2,"plugin_version":"smoke-2","statistics":{"usage":{"input_tokens":31531,"cached_input_tokens":23040,"cache_write_input_tokens":0,"output_tokens":107,"reasoning_output_tokens":0,"total_tokens":31638}},"cost_estimate":{"amount_usd":0.001,"basis":"standard_api_equivalent_short_context","pricing_date":"2026-09-28"},"artifacts":[{"content_type":"text/markdown","content":"# Smoke result\n<script>alert(1)</script>\nFENCEnested\nliteral\nFENCE\n","provenance":{"method":"smoke test","tool":"fake-plugin"},"scope":{"section":"first"}},{"content_type":"text/plain","content":"Independent words."},{"content_type":"application/json","content":"{\n  \"title\": \"Statement\",\n  \"pages\": [1, 2]\n}","provenance":{"method":"structured extraction","tool":"fake-plugin"}}],"warnings":["limited coverage"]}`,
+		"FENCE",
+		"```",
+	))
 	pluginPath := filepath.Join(temporaryDirectory, "fake-plugin")
 	pluginScript := "#!/bin/sh\ncat > \"$MEM_UNDERSTAND_REQUEST_COPY\"\nprintf '%s' '" + string(
 		expectedPluginStdout,
@@ -42,7 +44,7 @@ func TestExternalCommandCapturesPluginExchange(t *testing.T) {
 	if err := os.MkdirAll(contentDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, stale := range []string{"artifact-099.md", "artifact-100.json"} {
+	for _, stale := range []string{"artifact-099.md", "artifact-100.json", "artifact-101.txt"} {
 		if err := os.WriteFile(
 			filepath.Join(contentDirectory, stale),
 			[]byte("stale"),
@@ -78,7 +80,11 @@ func TestExternalCommandCapturesPluginExchange(t *testing.T) {
 		)
 	}
 
-	assertReadableReport(t, reportOutput.String())
+	if !strings.Contains(reportOutput.String(), "\nStatistics:\n") ||
+		!strings.Contains(reportOutput.String(), "\nCost estimate:\n") ||
+		!strings.Contains(reportOutput.String(), "0.001") {
+		t.Fatalf("report omitted structured reporting values: %s", reportOutput.String())
+	}
 
 	requestBytes, err := os.ReadFile(filepath.Join(captureDirectory, "request.json"))
 	if err != nil {
@@ -110,7 +116,7 @@ func TestExternalCommandCapturesPluginExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode captured Blob: %v", err)
 	}
-	if request.ProtocolVersion != 1 || request.Blob.ByteSize != int64(len(input)) ||
+	if request.ProtocolVersion != 2 || request.Blob.ByteSize != int64(len(input)) ||
 		request.Blob.MediaType != "text/plain" || !bytes.Equal(decodedContent, input) ||
 		request.Blob.Blobref == "" || request.ImportContext.OriginalFilename != "note.txt" {
 		t.Fatalf("captured request does not describe imported bytes and context: %#v", request)
@@ -135,12 +141,7 @@ func TestExternalCommandCapturesPluginExchange(t *testing.T) {
 		t.Fatalf("captured stderr = %q", stderrBytes)
 	}
 	filenames := assertCaptureMetadata(t, captureDirectory)
-	assertDerivedContentFiles(
-		t,
-		captureDirectory,
-		reportOutput.String(),
-		filenames,
-	)
+	assertDerivedContentFiles(t, captureDirectory, reportOutput.String(), filenames)
 	reportBytes, err := os.ReadFile(filepath.Join(captureDirectory, "report.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -289,33 +290,10 @@ func assertCaptureMetadata(t *testing.T, captureDirectory string) []string {
 		t.Fatal(err)
 	}
 	var metadata struct {
-		DerivedContentFiles []string `json:"derived_content_files"`
-		Usage               struct {
-			InputTokens           uint64  `json:"input_tokens"`
-			CachedInputTokens     uint64  `json:"cached_input_tokens"`
-			CacheWriteInputTokens *uint64 `json:"cache_write_input_tokens"`
-			OutputTokens          uint64  `json:"output_tokens"`
-			ReasoningOutputTokens uint64  `json:"reasoning_output_tokens"`
-			TotalTokens           uint64  `json:"total_tokens"`
-		} `json:"usage"`
-		TurnUsage []struct {
-			Turn  uint64 `json:"turn"`
-			Usage struct {
-				InputTokens           uint64  `json:"input_tokens"`
-				CachedInputTokens     uint64  `json:"cached_input_tokens"`
-				CacheWriteInputTokens *uint64 `json:"cache_write_input_tokens"`
-				OutputTokens          uint64  `json:"output_tokens"`
-				ReasoningOutputTokens uint64  `json:"reasoning_output_tokens"`
-				TotalTokens           uint64  `json:"total_tokens"`
-			} `json:"usage"`
-		} `json:"turn_usage"`
-		CostEstimate struct {
-			AmountUSD   float64 `json:"amount_usd"`
-			Basis       string  `json:"basis"`
-			PricingDate string  `json:"pricing_date"`
-			PricingURL  string  `json:"pricing_url"`
-		} `json:"cost_estimate"`
-		Execution struct {
+		DerivedContentFiles []string            `json:"derived_content_files"`
+		Statistics          *vault.Statistics   `json:"statistics"`
+		CostEstimate        *vault.CostEstimate `json:"cost_estimate"`
+		Execution           struct {
 			ExitCode       int    `json:"exit_code"`
 			ProcessStatus  string `json:"process_status"`
 			ProtocolStatus string `json:"protocol_status"`
@@ -329,22 +307,23 @@ func assertCaptureMetadata(t *testing.T, captureDirectory string) []string {
 		metadata.Execution.ProtocolStatus != "valid" {
 		t.Fatalf("unexpected execution metadata: %s", metadataBytes)
 	}
-	if metadata.Usage.InputTokens != 31531 || metadata.Usage.CachedInputTokens != 23040 ||
-		metadata.Usage.CacheWriteInputTokens == nil || *metadata.Usage.CacheWriteInputTokens != 0 ||
-		metadata.Usage.OutputTokens != 107 || metadata.Usage.ReasoningOutputTokens != 0 ||
-		metadata.Usage.TotalTokens != 31638 {
-		t.Fatalf("unexpected captured usage: %s", metadataBytes)
+	if metadata.Statistics == nil || metadata.Statistics.Usage == nil {
+		t.Fatalf("captured metadata omitted direct statistics: %s", metadataBytes)
 	}
-	if len(metadata.TurnUsage) != 2 || metadata.TurnUsage[0].Turn != 2 ||
-		metadata.TurnUsage[0].Usage.InputTokens != 16000 || metadata.TurnUsage[1].Turn != 1 ||
-		metadata.TurnUsage[1].Usage.InputTokens != 15531 {
-		t.Fatalf("unexpected captured turn usage: %s", metadataBytes)
+	usage := metadata.Statistics.Usage
+	if usage.InputTokens == nil || *usage.InputTokens != 31531 ||
+		usage.CachedInputTokens == nil || *usage.CachedInputTokens != 23040 ||
+		usage.CacheWriteInputTokens == nil || *usage.CacheWriteInputTokens != 0 ||
+		usage.OutputTokens == nil || *usage.OutputTokens != 107 ||
+		usage.ReasoningOutputTokens == nil || *usage.ReasoningOutputTokens != 0 ||
+		usage.TotalTokens == nil || *usage.TotalTokens != 31638 {
+		t.Fatalf("captured statistics changed: %#v", usage)
 	}
-	if metadata.CostEstimate.AmountUSD != 0.001133789 ||
+	if metadata.CostEstimate == nil ||
+		metadata.CostEstimate.AmountUSD != 0.001 ||
 		metadata.CostEstimate.Basis != "standard_api_equivalent_short_context" ||
-		metadata.CostEstimate.PricingDate != "2026-09-28" ||
-		metadata.CostEstimate.PricingURL != "https://example.com/pricing" {
-		t.Fatalf("unexpected captured cost estimate: %s", metadataBytes)
+		metadata.CostEstimate.PricingDate != "2026-09-28" {
+		t.Fatalf("captured direct cost estimate changed: %#v", metadata.CostEstimate)
 	}
 	return metadata.DerivedContentFiles
 }
@@ -411,13 +390,6 @@ func TestParseModelSettingsMustBeCompleteAndSafe(t *testing.T) {
 			want: "model settings require",
 		},
 		{
-			name: "relative app server executable",
-			args: append(append([]string{}, base...),
-				"--model-provider=codex_app_server", "--model-name=gpt-6-luna",
-				"--model-effort=medium", "--app-server-command=codex"),
-			want: "absolute executable",
-		},
-		{
 			name: "unsupported provider",
 			args: append(append([]string{}, base...),
 				"--model-provider=ollama", "--model-name=model", "--model-effort=medium",
@@ -435,61 +407,6 @@ func TestParseModelSettingsMustBeCompleteAndSafe(t *testing.T) {
 	}
 }
 
-func assertReadableReport(t *testing.T, report string) {
-	t.Helper()
-	for _, expected := range []string{
-		"# Smoke result", "## Other piece", "limited coverage", `"method": "smoke test"`,
-		"### JSON content", "```json\n{\n  \"title\": \"Statement\"",
-		"- Input tokens: 31531", "- Cached input tokens: 23040", "- Cache write input tokens: 0",
-		"- Reasoning output tokens: 0", "- Total tokens: 31638",
-		"### Turn 1", "### Turn 2", "### Cumulative total",
-		"- Input tokens: 15531", "- Input tokens: 16000",
-		"API-equivalent estimate (not an actual subscription charge): $0.001133789 USD",
-		"`standard_api_equivalent_short_context`", "2026-09-28", "https://example.com/pricing",
-		"does not represent an actual subscription charge",
-	} {
-		if !strings.Contains(report, expected) {
-			t.Fatalf("command report omitted %q:\n%s", expected, report)
-		}
-	}
-}
-
-func TestRenderReportKeepsLegacyUsageDisplayWithoutTurnBreakdown(t *testing.T) {
-	usage := understanding.Usage{
-		InputTokens:           4,
-		CachedInputTokens:     1,
-		OutputTokens:          2,
-		ReasoningOutputTokens: 1,
-		TotalTokens:           6,
-	}
-	result := &understanding.Result{
-		PluginVersion: "test-1",
-		Usage:         &usage,
-	}
-	report := renderReport(captureMetadata{}, result)
-	for _, expected := range []string{
-		"## Usage", "- Input tokens: 4", "- Cached input tokens: 1", "- Output tokens: 2",
-		"- Reasoning output tokens: 1", "- Total tokens: 6",
-	} {
-		if !strings.Contains(report, expected) {
-			t.Fatalf("legacy usage report omitted %q:\n%s", expected, report)
-		}
-	}
-	if strings.Contains(report, "Turn ") || strings.Contains(report, "Cumulative total") {
-		t.Fatalf("legacy usage report unexpectedly includes turn headings:\n%s", report)
-	}
-}
-
-func TestRenderReportOmitsEmptyTurnUsageHeading(t *testing.T) {
-	report := renderReport(captureMetadata{}, &understanding.Result{
-		PluginVersion: "test-1",
-		TurnUsage:     []understanding.TurnUsageEntry{},
-	})
-	if strings.Contains(report, "## Usage") {
-		t.Fatalf("empty turn usage rendered an empty usage section:\n%s", report)
-	}
-}
-
 func assertDerivedContentFiles(t *testing.T, captureDirectory, report string, filenames []string) {
 	t.Helper()
 	if len(filenames) != 3 {
@@ -499,8 +416,11 @@ func assertDerivedContentFiles(t *testing.T, captureDirectory, report string, fi
 		name    string
 		content string
 	}{
-		{name: "artifact-001.md", content: "# Smoke result\nA readable artifact."},
-		{name: "artifact-002.md", content: "## Other piece\nIndependent words."},
+		{
+			name:    "artifact-001.md",
+			content: "# Smoke result\n<script>alert(1)</script>\n```nested\nliteral\n```\n",
+		},
+		{name: "artifact-002.txt", content: "Independent words."},
 		{
 			name:    "artifact-003.json",
 			content: "{\n  \"title\": \"Statement\",\n  \"pages\": [1, 2]\n}",
@@ -516,6 +436,10 @@ func assertDerivedContentFiles(t *testing.T, captureDirectory, report string, fi
 			!strings.Contains(report, path) {
 			t.Fatalf("derived content %d was not saved independently", index+1)
 		}
+	}
+	literalContentBlock := "````text\n" + wants[0].content + "````\n"
+	if !strings.Contains(report, literalContentBlock) {
+		t.Fatal("Markdown artifact was not rendered as a literal fenced text block")
 	}
 	entries, err := os.ReadDir(filepath.Join(captureDirectory, "derived-content"))
 	if err != nil {

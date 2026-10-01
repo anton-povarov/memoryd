@@ -131,7 +131,7 @@ class WorkflowLoggingTests(unittest.TestCase):
             logger.event("assistant.response.completed", **fields, text="Hello world\n")
         self.assertEqual(stream.getvalue().count("Hello world"), 1)
 
-    def run_plugin(self, *, json_output=None, usage=True, protocol_version=1,
+    def run_plugin(self, *, json_output=None, usage=True, protocol_version=2,
                    mcp=False, duplicate_usage=False, extra_usage=False, reroute=False,
                    model_name="gpt-6-luna"):
         data = b"Fixture document bytes."
@@ -179,8 +179,8 @@ class WorkflowLoggingTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(result["artifacts"][0]["content"], MARKDOWN)
         self.assertEqual(json.loads(result["artifacts"][1]["content"]), DOCUMENT_DATA)
-        self.assertEqual(result["usage"]["total_tokens"], 220)
-        self.assertEqual([entry["usage"]["total_tokens"] for entry in result["turn_usage"]], [110, 110])
+        self.assertEqual(result["statistics"]["usage"]["total_tokens"], 220)
+        self.assertNotIn("turn_usage", result["statistics"])
 
         log = completed.stderr
         self.assertIn("[codex-extractor +", log)
@@ -226,7 +226,7 @@ class WorkflowLoggingTests(unittest.TestCase):
         completed, _ = self.run_plugin(duplicate_usage=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         result = json.loads(completed.stdout)
-        self.assertEqual(result["usage"]["total_tokens"], 220)
+        self.assertEqual(result["statistics"]["usage"]["total_tokens"], 220)
         self.assertAlmostEqual(result["cost_estimate"]["amount_usd"], 0.0000264, places=9)
         self.assertNotIn("Raw last", completed.stderr)
         self.assertNotIn("Parsed thread total", completed.stderr)
@@ -254,7 +254,7 @@ class WorkflowLoggingTests(unittest.TestCase):
         completed, _ = self.run_plugin(extra_usage=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         result = json.loads(completed.stdout)
-        self.assertEqual(result["usage"]["total_tokens"], 440)
+        self.assertEqual(result["statistics"]["usage"]["total_tokens"], 440)
         self.assertEqual(completed.stderr.count("Token usage update"), 4)
         self.assertAlmostEqual(result["cost_estimate"]["amount_usd"], 0.0000528, places=9)
 
@@ -302,14 +302,14 @@ class WorkflowLoggingTests(unittest.TestCase):
         completed, _ = self.run_plugin(usage=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         result = json.loads(completed.stdout)
-        self.assertNotIn("usage", result)
-        self.assertNotIn("turn_usage", result)
+        self.assertNotIn("statistics", result)
+        self.assertNotIn("cost_estimate", result)
         self.assertIn("Turn 1: Completed", completed.stderr)
         self.assertIn("Turn 2: Completed", completed.stderr)
         self.assertIn("no token usage updates received", completed.stderr)
 
     def test_request_validation_failure_is_logged_before_server_start(self):
-        completed, _ = self.run_plugin(protocol_version=2)
+        completed, _ = self.run_plugin(protocol_version=1)
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(completed.stdout, "")
         self.assertIn("Request received", completed.stderr)

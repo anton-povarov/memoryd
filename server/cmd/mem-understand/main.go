@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -97,10 +95,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 				metadata.Execution.ProtocolStatus = "valid"
 				metadata.PluginVersion = validated.PluginVersion
 				metadata.ArtifactCount = len(validated.Artifacts)
-				metadata.WarningCount = len(validated.Warnings)
-				metadata.Usage = validated.Usage
-				metadata.TurnUsage = validated.TurnUsage
+				metadata.Statistics = validated.Statistics
 				metadata.CostEstimate = validated.CostEstimate
+				metadata.WarningCount = len(validated.Warnings)
 			}
 		}
 	}
@@ -214,9 +211,6 @@ func parseArgs(args []string) (options, error) {
 	if parsed.plugin == "" {
 		return options{}, errors.New(usage())
 	}
-	if !filepath.IsAbs(parsed.plugin) {
-		return options{}, errors.New("--plugin must be an absolute executable path")
-	}
 	if len(positional) != 1 {
 		return options{}, errors.New(usage())
 	}
@@ -250,9 +244,9 @@ func parseArgs(args []string) (options, error) {
 }
 
 func usage() string {
-	return "usage: mem-understand INPUT --plugin=/absolute/path/to/plugin [--raw-dir=DIR] " +
+	return "usage: mem-understand INPUT --plugin=PATH [--raw-dir=DIR] " +
 		"[--model-provider=codex_app_server --model-name=NAME --model-effort=EFFORT " +
-		"--app-server-command=/absolute/path/to/codex]"
+		"--app-server-command=PATH]"
 }
 
 func prepareCaptureDir(rawDir string) (string, error) {
@@ -375,19 +369,18 @@ func processStatus(execution understanding.Execution) string {
 }
 
 type captureMetadata struct {
-	Plugin              string                         `json:"plugin"`
-	PluginVersion       string                         `json:"plugin_version,omitempty"`
-	Usage               *understanding.Usage           `json:"usage,omitempty"`
-	TurnUsage           []understanding.TurnUsageEntry `json:"turn_usage,omitempty"`
-	CostEstimate        *understanding.CostEstimate    `json:"cost_estimate,omitempty"`
-	Input               inputMetadata                  `json:"input"`
-	CaptureDirectory    string                         `json:"capture_directory"`
-	Captures            []string                       `json:"captures"`
-	DerivedContentFiles []string                       `json:"derived_content_files,omitempty"`
-	Execution           executionMetadata              `json:"execution"`
-	ArtifactCount       int                            `json:"artifact_count,omitempty"`
-	WarningCount        int                            `json:"warning_count,omitempty"`
-	Failure             string                         `json:"failure,omitempty"`
+	Plugin              string              `json:"plugin"`
+	PluginVersion       string              `json:"plugin_version,omitempty"`
+	Statistics          *vault.Statistics   `json:"statistics,omitempty"`
+	CostEstimate        *vault.CostEstimate `json:"cost_estimate,omitempty"`
+	Input               inputMetadata       `json:"input"`
+	CaptureDirectory    string              `json:"capture_directory"`
+	Captures            []string            `json:"captures"`
+	DerivedContentFiles []string            `json:"derived_content_files,omitempty"`
+	Execution           executionMetadata   `json:"execution"`
+	ArtifactCount       int                 `json:"artifact_count,omitempty"`
+	WarningCount        int                 `json:"warning_count,omitempty"`
+	Failure             string              `json:"failure,omitempty"`
 }
 
 type inputMetadata struct {
@@ -463,7 +456,8 @@ func writeDerivedContent(
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "artifact-") &&
-			(strings.HasSuffix(entry.Name(), ".md") || strings.HasSuffix(entry.Name(), ".json")) {
+			(strings.HasSuffix(entry.Name(), ".md") || strings.HasSuffix(entry.Name(), ".json") ||
+				strings.HasSuffix(entry.Name(), ".txt")) {
 			if err := os.Remove(filepath.Join(contentDir, entry.Name())); err != nil {
 				return fmt.Errorf("remove earlier derived content file: %w", err)
 			}
@@ -484,11 +478,14 @@ func writeDerivedContent(
 }
 
 func derivedContentFilename(index int, artifact understanding.Artifact) string {
-	extension := ".md"
-	if artifact.MediaType == understanding.JSONMediaType {
-		extension = ".json"
+	switch artifact.ContentType {
+	case "text/markdown":
+		return fmt.Sprintf("artifact-%03d.md", index)
+	case "application/json":
+		return fmt.Sprintf("artifact-%03d.json", index)
+	default:
+		return fmt.Sprintf("artifact-%03d.txt", index)
 	}
-	return fmt.Sprintf("artifact-%03d%s", index, extension)
 }
 
 func renderReport(metadata captureMetadata, result *understanding.Result) string {
@@ -525,103 +522,83 @@ func renderReport(metadata captureMetadata, result *understanding.Result) string
 		return report.String()
 	}
 
-	_, _ = fmt.Fprintf(&report, "\nPlugin version: `%s`\n", result.PluginVersion)
-	if result.Usage != nil || len(result.TurnUsage) > 0 {
-		_, _ = fmt.Fprintf(&report, "\n## Usage\n\n")
-		if len(result.TurnUsage) > 0 {
-			turns := append([]understanding.TurnUsageEntry(nil), result.TurnUsage...)
-			sort.Slice(turns, func(left, right int) bool {
-				return turns[left].Turn < turns[right].Turn
-			})
-			for index, turn := range turns {
-				if index > 0 {
-					_, _ = fmt.Fprintln(&report)
-				}
-				_, _ = fmt.Fprintf(&report, "### Turn %d\n\n", turn.Turn)
-				renderUsageCounts(&report, turn.Usage)
-			}
-		}
-		if result.Usage != nil {
-			if len(result.TurnUsage) > 0 {
-				_, _ = fmt.Fprintf(&report, "\n### Cumulative total\n\n")
-			}
-			renderUsageCounts(&report, *result.Usage)
-		}
+	if result.PluginVersion != "" {
+		_, _ = fmt.Fprintf(&report, "\nPlugin version:\n\n")
+		renderCodeBlock(&report, "text", result.PluginVersion)
+	}
+	if result.Statistics != nil {
+		statistics, _ := json.MarshalIndent(result.Statistics, "", "  ")
+		_, _ = fmt.Fprintf(&report, "\nStatistics:\n\n")
+		renderCodeBlock(&report, "json", string(statistics))
 	}
 	if result.CostEstimate != nil {
-		estimate := result.CostEstimate
-		label := "Cost estimate (not an actual subscription charge)"
-		if strings.HasPrefix(estimate.Basis, "standard_api_equivalent") {
-			label = "API-equivalent estimate (not an actual subscription charge)"
-		}
-		_, _ = fmt.Fprintf(&report, "\n## Cost estimate\n\n")
-		_, _ = fmt.Fprintf(
-			&report,
-			"- %s: $%s USD\n",
-			label,
-			strconv.FormatFloat(estimate.AmountUSD, 'f', -1, 64),
-		)
-		_, _ = fmt.Fprintf(&report, "- Basis: `%s`\n", estimate.Basis)
-		_, _ = fmt.Fprintf(&report, "- Pricing date: %s\n", estimate.PricingDate)
-		_, _ = fmt.Fprintf(&report, "- Pricing source: <%s>\n", estimate.PricingURL)
-		if strings.HasPrefix(estimate.Basis, "standard_api_equivalent") {
-			_, _ = fmt.Fprintf(
-				&report,
-				"\nThis API-equivalent estimate uses the plugin-reported pricing basis and does not represent an actual subscription charge.\n",
-			)
-		} else {
-			_, _ = fmt.Fprintf(
-				&report,
-				"\nThis estimate uses the plugin-reported pricing basis and does not represent an actual subscription charge.\n",
-			)
-		}
+		costEstimate, _ := json.MarshalIndent(result.CostEstimate, "", "  ")
+		_, _ = fmt.Fprintf(&report, "\nCost estimate:\n\n")
+		renderCodeBlock(&report, "json", string(costEstimate))
 	}
 	if len(result.Warnings) > 0 {
-		_, _ = fmt.Fprintf(&report, "\n## Warnings\n\n")
+		_, _ = fmt.Fprintf(&report, "\nWarnings:\n\n")
 		for _, warning := range result.Warnings {
-			_, _ = fmt.Fprintf(&report, "- %s\n", warning)
+			renderCodeBlock(&report, "text", warning)
 		}
 	}
 	if len(result.Artifacts) == 0 {
 		_, _ = fmt.Fprintf(&report, "\nNo artifacts returned.\n")
 	}
 	for index, artifact := range result.Artifacts {
-		_, _ = fmt.Fprintf(&report, "\n## Artifact %d: `%s`\n\n", index+1, artifact.Kind)
-		_, _ = fmt.Fprintf(&report, "Media Type: `%s`\n\n", artifact.MediaType)
-		_, _ = fmt.Fprintf(
-			&report,
-			"Saved content: `%s`\n\nProvenance:\n",
-			metadata.DerivedContentFiles[index],
-		)
-		if len(artifact.Provenance) == 0 {
-			_, _ = fmt.Fprintf(&report, "\n(empty)\n")
-		} else {
-			provenance, _ := json.MarshalIndent(artifact.Provenance, "", "  ")
-			_, _ = fmt.Fprintf(&report, "\n```json\n%s\n```\n", provenance)
+		_, _ = fmt.Fprintf(&report, "\n## Artifact %d\n\nContent type:\n\n", index+1)
+		renderCodeBlock(&report, "text", artifact.ContentType)
+		_, _ = fmt.Fprintf(&report, "\nSaved content:\n\n")
+		renderCodeBlock(&report, "text", metadata.DerivedContentFiles[index])
+		if len(artifact.Provenance) > 0 {
+			_, _ = fmt.Fprintf(&report, "\nProvenance:\n\n")
+			renderCodeBlock(&report, "json", string(artifact.Provenance))
 		}
-		if artifact.MediaType == understanding.JSONMediaType {
-			_, _ = fmt.Fprintf(&report, "\n### JSON content\n\n```json\n%s", artifact.Content)
-			if !strings.HasSuffix(artifact.Content, "\n") {
-				_, _ = fmt.Fprintln(&report)
-			}
-			_, _ = fmt.Fprintln(&report, "```")
-		} else {
-			_, _ = fmt.Fprintf(&report, "\n### Markdown content\n\n%s", artifact.Content)
-			if !strings.HasSuffix(artifact.Content, "\n") {
-				_, _ = fmt.Fprintln(&report)
-			}
+		if len(artifact.Scope) > 0 {
+			_, _ = fmt.Fprintf(&report, "\nScope:\n\n")
+			renderCodeBlock(&report, "json", string(artifact.Scope))
 		}
+		_, _ = fmt.Fprintf(&report, "\nContent:\n\n")
+		language := "text"
+		if artifact.ContentType == "application/json" {
+			language = "json"
+		}
+		renderCodeBlock(&report, language, artifact.Content)
 	}
 	return report.String()
 }
 
-func renderUsageCounts(report *strings.Builder, usage understanding.Usage) {
-	_, _ = fmt.Fprintf(report, "- Input tokens: %d\n", usage.InputTokens)
-	_, _ = fmt.Fprintf(report, "- Cached input tokens: %d\n", usage.CachedInputTokens)
-	if usage.CacheWriteInputTokens != nil {
-		_, _ = fmt.Fprintf(report, "- Cache write input tokens: %d\n", *usage.CacheWriteInputTokens)
+func renderCodeBlock(report *strings.Builder, language, content string) {
+	fenceLength := codeFenceLength(content)
+	for range fenceLength {
+		report.WriteByte('`')
 	}
-	_, _ = fmt.Fprintf(report, "- Output tokens: %d\n", usage.OutputTokens)
-	_, _ = fmt.Fprintf(report, "- Reasoning output tokens: %d\n", usage.ReasoningOutputTokens)
-	_, _ = fmt.Fprintf(report, "- Total tokens: %d\n", usage.TotalTokens)
+	report.WriteString(language)
+	report.WriteByte('\n')
+	report.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		report.WriteByte('\n')
+	}
+	for range fenceLength {
+		report.WriteByte('`')
+	}
+	report.WriteByte('\n')
+}
+
+func codeFenceLength(content string) int {
+	longest, current := 0, 0
+	for index := range content {
+		if content[index] == '`' {
+			current++
+			if current > longest {
+				longest = current
+			}
+		} else {
+			current = 0
+		}
+	}
+	if longest < 2 {
+		return 3
+	}
+	return longest + 1
 }

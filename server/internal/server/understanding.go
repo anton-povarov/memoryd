@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/anton-povarov/memoryd/server/internal/config"
@@ -133,10 +135,12 @@ func (worker *understandingWorker) execute(
 	memory vault.Memory,
 	attempt vault.UnderstandingAttempt,
 ) {
+	runID := uuid.New()
 	pluginID, plugin, matched := worker.pluginFor(memory.Blob.MediaType)
 	worker.logger.InfoContext(worker.ctx, "Understanding attempt started",
 		"memory_id", memory.ID.String(),
 		"attempt_id", attempt.ID.String(),
+		"run_id", runID.String(),
 		"media_type", memory.Blob.MediaType,
 		"plugin_id", pluginID,
 	)
@@ -144,6 +148,7 @@ func (worker *understandingWorker) execute(
 	if !matched {
 		worker.finish(
 			attempt,
+			runID,
 			"",
 			nil,
 			[]string{fmt.Sprintf(
@@ -156,6 +161,8 @@ func (worker *understandingWorker) execute(
 				Stderr:   "",
 				ExitCode: nil,
 			},
+			nil,
+			nil,
 		)
 		return
 	}
@@ -170,7 +177,7 @@ func (worker *understandingWorker) execute(
 			Stdout:   "",
 			Stderr:   "",
 			ExitCode: nil,
-		})
+		}, false)
 		return
 	}
 	attempt.PluginID = pluginID
@@ -182,7 +189,7 @@ func (worker *understandingWorker) execute(
 			Stdout:   "",
 			Stderr:   "",
 			ExitCode: nil,
-		})
+		}, false)
 		return
 	}
 	content, readErr := io.ReadAll(contentReader)
@@ -193,7 +200,7 @@ func (worker *understandingWorker) execute(
 			Stdout:   "",
 			Stderr:   "",
 			ExitCode: nil,
-		})
+		}, false)
 		return
 	}
 	if closeErr != nil {
@@ -202,7 +209,7 @@ func (worker *understandingWorker) execute(
 			Stdout:   "",
 			Stderr:   "",
 			ExitCode: nil,
-		})
+		}, false)
 		return
 	}
 	if worker.ctx.Err() != nil {
@@ -226,7 +233,7 @@ func (worker *understandingWorker) execute(
 			Stdout:   "",
 			Stderr:   "",
 			ExitCode: nil,
-		})
+		}, false)
 		return
 	}
 
@@ -236,7 +243,20 @@ func (worker *understandingWorker) execute(
 		"plugin_id", pluginID,
 		"executable", plugin.Command[0],
 	)
-	execution := understanding.Run(worker.ctx, plugin.Command, requestBytes, nil)
+	progress := &understandingProgress{
+		ctx: worker.ctx,
+		logger: worker.logger.With(
+			"memory_id", memory.ID.String(),
+			"attempt_id", attempt.ID.String(),
+			"plugin_id", pluginID,
+		),
+		pending: nil,
+		discard: false,
+	}
+	execution := understanding.Run(worker.ctx, plugin.Command, requestBytes, progress)
+	if plugin.LogDir != "" {
+		worker.saveUnderstandingLogs(plugin.LogDir, runID, execution)
+	}
 	if worker.ctx.Err() != nil {
 		worker.logger.InfoContext(
 			worker.ctx,
@@ -268,22 +288,20 @@ func (worker *understandingWorker) execute(
 		if diagnostics.Error == "" {
 			diagnostics.Error = "plugin process did not exit successfully"
 		}
-		worker.fail(attempt, diagnostics)
+		worker.fail(attempt, diagnostics, true)
 		return
 	}
 
 	result, err := understanding.ValidateResult(execution.Stdout)
 	if err != nil {
 		diagnostics.Error = "invalid plugin result: " + err.Error()
-		worker.fail(attempt, diagnostics)
+		worker.fail(attempt, diagnostics, true)
 		return
 	}
-	if diagnostics.Stderr != "" {
-		worker.logger.DebugContext(worker.ctx, "Understanding Plugin diagnostics",
-			"memory_id", memory.ID.String(),
-			"attempt_id", attempt.ID.String(),
-			"plugin_id", pluginID,
-			"stderr", diagnostics.Stderr,
+	if result.Statistics != nil || result.CostEstimate != nil {
+		progress.logger.InfoContext(worker.ctx, "Understanding Plugin reporting",
+			"statistics", result.Statistics,
+			"cost_estimate", result.CostEstimate,
 		)
 	}
 
@@ -293,10 +311,9 @@ func (worker *understandingWorker) execute(
 			ID: uuid.Nil,
 			Blob: vault.BlobInfo{
 				Ref:       vault.Blobref{},
-				MediaType: artifact.MediaType,
+				MediaType: artifact.ContentType,
 				ByteSize:  0,
 			},
-			Kind:       artifact.Kind,
 			Content:    artifact.Content,
 			Provenance: artifact.Provenance,
 			Scope:      artifact.Scope,
@@ -304,11 +321,41 @@ func (worker *understandingWorker) execute(
 	}
 	worker.finish(
 		attempt,
+		runID,
 		result.PluginVersion,
 		artifacts,
 		result.Warnings,
 		diagnostics,
+		result.Statistics,
+		result.CostEstimate,
 	)
+}
+
+func (worker *understandingWorker) saveUnderstandingLogs(
+	logDir string,
+	runID uuid.UUID,
+	execution understanding.Execution,
+) {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		worker.logger.ErrorContext(worker.ctx, "create understanding log directory failed",
+			"run_id", runID.String(), "log_dir", logDir, "error", err,
+		)
+		return
+	}
+	for _, stream := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "stdout", data: execution.Stdout},
+		{name: "stderr", data: execution.Stderr},
+	} {
+		path := filepath.Join(logDir, runID.String()+"."+stream.name+".log")
+		if err := os.WriteFile(path, stream.data, 0o600); err != nil {
+			worker.logger.ErrorContext(worker.ctx, "write understanding log failed",
+				"run_id", runID.String(), "path", path, "error", err,
+			)
+		}
+	}
 }
 
 func (worker *understandingWorker) pluginFor(
@@ -324,15 +371,19 @@ func (worker *understandingWorker) pluginFor(
 	return "", config.UnderstandingPluginConfig{
 		Command:    nil,
 		MediaTypes: nil,
+		LogDir:     "",
 	}, false
 }
 
 func (worker *understandingWorker) finish(
 	attempt vault.UnderstandingAttempt,
+	runID uuid.UUID,
 	pluginVersion string,
 	artifacts []vault.DerivedContent,
 	warnings []string,
 	diagnostics vault.UnderstandingDiagnostics,
+	statistics *vault.Statistics,
+	costEstimate *vault.CostEstimate,
 ) {
 	if worker.ctx.Err() != nil {
 		return
@@ -340,9 +391,12 @@ func (worker *understandingWorker) finish(
 	err := worker.memoryVault.FinishUnderstanding(
 		worker.ctx,
 		attempt,
+		runID,
 		pluginVersion,
 		artifacts,
 		warnings,
+		statistics,
+		costEstimate,
 	)
 	if worker.ctx.Err() != nil {
 		return
@@ -375,12 +429,13 @@ func (worker *understandingWorker) finish(
 		return
 	}
 	diagnostics.Error = fmt.Sprintf("finish understanding: %v", err)
-	worker.fail(attempt, diagnostics)
+	worker.fail(attempt, diagnostics, false)
 }
 
 func (worker *understandingWorker) fail(
 	attempt vault.UnderstandingAttempt,
 	diagnostics vault.UnderstandingDiagnostics,
+	pluginFailed bool,
 ) {
 	if worker.ctx.Err() != nil {
 		return
@@ -398,12 +453,16 @@ func (worker *understandingWorker) fail(
 		)
 		return
 	}
+	var stderr string
+	if pluginFailed {
+		stderr = diagnostics.Stderr
+	}
 	worker.logger.ErrorContext(worker.ctx, "Understanding attempt failed",
 		"memory_id", attempt.MemoryID.String(),
 		"attempt_id", attempt.ID.String(),
 		"plugin_id", attempt.PluginID,
 		"error", diagnostics.Error,
 		"exit_code", diagnostics.ExitCode,
-		"stderr", diagnostics.Stderr,
+		"stderr", stderr,
 	)
 }

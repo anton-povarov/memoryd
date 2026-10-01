@@ -44,6 +44,7 @@ type rawUnderstanding struct {
 type rawUnderstandingPlugin struct {
 	Command    []string `yaml:"command"`
 	MediaTypes []string `yaml:"media_types"`
+	LogDir     string   `yaml:"log_dir"`
 }
 
 func parseYAMLConfig(data []byte) (Config, error) {

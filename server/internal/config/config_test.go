@@ -41,11 +41,6 @@ func TestParseRejectsInvalidUnderstandingPlugins(t *testing.T) {
 			want: "max_concurrent",
 		},
 		{
-			name: "relative executable",
-			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [pdf]\n      media_types: [application/pdf]\n",
-			want: "absolute executable",
-		},
-		{
 			name: "noncanonical media type",
 			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [Application/PDF]\n",
 			want: "canonical Media Type",

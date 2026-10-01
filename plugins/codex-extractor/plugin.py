@@ -204,6 +204,20 @@ class WorkflowLogger:
             print("--- End live response ---", file=sys.stderr, flush=True)
             self.active_stream = None
 
+    def phase(self, phase, turn=None):
+        payload = {"phase": phase}
+        if turn is not None:
+            payload["turn"] = turn
+        with self.lock:
+            self._close_stream()
+            sys.stderr.write(
+                "MEMORYD_PROGRESS "
+                + json.dumps(payload, separators=(",", ":"))
+                + "\n"
+            )
+            sys.stderr.flush()
+
+
     @staticmethod
     def _label(name):
         label = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
@@ -504,8 +518,8 @@ def read_request():
         data = base64.b64decode(blob["content_base64"], validate=True)
         model = request["model"]
     except (ValueError, TypeError, KeyError, binascii.Error) as error:
-        fail(f"invalid v1 request: {error}")
-    if request.get("protocol_version") != 1:
+        fail(f"invalid v2 request: {error}")
+    if request.get("protocol_version") != 2:
         fail("unsupported protocol version")
     if not isinstance(blob, dict):
         fail("blob must be an object")
@@ -526,10 +540,10 @@ def read_request():
         not isinstance(command, list)
         or not command
         or not all(isinstance(part, str) and part for part in command)
-        or not os.path.isabs(command[0])
     ):
-        fail("model.command must be an argv array with an absolute executable path")
+        fail("model.command must be an argv array with a nonempty executable path")
     LOGGER.event("request.validated", outcome="success")
+    LOGGER.phase("request_validated")
     return blob, data, model, request.get("import_context", {})
 
 
@@ -688,6 +702,8 @@ def usage_delta(before, after):
 class AppServer:
     def __init__(self, command, directory=None, config_overrides=(), purpose="Extraction"):
         command = app_server_command(command, config_overrides)
+        if "/" in command[0]:
+            command[0] = os.path.abspath(command[0])
         self.started_at = time.monotonic()
         LOGGER.event("app_server.starting", purpose=purpose)
         self.process = subprocess.Popen(
@@ -918,6 +934,7 @@ def open_extraction_server(command, directory):
             excluded_mcp_servers=sorted(mcp_servers),
             extra_instructions="disabled",
         )
+        LOGGER.phase("model_runtime_ready")
         return server
     except BaseException:
         server.close()
@@ -988,6 +1005,7 @@ def run_turn(
     try:
         server.send({"id": request_id, "method": "turn/start", "params": params})
         turn_id = server.response(request_id, time.monotonic() + TURN_TIMEOUT_SECONDS)["turn"]["id"]
+        LOGGER.phase("model_started", turn_number)
         observed_models = server.turn_model_observations.setdefault(turn_id, set())
         observed_models.add(model["name"])
         if server.actual_model:
@@ -1170,6 +1188,7 @@ def run_turn(
                 raise RuntimeError(
                     f"model turn {turn_number} {turn_status}: {turn.get('error')}"
                 )
+            LOGGER.phase("model_completed", turn_number)
             output = finals or legacy
             if not output or not output[-1].strip():
                 LOGGER.event(
@@ -1216,7 +1235,7 @@ def run_turn(
                 cost_estimate=cost_estimate,
                 cost_unavailable_reason=turn_cost_unavailable_reason,
             )
-            return final_output, turn_usage
+            return final_output
 
 
 def validate_markdown(value):
@@ -1274,11 +1293,12 @@ def extract(data, blob, model, import_context):
                 path=str(document_path.resolve()),
                 media_type=blob.get("media_type"),
             )
+            LOGGER.phase("source_staged")
             thread_id = start_thread(server, model, directory, 2)
             context = format_import_context(import_context)
             markdown_prompt = MARKDOWN_PROMPT.format(filename=filename, import_context=context)
             local_document_reference = f"LOCAL DOCUMENT\n{document_path.resolve()}"
-            markdown_output, usage_one = run_turn(
+            markdown_output = run_turn(
                 server,
                 thread_id,
                 model,
@@ -1303,7 +1323,8 @@ def extract(data, blob, model, import_context):
                 "validation.markdown",
                 outcome="success",
             )
-            json_output, usage_two = run_turn(
+            LOGGER.phase("result_validated", 1)
+            json_output = run_turn(
                 server,
                 thread_id,
                 model,
@@ -1349,15 +1370,8 @@ def extract(data, blob, model, import_context):
                 "validation.document_data",
                 outcome="success",
             )
+            LOGGER.phase("result_validated", 2)
             usage = server.latest_usage
-            turn_usage = None
-            if usage is not None and usage_one is not None and usage_two is not None:
-                sum_usage = {key: usage_one[key] + usage_two[key] for key in usage}
-                if sum_usage == usage:
-                    turn_usage = [
-                        {"turn": 1, "usage": usage_one},
-                        {"turn": 2, "usage": usage_two},
-                    ]
             cumulative_missing_reason = None
             if usage is None:
                 cumulative_missing_reason = (
@@ -1393,7 +1407,7 @@ def extract(data, blob, model, import_context):
                 cost_estimate=cost_estimate,
                 cost_unavailable_reason=cumulative_cost_unavailable_reason,
             )
-            return markdown, document_data, usage, turn_usage, server.actual_model, filename, cost_estimate
+            return markdown, document_data, usage, server.actual_model, filename, cost_estimate
         finally:
             server.close()
 
@@ -1413,7 +1427,7 @@ def main():
             pricing_url=PRICING_URL,
         )
         try:
-            markdown, document_data, usage, turn_usage, actual_model, filename, cost_estimate = extract(
+            markdown, document_data, usage, actual_model, filename, cost_estimate = extract(
                 data, blob, model, import_context
             )
         except (OSError, RuntimeError, KeyError, ValueError, BrokenPipeError) as error:
@@ -1427,12 +1441,11 @@ def main():
             "thread_mode": "shared",
         }
         result = {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "plugin_version": PLUGIN_VERSION,
             "artifacts": [
                 {
-                    "kind": "document_md",
-                    "media_type": "text/markdown",
+                    "content_type": "text/markdown",
                     "content": markdown,
                     "provenance": {
                         **provenance,
@@ -1441,8 +1454,7 @@ def main():
                     },
                 },
                 {
-                    "kind": "document_data",
-                    "media_type": "application/json",
+                    "content_type": "application/json",
                     "content": json.dumps(document_data, ensure_ascii=False, indent=2) + "\n",
                     "provenance": {
                         **provenance,
@@ -1453,10 +1465,11 @@ def main():
             ],
             "warnings": [],
         }
+        statistics = {}
         if usage is not None:
-            result["usage"] = usage
-        if turn_usage is not None:
-            result["turn_usage"] = turn_usage
+            statistics["usage"] = usage
+        if statistics:
+            result["statistics"] = statistics
         if cost_estimate is not None:
             result["cost_estimate"] = cost_estimate
         json.dump(result, sys.stdout, ensure_ascii=False)
@@ -1464,9 +1477,10 @@ def main():
         sys.stdout.flush()
         LOGGER.event(
             "result.written",
-            artifacts=[artifact["kind"] for artifact in result["artifacts"]],
+            artifacts=[artifact["content_type"] for artifact in result["artifacts"]],
         )
         LOGGER.event("workflow.completed", status="success")
+        LOGGER.phase("completed")
     except SystemExit:
         raise
     except Exception as error:
