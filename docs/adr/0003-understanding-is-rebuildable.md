@@ -1,10 +1,10 @@
 # Understanding is rebuildable
 
-Status: accepted. Manual Rebuild is exposed through the desktop Refresh button and `POST /api/v0/memories/{memoryId}/rebuild`.
+Status: accepted. Manual Rebuild is exposed through the desktop Rebuild button and `POST /api/v0/memories/{memoryId}/rebuild`.
 
 A Memory references one immutable content-addressed Blob, while its Derived Content and Facts can be replaced by a Rebuild using a newer understanding implementation. A Rebuild prepares a complete Understanding Run before atomically making it active; failed attempts create only an informative execution log and leave the previous active Run untouched. This allows understanding to improve without duplicating or mutating the thing the user originally entrusted to the Vault.
 
-Refresh accepts best-effort work in a process-local queue using current plugin
+Rebuild accepts best-effort work in a process-local queue using current plugin
 configuration. This supersedes the previous durable scheduling and startup retry
 guarantees: restart drops queued/running jobs, and startup schedules nothing.
 Only successful Runs and terminal failure history are persisted; the original

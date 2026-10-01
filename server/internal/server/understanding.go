@@ -19,10 +19,11 @@ import (
 )
 
 type understandingJob struct {
-	memory  vault.Memory
-	attempt vault.UnderstandingAttempt
-	ctx     context.Context
-	logger  *logging.Logger
+	memory   vault.Memory
+	attempt  vault.UnderstandingAttempt
+	userNote string
+	ctx      context.Context
+	logger   *logging.Logger
 }
 
 type understandingWorker struct {
@@ -92,6 +93,7 @@ func newUnderstandingWorker(
 func (worker *understandingWorker) Enqueue(
 	ctx context.Context,
 	memoryID uuid.UUID,
+	replacement *string,
 ) (vault.UnderstandingAttempt, bool, error) {
 	worker.mu.Lock()
 	closed := worker.closed
@@ -122,6 +124,16 @@ func (worker *understandingWorker) Enqueue(
 		return attempt, false, nil
 	}
 
+	// ponytail: note persistence shares the admission lock; separate it if database latency makes polling wait.
+	userNote, err := worker.memoryVault.ResolveUnderstandingUserNote(ctx, memoryID, replacement)
+	if err != nil {
+		worker.mu.Unlock()
+		if errors.Is(err, vault.ErrMemoryNotFound) {
+			worker.Forget(memoryID)
+		}
+		return vault.UnderstandingAttempt{}, false, err
+	}
+
 	attempt := vault.UnderstandingAttempt{
 		ID:       uuid.New(),
 		MemoryID: memoryID,
@@ -130,9 +142,10 @@ func (worker *understandingWorker) Enqueue(
 	}
 	jobCtx := logging.ContextWithRequestID(worker.ctx, logging.RequestID(ctx))
 	job := &understandingJob{
-		memory:  memory,
-		attempt: attempt,
-		ctx:     jobCtx,
+		memory:   memory,
+		attempt:  attempt,
+		userNote: userNote,
+		ctx:      jobCtx,
 		logger: logging.ForOperationInRequest(
 			worker.logger, "ExecuteUnderstanding", jobCtx,
 		).With("memory_id", memoryID.String(), "attempt_id", attempt.ID.String()),
@@ -363,6 +376,7 @@ func (worker *understandingWorker) execute(
 		content,
 		memory.Blob.MediaType,
 		memory.ImportContext,
+		job.userNote,
 		models...,
 	)
 	if err != nil {
@@ -505,6 +519,7 @@ func (worker *understandingWorker) finish(
 		warnings,
 		statistics,
 		costEstimate,
+		job.userNote,
 	)
 	if job.ctx.Err() != nil {
 		return

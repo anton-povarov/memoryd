@@ -61,7 +61,7 @@ func TestUnderstandingQueueFIFOForgetRetentionAndRequestCorrelation(t *testing.T
 	requestCtx, cancelRequest := context.WithCancel(
 		logging.ContextWithRequestID(context.Background(), "request-a"),
 	)
-	firstAttempt, accepted, err := worker.Enqueue(requestCtx, first.ID)
+	firstAttempt, accepted, err := worker.Enqueue(requestCtx, first.ID, nil)
 	if err != nil || !accepted {
 		t.Fatalf("Enqueue(first) = %v, %t", err, accepted)
 	}
@@ -70,22 +70,23 @@ func TestUnderstandingQueueFIFOForgetRetentionAndRequestCorrelation(t *testing.T
 	waitQueueStatus(t, worker, first.ID, "running")
 
 	duplicateCtx := logging.ContextWithRequestID(context.Background(), "request-duplicate")
-	duplicate, accepted, err := worker.Enqueue(duplicateCtx, first.ID)
+	duplicate, accepted, err := worker.Enqueue(duplicateCtx, first.ID, nil)
 	if err != nil || accepted || duplicate.ID != firstAttempt.ID || duplicate.Status != "running" {
 		t.Fatalf("duplicate Enqueue = %#v, %t, %v", duplicate, accepted, err)
 	}
 	secondAttempt, accepted, err := worker.Enqueue(
 		logging.ContextWithRequestID(context.Background(), "request-b"), second.ID,
+		nil,
 	)
 	if err != nil || !accepted || secondAttempt.Status != "queued" {
 		t.Fatalf("Enqueue(second) = %#v, %t, %v", secondAttempt, accepted, err)
 	}
-	queuedDuplicate, accepted, err := worker.Enqueue(context.Background(), second.ID)
+	queuedDuplicate, accepted, err := worker.Enqueue(context.Background(), second.ID, nil)
 	if err != nil || accepted || queuedDuplicate.ID != secondAttempt.ID ||
 		queuedDuplicate.Status != "queued" {
 		t.Fatalf("queued duplicate Enqueue = %#v, %t, %v", queuedDuplicate, accepted, err)
 	}
-	forgottenAttempt, accepted, err := worker.Enqueue(context.Background(), forgotten.ID)
+	forgottenAttempt, accepted, err := worker.Enqueue(context.Background(), forgotten.ID, nil)
 	if err != nil || !accepted {
 		t.Fatalf("Enqueue(forgotten) = %v, %t", err, accepted)
 	}
@@ -109,6 +110,7 @@ func TestUnderstandingQueueFIFOForgetRetentionAndRequestCorrelation(t *testing.T
 
 	replacement, accepted, err := worker.Enqueue(
 		logging.ContextWithRequestID(context.Background(), "request-a-retry"), first.ID,
+		nil,
 	)
 	if err != nil || !accepted || replacement.ID == firstAttempt.ID {
 		t.Fatalf("terminal retry admission = %#v, %t, %v", replacement, accepted, err)
@@ -190,6 +192,7 @@ func TestUnderstandingQueueConcurrentAdmissionLimitAndShutdown(t *testing.T) {
 		if _, accepted, err := worker.Enqueue(
 			context.Background(),
 			memory.ID,
+			nil,
 		); err != nil ||
 			!accepted {
 			t.Fatalf("Enqueue(%s) = %t, %v", memory.ID, accepted, err)
@@ -212,7 +215,7 @@ func TestUnderstandingQueueConcurrentAdmissionLimitAndShutdown(t *testing.T) {
 		duplicates.Add(1)
 		go func() {
 			defer duplicates.Done()
-			attempt, accepted, err := worker.Enqueue(context.Background(), memories[0].ID)
+			attempt, accepted, err := worker.Enqueue(context.Background(), memories[0].ID, nil)
 			if err != nil || accepted || attempt.Status != "running" {
 				results <- errors.New("concurrent duplicate admission was not rejected")
 			}
@@ -255,7 +258,11 @@ func TestUnderstandingQueueConcurrentAdmissionLimitAndShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shutdownWorker.Close()
-	forgottenRunning, accepted, err := shutdownWorker.Enqueue(context.Background(), memories[0].ID)
+	forgottenRunning, accepted, err := shutdownWorker.Enqueue(
+		context.Background(),
+		memories[0].ID,
+		nil,
+	)
 	if err != nil || !accepted {
 		t.Fatalf("Enqueue(forget-running job) = %t, %v", accepted, err)
 	}
@@ -278,6 +285,7 @@ func TestUnderstandingQueueConcurrentAdmissionLimitAndShutdown(t *testing.T) {
 	if _, accepted, err := shutdownWorker.Enqueue(
 		context.Background(),
 		memories[1].ID,
+		nil,
 	); err != nil ||
 		!accepted {
 		t.Fatalf("Enqueue(shutdown job) = %t, %v", accepted, err)
@@ -290,6 +298,7 @@ func TestUnderstandingQueueConcurrentAdmissionLimitAndShutdown(t *testing.T) {
 	if _, _, err := shutdownWorker.Enqueue(
 		context.Background(),
 		memories[1].ID,
+		nil,
 	); !errors.Is(
 		err,
 		errUnderstandingUnavailable,

@@ -30,6 +30,7 @@ type Request struct {
 	ProtocolVersion int                  `json:"protocol_version"`
 	Blob            RequestBlob          `json:"blob"`
 	ImportContext   RequestImportContext `json:"import_context"`
+	UserNote        string               `json:"user_note,omitempty"`
 	Model           *RequestModel        `json:"model,omitempty"`
 }
 
@@ -87,6 +88,7 @@ func BuildRequest(
 	content []byte,
 	mediaType string,
 	importContext vault.ImportContext,
+	userNote string,
 	models ...RequestModel,
 ) (Request, []byte, error) {
 	if len(models) > 1 {
@@ -131,7 +133,8 @@ func BuildRequest(
 			FilesystemCreated:  normalizedContext.FilesystemCreated,
 			FilesystemModified: normalizedContext.FilesystemModified,
 		},
-		Model: model,
+		UserNote: userNote,
+		Model:    model,
 	}
 	requestBytes, err := json.Marshal(request)
 	if err != nil {

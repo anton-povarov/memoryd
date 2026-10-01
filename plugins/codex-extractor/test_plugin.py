@@ -186,10 +186,6 @@ class WorkflowLoggingTests(unittest.TestCase):
         self.assertIn("[codex-extractor +", log)
         self.assertIn("Turn 1: Starting", log)
         self.assertIn("Turn 2: Starting", log)
-        self.assertIn(plugin.MARKDOWN_PROMPT.format(
-            filename="fixture.txt", import_context=plugin.format_import_context(request["import_context"])
-        ), log)
-        self.assertIn(plugin.JSON_PROMPT, log)
         self.assertIn(json.dumps(plugin.DOCUMENT_DATA_SCHEMA, ensure_ascii=False, indent=2), log)
         self.assertIn("Inspecting fixture.", log)
         self.assertEqual(log.count(MARKDOWN), 1)

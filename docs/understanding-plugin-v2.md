@@ -16,7 +16,7 @@ understanding:
       log_dir: ./data/understanding-logs
 ```
 
-The `plugins` map key is the stable plugin ID associated with attempts and artifacts. `command` is an argument vector launched directly, never a shell command. Absolute paths are supported; relative paths containing `/` resolve from the server's working directory; bare executable names resolve through `PATH`. Each plugin declares one or more exact input Blob Media Types, and a Media Type may belong to only one plugin. `max_concurrent` defaults to `1` and limits workers across imports and startup recovery.
+The `plugins` map key is the stable plugin ID associated with attempts and artifacts. `command` is an argument vector launched directly, never a shell command. Absolute paths are supported; relative paths containing `/` resolve from the server's working directory; bare executable names resolve through `PATH`. Each plugin declares one or more exact input Blob Media Types, and a Media Type may belong to only one plugin. `max_concurrent` defaults to `1` and limits workers across imports and explicit Rebuilds.
 
 Memoryd validates configuration at startup but does not launch or probe plugin executables. A missing executable fails its first attempt and is recorded. A Blob with no matching plugin receives a successful Run with a warning naming its unsupported input Media Type. Adding a plugin later does not automatically rebuild earlier Runs.
 
@@ -26,11 +26,11 @@ Model settings are centrally configured as `models.document_understanding` and p
 
 ## Process lifetime and transport
 
-Memoryd launches one child process per understanding attempt. A global `max_concurrent` limit applies across imports and startup recovery. There is no resident daemon, plugin server, or plugin-to-plugin call. Shutdown cancels active children; interrupted attempts are eligible for retry on restart.
+Memoryd launches one child process per understanding attempt. A global `max_concurrent` limit applies across imports and explicit Rebuilds. There is no resident daemon, plugin server, or plugin-to-plugin call. Shutdown cancels active children; restart schedules nothing, so interrupted attempts require an explicit Rebuild.
 
 Memoryd sends one UTF-8 JSON request on standard input, then closes it. The request embeds Blob bytes as base64; plugins receive no Vault path and may write their own temporary file if needed. Standard output contains exactly one UTF-8 JSON result. Standard error is reserved for diagnostics and is never parsed as a result. Plugins may emit standalone `MEMORYD_PROGRESS ` JSON lines to stderr; these do not replace the final response.
 
-Request shape remains the same except `protocol_version` is `2`:
+Requests use `protocol_version: 2`; optional fields may be omitted:
 
 ```json
 {
@@ -42,6 +42,7 @@ Request shape remains the same except `protocol_version` is `2`:
     "content_base64": "JVBERi0xLjQK..."
   },
   "import_context": { "original_filename": "bill.pdf" },
+  "user_note": "Focus on payment dates; present the summary in Russian.",
   "model": {
     "provider": "codex_app_server",
     "name": "gpt-6-luna",
@@ -52,6 +53,8 @@ Request shape remains the same except `protocol_version` is `2`:
 ```
 
 `model` may be omitted for model-free plugins. Memoryd supplies `import_context`, including `original_filename`; path and timestamp fields are optional. `blob.media_type` describes the input Blob and remains distinct from an artifact's `content_type`.
+
+`user_note` is optional owner guidance, separate from immutable Import Context and document evidence. Memoryd sends the exact saved string when nonempty and omits it when empty. Plugins may ignore it. The Codex extractor requires a string and adds JSON-quoted guidance to both model turns, bounded by the required headings, output schema, source-grounding rules, and document-only access. Notes may guide language or presentation; these boundaries are best effort, not a prompt-injection guarantee. Private prompt and process logs may contain notes.
 
 ## Response contract
 
@@ -112,7 +115,17 @@ MEMORYD_PROGRESS {"phase":"model_started","turn":1}
 
 Recognized phases are `request_validated`, `source_staged`, `model_runtime_ready`, `model_started`, `model_completed`, `result_validated`, and `completed`. Optional `turn` is a positive integer. Emit progress at workflow boundaries, not per token or tool event, and keep it separate from diagnostic text. Plugins that omit progress records still work; malformed or unknown records do not interrupt stderr draining or change the result.
 
-A zero exit plus one schema-valid v2 response completes the plugin attempt. Nonzero exit, malformed output, or a missing response is an operational failure; memoryd does not activate a partial Run. A failed or interrupted attempt may receive one new attempt at startup, not a tight retry loop. Runs and active-Run selection commit atomically after derived Blob publication.
+A zero exit plus one schema-valid v2 response completes the plugin attempt. Nonzero exit, malformed output, or a missing response is an operational failure; memoryd does not activate a partial Run. Failed or interrupted attempts require an explicit Rebuild. Runs and active-Run selection commit atomically after derived Blob publication.
+
+The web UI's split Rebuild control can submit a multiline note. Accepted Rebuilds save that preference on the Memory before RAM queue admission and capture it for the job. Main Rebuild reuses it. The optional JSON body on `POST /api/v0/memories/{memoryId}/rebuild` accepts `user_note`: no body, `{}`, or `null` reuses the preference; a string replaces it verbatim; `""` clears it. Non-string values or malformed JSON return HTTP 400 with plain-text errors. A queued/running conflict returns the existing handle without saving the rejected note.
+
+The right-hand SVG chevron is centered in a fixed-width segment; both split segments stay level on hover. It opens the note form, prefilled from the saved preference. Submit Rebuild inside that form to save edits and rebuild. Closing the form does not save. The main Rebuild segment reuses the saved note without opening the form.
+
+Understanding details expose `user_note` as the latest saved preference. Each successful `active_run.user_note` records the exact note used, atomically with Run publication, independently of plugin output. Empty and legacy notes are `""`. Failure keeps the saved preference but preserves the previous successful Run and its note. Preferences and Run snapshots survive restart; startup schedules no work. A crash after saving can retain the preference while losing the in-memory Rebuild.
+
+In the Understanding tab, the right sidebar shows the active Run's completion time above section navigation, using the same label/value styling as Import Context. With no successful Run, it shows `Not available`. Selecting Saved user note opens its preview using the same heading and plain-text layout as text artifacts, without note-specific card styling. The latest preference remains separate from the historical Run note in Run details.
+
+Sidebar navigation lists Artefacts first, followed by Info containing Saved user note, Run details, and available Diagnostics. The Artefacts section is hidden when the active Run has no artifacts. Saved user note is hidden when the saved preference is empty; clearing a selected note switches the preview to the next available section.
 
 Protocol v1 plugins are incompatible and must be updated to v2. Incompatible existing Vault schemas are rejected explicitly; memoryd does not migrate or reprocess them automatically.
 

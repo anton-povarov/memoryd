@@ -249,6 +249,16 @@ func (v *Vault) initialize(ctx context.Context) error {
 			json_valid(statistics_json) AND json_type(statistics_json) = 'object'
 		),
 		FOREIGN KEY (run_id) REFERENCES understanding_runs(id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS memory_understanding_notes (
+		memory_id TEXT PRIMARY KEY NOT NULL,
+		user_note TEXT NOT NULL,
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS understanding_run_notes (
+		run_id TEXT PRIMARY KEY NOT NULL,
+		user_note TEXT NOT NULL,
+		FOREIGN KEY (run_id) REFERENCES understanding_runs(id) ON DELETE CASCADE
 	)`
 
 	logger.DebugContext(ctx, "Initializing schema")
@@ -354,6 +364,8 @@ func (v *Vault) validateSchema(ctx context.Context) error {
 			"scope_json",
 		},
 		"understanding_run_statistics": {"run_id", "statistics_json"},
+		"memory_understanding_notes":   {"memory_id", "user_note"},
+		"understanding_run_notes":      {"run_id", "user_note"},
 	}
 	for table, want := range wantColumns {
 		got, err := tableColumns(ctx, v.db, table)

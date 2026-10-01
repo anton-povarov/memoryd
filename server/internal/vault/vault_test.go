@@ -383,6 +383,20 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = v.db.ExecContext(ctx, `
+		INSERT INTO memory_understanding_notes (memory_id, user_note)
+		VALUES (?, ?)
+	`, memory.ID.String(), "saved preference")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.db.ExecContext(ctx, `
+		INSERT INTO understanding_run_notes (run_id, user_note)
+		VALUES (?, ?)
+	`, "run", "captured run note")
+	if err != nil {
+		t.Fatal(err)
+	}
 	blobPath := v.blobPath(memory.Blob.Ref)
 	if _, err := os.Stat(blobPath); err != nil {
 		t.Fatal(err)
@@ -428,7 +442,7 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	).Scan(&activeRunCount); err != nil {
 		t.Fatal(err)
 	}
-	var statisticsCount int
+	var statisticsCount, memoryNoteCount, runNoteCount int
 	if err := v.db.QueryRowContext(
 		ctx,
 		`SELECT count(*) FROM understanding_run_statistics WHERE run_id = ?`,
@@ -436,15 +450,32 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	).Scan(&statisticsCount); err != nil {
 		t.Fatal(err)
 	}
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM memory_understanding_notes WHERE memory_id = ?`,
+		memory.ID.String(),
+	).Scan(&memoryNoteCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.db.QueryRowContext(
+		ctx,
+		`SELECT count(*) FROM understanding_run_notes WHERE run_id = ?`,
+		"run",
+	).Scan(&runNoteCount); err != nil {
+		t.Fatal(err)
+	}
 	if runCount != 0 || attemptCount != 0 || artifactCount != 0 ||
-		activeRunCount != 0 || statisticsCount != 0 {
+		activeRunCount != 0 || statisticsCount != 0 ||
+		memoryNoteCount != 0 || runNoteCount != 0 {
 		t.Fatalf(
-			"understanding rows remain after Memory deletion: runs=%d attempts=%d artifacts=%d active=%d statistics=%d",
+			"understanding rows remain after Memory deletion: runs=%d attempts=%d artifacts=%d active=%d statistics=%d memory-notes=%d run-notes=%d",
 			runCount,
 			attemptCount,
 			artifactCount,
 			activeRunCount,
 			statisticsCount,
+			memoryNoteCount,
+			runNoteCount,
 		)
 	}
 	if err := v.Delete(ctx, memory.ID); !errors.Is(err, ErrMemoryNotFound) {
@@ -547,6 +578,7 @@ func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing
 		nil,
 		nil,
 		nil,
+		"",
 	); !errors.Is(
 		err,
 		ErrMemoryNotFound,
@@ -623,7 +655,7 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 		}, uuid.New(), "1.0", []DerivedContent{{
 			Content: "# Derived\n",
 			Blob:    BlobInfo{MediaType: "text/markdown"},
-		}}, nil, statistics, costEstimate)
+		}}, nil, statistics, costEstimate, "")
 		if err != nil {
 			t.Fatal(err)
 		}

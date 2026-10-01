@@ -59,8 +59,8 @@ The first useful demonstration imports personal files, then answers variations o
 - The first extraction increment targets PDFs and does not need to assert structured Facts. A plugin may extract embedded text, perform OCR, or describe visual content. Source text and generated descriptions remain distinguishable Derived Content.
 - Each successful interpretation creates an immutable Understanding Run.
 - A coherent Run may include warnings. An understanding attempt fails only when an operational issue prevents it from committing a coherent Run; the failure produces an informative execution log and does not invalidate the Memory.
-- After the Blob and Memory commit, Document Understanding runs best effort in a process-local queue, independently of the client connection. Admission failure does not undo the import; explicit Refresh can retry.
-- One configured process limit covers imports and manual Rebuilds. Refresh returns a polling handle with 202; competing queued/running work returns 409 with the existing handle. Terminal handles remain until superseded, deletion, or restart. Invalid handles return 404.
+- After the Blob and Memory commit, Document Understanding runs best effort in a process-local queue, independently of the client connection. Admission failure does not undo the import; explicit Rebuild can retry.
+- One configured process limit covers imports and manual Rebuilds. Rebuild returns a polling handle with 202; competing queued/running work returns 409 with the existing handle. Terminal handles remain until superseded, deletion, or restart. Invalid handles return 404.
 - A Fact has a name, category, origin, type, and value. Deeper Fact semantics remain an open design question.
 
 ## Search

@@ -32,6 +32,9 @@ go run ./server/cmd/memoryd -c server/memoryd.example.yaml
 
 Open <http://127.0.0.1:8080/> for the web UI.
 
+Buttons, Original / Understanding tabs, and Memory list items highlight on hover
+without moving or changing size.
+
 ```sh
 go run ./cli/cmd/mem put /absolute/path/to/file
 go run ./cli/cmd/mem list
@@ -95,7 +98,7 @@ Unsupported formats complete with a warning-only Run. Failed attempts retain dia
 Scheduling is process-local and best effort. Restart drops queued/running work;
 startup schedules nothing. Successful Runs and terminal failure history remain
 durable. Legacy pending SQLite rows are ignored. An import whose admission fails
-remains a valid Memory requiring an explicit Refresh.
+remains a valid Memory requiring an explicit Rebuild.
 
 `POST /api/v0/memories/{memoryId}/rebuild` requests a manual Rebuild using the
 currently configured plugin. New work returns `202`; competing queued/running work
@@ -114,8 +117,8 @@ the preserved preview and Understanding. A right-hand **Sections** sidebar selec
 individual artifacts, **Run details**, or failure **Diagnostics** for the main area.
 The first artifact is selected initially; refresh preserves the selection for the
 same Run. Each artifact retains expandable **Metadata**; Markdown also provides
-**View source**. Status and **Refresh** share the header with **Download** and
-**Delete**. Status includes **Understanding not started**. Clicking **Refresh**
+**View source**. Status and **Rebuild** share the header with **Download** and
+**Delete**. Status includes **Understanding not started**. Clicking **Rebuild**
 starts a new attempt; pending work disables the button. Automatic polling follows
 the returned handle every three seconds while details are visible. Completion
 reloads Memory details for the new Run; failure keeps the prior Run. An expired
@@ -127,6 +130,8 @@ access. Raw HTML and unsafe links are disabled; all images become alt text witho
 automatic loads. Other content types remain literal text. Artifact **Metadata**,
 **Run details**, and failure **Diagnostics** display formatted JSON. Failed
 attempts preserve any last successful result; empty Runs show **No Derived Content**.
+Run warnings appear in an amber **Understanding warnings** notice above the
+content. Unsupported formats still complete with API status `done`.
 The CLI `mem info` JSON output is unchanged.
 
 Derived Blobs are stored in the separate `derived/sha256` namespace under the

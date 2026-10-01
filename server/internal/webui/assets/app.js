@@ -79,14 +79,36 @@
     understandingPanel: document.querySelector("#understanding-panel"),
     understandingStatus: document.querySelector("#understanding-status"),
     refreshUnderstanding: document.querySelector("#refresh-understanding"),
-    understandingRefreshError: document.querySelector("#understanding-refresh-error"),
+    rebuildNoteToggle: document.querySelector("#rebuild-note-toggle"),
+    rebuildNotePopover: document.querySelector("#rebuild-note-popover"),
+    rebuildNoteForm: document.querySelector("#rebuild-note-form"),
+    rebuildUserNote: document.querySelector("#rebuild-user-note"),
+    rebuildNoteSubmit: document.querySelector("#rebuild-note-submit"),
+    understandingUserNote: document.querySelector("#understanding-user-note"),
+    understandingRefreshError: document.querySelector(
+      "#understanding-refresh-error",
+    ),
     understandingAttempt: document.querySelector("#understanding-attempt"),
-    understandingRunSummary: document.querySelector("#understanding-run-summary"),
-    understandingRunDetails: document.querySelector("#understanding-run-details"),
+    understandingRunSummary: document.querySelector(
+      "#understanding-run-summary",
+    ),
+    understandingCompletedAt: document.querySelector(
+      "#understanding-completed-at",
+    ),
+    understandingRunDetails: document.querySelector(
+      "#understanding-run-details",
+    ),
     understandingArtifacts: document.querySelector("#understanding-artifacts"),
     understandingSections: document.querySelector("#understanding-sections"),
-    understandingArtifactSections: document.querySelector("#understanding-artifact-sections"),
-    understandingDiagnostics: document.querySelector("#understanding-diagnostics"),
+    understandingArtifactHeading: document.querySelector(
+      "#understanding-artefacts-heading",
+    ),
+    understandingArtifactSections: document.querySelector(
+      "#understanding-artifact-sections",
+    ),
+    understandingDiagnostics: document.querySelector(
+      "#understanding-diagnostics",
+    ),
     previewStage: document.querySelector("#preview-stage"),
     metadataList: document.querySelector("#metadata-list"),
     detailMemoryId: document.querySelector("#detail-memory-id"),
@@ -359,61 +381,105 @@
     elements.understandingTab.setAttribute("aria-pressed", String(!original));
   }
 
+  function setRebuildDisabled(disabled) {
+    elements.refreshUnderstanding.disabled = disabled;
+    elements.rebuildNoteToggle.disabled = disabled;
+    elements.rebuildNoteSubmit.disabled = disabled;
+  }
+
   function stopUnderstandingRefresh() {
     clearTimeout(state.refreshTimer);
     state.refreshTimer = null;
     state.detailGeneration += 1;
     state.refreshing = false;
-    elements.refreshUnderstanding.disabled = false;
-    elements.refreshUnderstanding.textContent = "Refresh";
+    setRebuildDisabled(false);
+    elements.rebuildNotePopover.hidePopover();
+    elements.refreshUnderstanding.textContent = "Rebuild";
     elements.refreshUnderstanding.setAttribute("aria-busy", "false");
   }
 
   function detailIsVisible() {
-    return !elements.memoryDetail.hidden &&
-      elements.memoryDetail.getClientRects().length > 0;
+    return (
+      !elements.memoryDetail.hidden &&
+      elements.memoryDetail.getClientRects().length > 0
+    );
   }
 
   function scheduleUnderstandingRefresh() {
     clearTimeout(state.refreshTimer);
     state.refreshTimer = null;
-    if (state.refreshing || document.hidden || !detailIsVisible() ||
+    if (
+      state.refreshing ||
+      document.hidden ||
+      !detailIsVisible() ||
       (!state.understandingReload &&
-        !["queued", "running"].includes(state.understanding?.status))) return;
+        !["queued", "running"].includes(state.understanding?.status))
+    )
+      return;
     // ponytail: fixed cadence; add backoff only if polling load becomes material.
     state.refreshTimer = setTimeout(refreshUnderstanding, 3000);
   }
 
-  async function refreshUnderstanding({ rerun = false } = {}) {
+  async function refreshUnderstanding({ rerun = false, userNote } = {}) {
     clearTimeout(state.refreshTimer);
     state.refreshTimer = null;
     if (state.refreshing || !state.selectedID || !detailIsVisible()) return;
+    if (rerun && ["queued", "running"].includes(state.understanding?.status))
+      return;
     const memoryID = state.selectedID;
     const generation = state.detailGeneration;
     state.refreshing = true;
-    elements.refreshUnderstanding.disabled = true;
-    elements.refreshUnderstanding.textContent = rerun ? "Starting…" : "Checking…";
+    setRebuildDisabled(true);
+    elements.refreshUnderstanding.textContent = rerun
+      ? "Starting…"
+      : "Checking…";
     elements.refreshUnderstanding.setAttribute("aria-busy", "true");
     let started = false;
-    const current = () => state.selectedID === memoryID &&
-      state.detailGeneration === generation && detailIsVisible();
+    const current = () =>
+      state.selectedID === memoryID &&
+      state.detailGeneration === generation &&
+      detailIsVisible();
     try {
       let snapshot;
       if (rerun) {
-        const response = await fetch(`${apiBase}/memories/${memoryID}/rebuild`, {
-          method: "POST", headers: { Accept: "application/json" },
-        });
+        const response = await fetch(
+          `${apiBase}/memories/${memoryID}/rebuild`,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(
+              userNote === undefined ? {} : { user_note: userNote },
+            ),
+          },
+        );
         const payload = await response.json();
         if (response.status !== 202 && response.status !== 409) {
-          throw new Error(payload.message || `Request failed (${response.status})`);
+          throw new Error(
+            payload.message || `Request failed (${response.status})`,
+          );
         }
         started = true;
         if (!current()) return;
         snapshot = payload;
-        showToast(response.status === 409 ? "Understanding already pending." : "Understanding accepted.");
-      } else if (!state.understandingReload && state.understanding?.status_url) {
+        if (response.status === 202 && userNote !== undefined) {
+          state.understanding = { ...state.understanding, user_note: userNote };
+        }
+        if (userNote !== undefined) elements.rebuildNotePopover.hidePopover();
+        showToast(
+          response.status === 409
+            ? "Understanding already pending."
+            : "Understanding accepted.",
+        );
+      } else if (
+        !state.understandingReload &&
+        state.understanding?.status_url
+      ) {
         const response = await fetch(state.understanding.status_url, {
-          headers: { Accept: "application/json" }, cache: "no-store",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
         });
         if (!current()) return;
         if (response.status === 404) {
@@ -421,7 +487,10 @@
           state.understandingReload = true;
         } else {
           const payload = await response.json();
-          if (!response.ok) throw new Error(payload.message || `Request failed (${response.status})`);
+          if (!response.ok)
+            throw new Error(
+              payload.message || `Request failed (${response.status})`,
+            );
           snapshot = payload;
         }
       } else {
@@ -429,8 +498,10 @@
       }
       if (snapshot) {
         state.understanding = {
-          ...state.understanding, status: snapshot.attempt.status,
-          latest_attempt: snapshot.attempt, status_url: snapshot.status_url,
+          ...state.understanding,
+          status: snapshot.attempt.status,
+          latest_attempt: snapshot.attempt,
+          status_url: snapshot.status_url,
         };
         state.understandingReload = snapshot.attempt.status === "done";
         renderUnderstanding(state.understanding);
@@ -445,17 +516,24 @@
       elements.understandingRefreshError.hidden = true;
       elements.understandingRefreshError.textContent = "";
     } catch (error) {
-      if (state.selectedID !== memoryID || state.detailGeneration !== generation ||
-        !detailIsVisible()) return;
-      elements.understandingRefreshError.textContent =
-        `${rerun && !started ? "Could not start understanding." : "Could not refresh understanding."} ${error.message}`;
+      if (
+        state.selectedID !== memoryID ||
+        state.detailGeneration !== generation ||
+        !detailIsVisible()
+      )
+        return;
+      elements.understandingRefreshError.textContent = `${rerun && !started ? "Could not start understanding." : "Could not refresh understanding."} ${error.message}`;
       elements.understandingRefreshError.hidden = false;
     } finally {
-      if (state.selectedID === memoryID && state.detailGeneration === generation) {
+      if (
+        state.selectedID === memoryID &&
+        state.detailGeneration === generation
+      ) {
         state.refreshing = false;
-        elements.refreshUnderstanding.disabled =
-          ["queued", "running"].includes(state.understanding?.status);
-        elements.refreshUnderstanding.textContent = "Refresh";
+        setRebuildDisabled(
+          ["queued", "running"].includes(state.understanding?.status),
+        );
+        elements.refreshUnderstanding.textContent = "Rebuild";
         elements.refreshUnderstanding.setAttribute("aria-busy", "false");
         scheduleUnderstandingRefresh();
       }
@@ -483,17 +561,28 @@
 
     try {
       const detail = await requestJSON(`${apiBase}/memories/${memoryID}`);
-      if (state.selectedID !== memoryID || state.detailGeneration !== generation) return;
+      if (
+        state.selectedID !== memoryID ||
+        state.detailGeneration !== generation
+      )
+        return;
       renderDetail(detail);
       loaded = true;
     } catch (error) {
-      if (state.selectedID !== memoryID || state.detailGeneration !== generation) return;
+      if (
+        state.selectedID !== memoryID ||
+        state.detailGeneration !== generation
+      )
+        return;
       showToast(`Could not open memory. ${error.message}`);
       state.selectedID = null;
       renderMemoryList();
       renderNoSelectionState();
     } finally {
-      if (state.selectedID === memoryID && state.detailGeneration === generation) {
+      if (
+        state.selectedID === memoryID &&
+        state.detailGeneration === generation
+      ) {
         setDetailLoading(false);
         if (loaded) scheduleUnderstandingRefresh();
       }
@@ -530,16 +619,22 @@
   }
 
   function selectUnderstandingSection(section) {
-    const buttons = [...elements.understandingSections.querySelectorAll("button")]
-      .filter(button => !button.hidden);
-    const selected = buttons.find(button => button.dataset.understandingSection === section) ||
-      buttons[0];
+    const buttons = [
+      ...elements.understandingSections.querySelectorAll("button"),
+    ].filter((button) => !button.hidden);
+    const selected =
+      buttons.find(
+        (button) => button.dataset.understandingSection === section,
+      ) || buttons[0];
     state.understandingSection = selected?.dataset.understandingSection || null;
     for (const button of buttons) {
       button.setAttribute("aria-pressed", String(button === selected));
     }
-    for (const pane of elements.understandingPanel.querySelectorAll("section[data-understanding-section]")) {
-      pane.hidden = pane.dataset.understandingSection !== state.understandingSection;
+    for (const pane of elements.understandingPanel.querySelectorAll(
+      "section[data-understanding-section]",
+    )) {
+      pane.hidden =
+        pane.dataset.understandingSection !== state.understandingSection;
     }
   }
 
@@ -553,26 +648,42 @@
         done: "Understanding done",
         failed: "Understanding failed",
       }[status] || "Understanding unavailable";
-    elements.refreshUnderstanding.disabled =
-      state.refreshing || ["queued", "running"].includes(status);
+    setRebuildDisabled(
+      state.refreshing || ["queued", "running"].includes(status),
+    );
+    elements.understandingUserNote.textContent =
+      understanding?.user_note || "No user note saved.";
+    elements.understandingSections.querySelector(
+      '[data-understanding-section="saved-note"]',
+    ).hidden = !understanding?.user_note;
     elements.understandingAttempt.replaceChildren();
     const attempt = understanding?.latest_attempt;
     if (status === "failed") {
       const error = document.createElement("p");
-      error.textContent = attempt?.diagnostics?.error || "Understanding failed.";
+      error.textContent =
+        attempt?.diagnostics?.error || "Understanding failed.";
       elements.understandingAttempt.append(error);
     }
     const diagnostics = status === "failed" ? attempt?.diagnostics : null;
     elements.understandingDiagnostics.querySelector("pre").textContent =
       diagnostics == null ? "" : JSON.stringify(diagnostics, null, 2);
-    elements.understandingSections.querySelector('[data-understanding-section="diagnostics"]').hidden =
-      diagnostics == null;
+    elements.understandingSections.querySelector(
+      '[data-understanding-section="diagnostics"]',
+    ).hidden = diagnostics == null;
 
     const run = understanding?.active_run;
+    elements.understandingArtifactHeading.hidden = !run?.artifacts.length;
+    elements.understandingCompletedAt.textContent = formatDate(
+      run?.completed_at,
+      "long",
+    );
     elements.understandingRunSummary.replaceChildren();
-    elements.understandingSections.querySelector('[data-understanding-section="run-details"]').hidden = !run;
+    elements.understandingSections.querySelector(
+      '[data-understanding-section="run-details"]',
+    ).hidden = !run;
     if (!run) {
-      elements.understandingRunSummary.textContent = "No completed Understanding Run yet.";
+      elements.understandingRunSummary.textContent =
+        "No completed Understanding Run yet.";
       elements.understandingArtifacts.replaceChildren();
       elements.understandingArtifactSections.replaceChildren();
       state.displayedRunID = null;
@@ -580,20 +691,19 @@
       return;
     }
 
-    const summary = document.createElement("p");
-    summary.textContent =
-      `${status === "failed" ? "Last successful result" : "Completed"} · ` +
-      `${run.artifacts.length} artifacts · ${formatDate(run.completed_at, "long")}`;
-    elements.understandingRunSummary.append(summary);
-    for (const warning of run.warnings) {
-      const message = document.createElement("p");
-      message.textContent = warning;
-      elements.understandingRunSummary.append(message);
-    }
-    if (run.artifacts.length === 0) {
-      const empty = document.createElement("p");
-      empty.textContent = "No Derived Content.";
-      elements.understandingRunSummary.append(empty);
+    if (run.warnings.length) {
+      const notice = document.createElement("section");
+      notice.className = "understanding-warnings";
+      const heading = document.createElement("h3");
+      heading.textContent = "Warnings";
+      const list = document.createElement("ul");
+      for (const warning of run.warnings) {
+        const message = document.createElement("li");
+        message.textContent = warning;
+        list.append(message);
+      }
+      notice.append(heading, list);
+      elements.understandingRunSummary.append(notice);
     }
 
     const { artifacts, warnings, ...report } = run;
@@ -754,10 +864,18 @@
 
     try {
       const response = await fetch(contentURL);
-      if (state.selectedID !== memory.id || state.detailGeneration !== generation) return;
+      if (
+        state.selectedID !== memory.id ||
+        state.detailGeneration !== generation
+      )
+        return;
       if (!response.ok) throw new Error(`Download failed (${response.status})`);
       const blob = await response.blob();
-      if (state.selectedID !== memory.id || state.detailGeneration !== generation) return;
+      if (
+        state.selectedID !== memory.id ||
+        state.detailGeneration !== generation
+      )
+        return;
 
       if (
         mediaType.startsWith("text/") ||
@@ -765,7 +883,11 @@
         mediaType.includes("xml")
       ) {
         const text = await blob.text();
-        if (state.selectedID !== memory.id || state.detailGeneration !== generation) return;
+        if (
+          state.selectedID !== memory.id ||
+          state.detailGeneration !== generation
+        )
+          return;
         elements.previewStage.replaceChildren();
         const pre = document.createElement("pre");
         pre.className = "text-preview";
@@ -788,7 +910,11 @@
         elements.previewStage.append(frame);
       }
     } catch (error) {
-      if (state.selectedID !== memory.id || state.detailGeneration !== generation) return;
+      if (
+        state.selectedID !== memory.id ||
+        state.detailGeneration !== generation
+      )
+        return;
       renderPreviewPlaceholder(
         memory,
         `The original is still available to download. ${error.message}`,
@@ -1133,9 +1259,7 @@
         }
         throw new Error(message);
       }
-      state.memories = state.memories.filter(
-        (entry) => entry.id !== memoryID,
-      );
+      state.memories = state.memories.filter((entry) => entry.id !== memoryID);
       const deletedMemoryWasSelected = state.selectedID === memoryID;
       if (deletedMemoryWasSelected) {
         stopUnderstandingRefresh();
@@ -1158,16 +1282,48 @@
   for (const button of openImportButtons) {
     button.addEventListener("click", showImport);
   }
-  elements.originalTab.addEventListener("click", () => selectDetailTab("original"));
-  elements.understandingTab.addEventListener("click", () => selectDetailTab("understanding"));
+  elements.originalTab.addEventListener("click", () =>
+    selectDetailTab("original"),
+  );
+  elements.understandingTab.addEventListener("click", () =>
+    selectDetailTab("understanding"),
+  );
   elements.refreshUnderstanding.addEventListener("click", () =>
     refreshUnderstanding({ rerun: true }),
   );
-  elements.understandingSections.addEventListener("click", event => {
+  elements.rebuildNoteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (elements.rebuildNoteSubmit.disabled) return;
+    refreshUnderstanding({
+      rerun: true,
+      userNote: elements.rebuildUserNote.value,
+    });
+  });
+  elements.rebuildNotePopover.addEventListener("beforetoggle", (event) => {
+    if (event.newState === "open") {
+      elements.rebuildUserNote.value = state.understanding?.user_note || "";
+    }
+  });
+  elements.rebuildNotePopover.addEventListener("toggle", (event) => {
+    const open = event.newState === "open";
+    elements.rebuildNoteToggle.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const anchor = elements.rebuildNoteToggle.getBoundingClientRect();
+    const popover = elements.rebuildNotePopover.getBoundingClientRect();
+    elements.rebuildNotePopover.style.left = `${Math.max(12, Math.min(anchor.right - popover.width, window.innerWidth - popover.width - 12))}px`;
+    elements.rebuildNotePopover.style.top = `${Math.max(12, Math.min(anchor.bottom + 8, window.innerHeight - popover.height - 12))}px`;
+    elements.rebuildUserNote.focus();
+  });
+  window.addEventListener("resize", () =>
+    elements.rebuildNotePopover.hidePopover(),
+  );
+  elements.understandingSections.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-understanding-section]");
     if (!button) return;
     selectUnderstandingSection(button.dataset.understandingSection);
-    elements.understandingPanel.querySelector(".understanding-reading").scrollTop = 0;
+    elements.understandingPanel.querySelector(
+      ".understanding-reading",
+    ).scrollTop = 0;
   });
   elements.memoryFilter.addEventListener("input", renderMemoryList);
   elements.loadMore.addEventListener("click", () =>

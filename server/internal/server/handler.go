@@ -162,9 +162,13 @@ func (h *Handler) RebuildMemory(
 	)
 	var attempt vault.UnderstandingAttempt
 	var accepted bool
+	var replacement *string
+	if request.Body != nil {
+		replacement = request.Body.UserNote
+	}
 	err := errUnderstandingUnavailable
 	if h.understanding != nil {
-		attempt, accepted, err = h.understanding.Enqueue(ctx, request.MemoryId)
+		attempt, accepted, err = h.understanding.Enqueue(ctx, request.MemoryId, replacement)
 	}
 	switch {
 	case errors.Is(err, vault.ErrMemoryNotFound):
@@ -488,7 +492,7 @@ func (h *Handler) ImportMemory(
 	}
 
 	if h.understanding != nil {
-		attempt, _, err := h.understanding.Enqueue(ctx, memory.ID)
+		attempt, _, err := h.understanding.Enqueue(ctx, memory.ID, nil)
 		if err != nil {
 			logger.ErrorContext(ctx, "Imported Memory Understanding admission failed",
 				"memory_id", memory.ID.String(), "error", err,
@@ -617,6 +621,7 @@ func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDe
 		Status:        api.UnderstandingDetailsStatus(details.Status),
 		LatestAttempt: nil,
 		ActiveRun:     nil,
+		UserNote:      details.UserNote,
 	}
 
 	if attempt := details.Attempt; attempt != nil {
@@ -685,6 +690,7 @@ func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDe
 			Warnings:      run.Warnings,
 			Statistics:    statistics,
 			CostEstimate:  costEstimate,
+			UserNote:      run.UserNote,
 			Artifacts:     artifacts,
 		}
 	}

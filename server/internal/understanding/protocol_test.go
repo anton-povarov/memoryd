@@ -13,12 +13,14 @@ func TestBuildRequestOmitsModelUnlessConfigured(t *testing.T) {
 		[]byte("hello"),
 		"text/plain",
 		vault.ImportContext{OriginalFilename: "note.txt"},
+		"",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(requestBytes), `"model"`) {
-		t.Fatalf("request without model includes model: %s", requestBytes)
+	if strings.Contains(string(requestBytes), `"model"`) ||
+		strings.Contains(string(requestBytes), `"user_note"`) {
+		t.Fatalf("request without model or user note includes optional field: %s", requestBytes)
 	}
 }
 
@@ -29,10 +31,12 @@ func TestBuildRequestIncludesValidatedModel(t *testing.T) {
 		ReasoningEffort: "medium",
 		Command:         []string{"/usr/local/bin/codex", "app-server", "--stdio"},
 	}
+	userNote := "focus on payment dates"
 	request, requestBytes, err := BuildRequest(
 		[]byte("hello"),
 		"text/plain",
 		vault.ImportContext{OriginalFilename: "note.txt"},
+		userNote,
 		model,
 	)
 	if err != nil {
@@ -42,7 +46,8 @@ func TestBuildRequestIncludesValidatedModel(t *testing.T) {
 		t.Fatal("request model is nil")
 	}
 	var decoded struct {
-		Model RequestModel `json:"model"`
+		Model    RequestModel `json:"model"`
+		UserNote string       `json:"user_note"`
 	}
 	if err := json.Unmarshal(requestBytes, &decoded); err != nil {
 		t.Fatalf("decode request model: %v", err)
@@ -51,6 +56,9 @@ func TestBuildRequestIncludesValidatedModel(t *testing.T) {
 		decoded.Model.ReasoningEffort != model.ReasoningEffort ||
 		len(decoded.Model.Command) != len(model.Command) {
 		t.Fatalf("decoded model = %#v", decoded.Model)
+	}
+	if decoded.UserNote != userNote {
+		t.Fatalf("decoded user note = %q, want %q", decoded.UserNote, userNote)
 	}
 	for index, argument := range model.Command {
 		if decoded.Model.Command[index] != argument {
@@ -116,6 +124,7 @@ func TestBuildRequestRejectsIncompleteOrCredentialBearingModel(t *testing.T) {
 				[]byte("hello"),
 				"text/plain",
 				vault.ImportContext{OriginalFilename: "note.txt"},
+				"",
 				test.model,
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {

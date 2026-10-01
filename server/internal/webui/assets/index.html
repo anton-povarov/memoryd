@@ -103,7 +103,20 @@
             <div class="detail-actions">
               <div class="understanding-toolbar">
                 <span id="understanding-status" role="status">Understanding unavailable</span>
-                <button class="button" id="refresh-understanding" type="button" title="Run Understanding again; may incur model costs.">Refresh</button>
+                <div class="rebuild-split">
+                  <button class="button" id="refresh-understanding" type="button" title="Rebuild Understanding; may incur model costs.">Rebuild</button>
+                  <button class="button" id="rebuild-note-toggle" type="button" aria-label="Rebuild with a note" popovertarget="rebuild-note-popover" aria-controls="rebuild-note-popover" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                  </button>
+                </div>
+                <div id="rebuild-note-popover" popover="auto">
+                  <form id="rebuild-note-form">
+                    <label for="rebuild-user-note">User note</label>
+                    <textarea id="rebuild-user-note" rows="6" aria-describedby="rebuild-note-help"></textarea>
+                    <p id="rebuild-note-help">Saved for this Memory and reused by Rebuild. Clear it to rebuild without a note.</p>
+                    <button class="button" id="rebuild-note-submit" type="submit">Rebuild</button>
+                  </form>
+                </div>
               </div>
               <a class="button button-dark" id="download-memory" href="#" download>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -156,8 +169,12 @@
           </div>
           <section id="understanding-panel" aria-label="Understanding" hidden>
             <div class="understanding-reading">
-              <div id="understanding-attempt"></div>
               <div id="understanding-run-summary"></div>
+              <section id="understanding-note-preview" data-understanding-section="saved-note" hidden>
+                <h3>Saved user note</h3>
+                <pre id="understanding-user-note">No user note saved.</pre>
+              </section>
+              <div id="understanding-attempt"></div>
               <section id="understanding-run-details" data-understanding-section="run-details" hidden>
                 <h3>Run details</h3>
                 <pre></pre>
@@ -169,9 +186,17 @@
               <div id="understanding-artifacts"></div>
             </div>
             <aside class="understanding-sidebar metadata-card">
-              <div class="section-heading"><h3>Sections</h3></div>
+              <dl class="metadata-list" id="understanding-completion">
+                <div class="metadata-row">
+                  <dt>Completed</dt>
+                  <dd id="understanding-completed-at">Not available</dd>
+                </div>
+              </dl>
+              <div class="section-heading" id="understanding-artefacts-heading" hidden><h3>Artefacts</h3></div>
               <nav id="understanding-sections" aria-label="Understanding sections">
                 <div id="understanding-artifact-sections"></div>
+                <div class="section-heading"><h3>Info</h3></div>
+                <button type="button" data-understanding-section="saved-note" aria-controls="understanding-note-preview" aria-pressed="false" hidden>Saved user note</button>
                 <button type="button" data-understanding-section="run-details" aria-controls="understanding-run-details" aria-pressed="false" hidden>Run details</button>
                 <button type="button" data-understanding-section="diagnostics" aria-controls="understanding-diagnostics" aria-pressed="false" hidden>Diagnostics</button>
               </nav>

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -195,6 +196,12 @@ type MemorySummary struct {
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
 }
 
+// RebuildRequest defines model for RebuildRequest.
+type RebuildRequest struct {
+	// UserNote Optional owner guidance; null reuses the saved note, empty string clears it.
+	UserNote *string `json:"user_note,omitempty"`
+}
+
 // RebuildStatus defines model for RebuildStatus.
 type RebuildStatus struct {
 	Attempt   UnderstandingAttempt `json:"attempt"`
@@ -242,6 +249,9 @@ type UnderstandingDetails struct {
 
 	// StatusUrl Process-local polling URL; absent for durable history after restart.
 	StatusUrl *string `json:"status_url,omitempty"`
+
+	// UserNote Latest saved owner guidance for this Memory; empty when absent or cleared.
+	UserNote string `json:"user_note"`
 }
 
 // UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
@@ -275,7 +285,10 @@ type UnderstandingRun struct {
 
 	// Statistics Optional plugin-reported Run totals.
 	Statistics *Statistics `json:"statistics,omitempty"`
-	Warnings   []string    `json:"warnings"`
+
+	// UserNote Owner guidance captured by this successful Run; empty when absent.
+	UserNote string   `json:"user_note"`
+	Warnings []string `json:"warnings"`
 }
 
 // Cursor defines model for Cursor.
@@ -295,6 +308,9 @@ type BrowseMemoriesParams struct {
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
 type ImportMemoryMultipartRequestBody = ImportMultipart
+
+// RebuildMemoryJSONRequestBody defines body for RebuildMemory for application/json ContentType.
+type RebuildMemoryJSONRequestBody = RebuildRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -412,15 +428,35 @@ type ClientInterface interface {
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RebuildMemoryWithBody Request a Memory Rebuild
+	//
+	// Accept process-local work using current Document Understanding methods.
+	// An optional user_note replaces the saved Memory guidance; absent or
+	// null user_note reuses the saved note, and an empty string clears it.
+	// The original Blob and previous active Run remain unchanged. Acceptance
+	// is best effort: queued/running work and polling handles are lost on
+	// restart. Competing queued/running work returns 409 without scheduling
+	// or changing the saved note.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+	RebuildMemoryWithBody(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RebuildMemory Request a Memory Rebuild
 	//
 	// Accept process-local work using current Document Understanding methods.
+	// An optional user_note replaces the saved Memory guidance; absent or
+	// null user_note reuses the saved note, and an empty string clears it.
 	// The original Blob and previous active Run remain unchanged. Acceptance
 	// is best effort: queued/running work and polling handles are lost on
-	// restart. Competing queued/running work returns 409 without scheduling.
+	// restart. Competing queued/running work returns 409 without scheduling
+	// or changing the saved note.
+	//
+	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-	RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RebuildMemory(ctx context.Context, memoryId MemoryId, body RebuildMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReadiness Check whether the server can accept requests
 	//
@@ -538,16 +574,46 @@ func (c *Client) GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEdi
 	return c.Client.Do(req)
 }
 
+// RebuildMemoryWithBody Request a Memory Rebuild
+//
+// Accept process-local work using current Document Understanding methods.
+// An optional user_note replaces the saved Memory guidance; absent or
+// null user_note reuses the saved note, and an empty string clears it.
+// The original Blob and previous active Run remain unchanged. Acceptance
+// is best effort: queued/running work and polling handles are lost on
+// restart. Competing queued/running work returns 409 without scheduling
+// or changing the saved note.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+func (c *Client) RebuildMemoryWithBody(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebuildMemoryRequestWithBody(c.Server, memoryId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RebuildMemory Request a Memory Rebuild
 //
 // Accept process-local work using current Document Understanding methods.
+// An optional user_note replaces the saved Memory guidance; absent or
+// null user_note reuses the saved note, and an empty string clears it.
 // The original Blob and previous active Run remain unchanged. Acceptance
 // is best effort: queued/running work and polling handles are lost on
-// restart. Competing queued/running work returns 409 without scheduling.
+// restart. Competing queued/running work returns 409 without scheduling
+// or changing the saved note.
+//
+// Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-func (c *Client) RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRebuildMemoryRequest(c.Server, memoryId)
+func (c *Client) RebuildMemory(ctx context.Context, memoryId MemoryId, body RebuildMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebuildMemoryRequest(c.Server, memoryId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -815,8 +881,19 @@ func NewGetMemoryContentRequest(server string, memoryId MemoryId) (*http.Request
 	return req, nil
 }
 
-// NewRebuildMemoryRequest constructs an http.Request for the RebuildMemory method
-func NewRebuildMemoryRequest(server string, memoryId MemoryId) (*http.Request, error) {
+// NewRebuildMemoryRequest calls the generic RebuildMemory builder with application/json body
+func NewRebuildMemoryRequest(server string, memoryId MemoryId, body RebuildMemoryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRebuildMemoryRequestWithBody(server, memoryId, "application/json", bodyReader)
+}
+
+// NewRebuildMemoryRequestWithBody constructs an http.Request for the RebuildMemory method, with any body, and a specified content type
+func NewRebuildMemoryRequestWithBody(server string, memoryId MemoryId, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -841,10 +918,12 @@ func NewRebuildMemoryRequest(server string, memoryId MemoryId) (*http.Request, e
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -1006,17 +1085,35 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContentWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*GetMemoryContentResponse, error)
 
+	// RebuildMemoryWithBodyWithResponse Request a Memory Rebuild
+	//
+	// Accept process-local work using current Document Understanding methods.
+	// An optional user_note replaces the saved Memory guidance; absent or
+	// null user_note reuses the saved note, and an empty string clears it.
+	// The original Blob and previous active Run remain unchanged. Acceptance
+	// is best effort: queued/running work and polling handles are lost on
+	// restart. Competing queued/running work returns 409 without scheduling
+	// or changing the saved note.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+	RebuildMemoryWithBodyWithResponse(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error)
+
 	// RebuildMemoryWithResponse Request a Memory Rebuild
 	//
 	// Accept process-local work using current Document Understanding methods.
+	// An optional user_note replaces the saved Memory guidance; absent or
+	// null user_note reuses the saved note, and an empty string clears it.
 	// The original Blob and previous active Run remain unchanged. Acceptance
 	// is best effort: queued/running work and polling handles are lost on
-	// restart. Competing queued/running work returns 409 without scheduling.
+	// restart. Competing queued/running work returns 409 without scheduling
+	// or changing the saved note.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-	RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error)
+	RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, body RebuildMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error)
 
 	// GetReadinessWithResponse Check whether the server can accept requests
 	//
@@ -1613,18 +1710,42 @@ func (c *ClientWithResponses) GetMemoryContentWithResponse(ctx context.Context, 
 	return ParseGetMemoryContentResponse(rsp)
 }
 
+// RebuildMemoryWithBodyWithResponse Request a Memory Rebuild
+//
+// Accept process-local work using current Document Understanding methods.
+// An optional user_note replaces the saved Memory guidance; absent or
+// null user_note reuses the saved note, and an empty string clears it.
+// The original Blob and previous active Run remain unchanged. Acceptance
+// is best effort: queued/running work and polling handles are lost on
+// restart. Competing queued/running work returns 409 without scheduling
+// or changing the saved note.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+func (c *ClientWithResponses) RebuildMemoryWithBodyWithResponse(ctx context.Context, memoryId MemoryId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error) {
+	rsp, err := c.RebuildMemoryWithBody(ctx, memoryId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebuildMemoryResponse(rsp)
+}
+
 // RebuildMemoryWithResponse Request a Memory Rebuild
 //
 // Accept process-local work using current Document Understanding methods.
+// An optional user_note replaces the saved Memory guidance; absent or
+// null user_note reuses the saved note, and an empty string clears it.
 // The original Blob and previous active Run remain unchanged. Acceptance
 // is best effort: queued/running work and polling handles are lost on
-// restart. Competing queued/running work returns 409 without scheduling.
+// restart. Competing queued/running work returns 409 without scheduling
+// or changing the saved note.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
-func (c *ClientWithResponses) RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error) {
-	rsp, err := c.RebuildMemory(ctx, memoryId, reqEditors...)
+func (c *ClientWithResponses) RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, body RebuildMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error) {
+	rsp, err := c.RebuildMemory(ctx, memoryId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

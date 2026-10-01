@@ -537,6 +537,119 @@ func TestFailedRunCommitDoesNotExposePartialDerivedContent(t *testing.T) {
 	}
 }
 
+func TestRebuildUserNotePersistsAndSnapshots(t *testing.T) {
+	root := t.TempDir()
+	plugin := writeUnderstandingPlugin(t, root, "note-plugin", `cat > /dev/null
+while [ ! -f "$1/release" ]; do sleep 0.01; done
+if [ -f "$1/fail" ]; then exit 7; fi
+printf '%s\n' '`+completeUnderstandingResult+`'
+`)
+	cfg := understandingPluginConfig(plugin, root)
+	release := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "release"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gate := func() {
+		t.Helper()
+		if err := os.Remove(filepath.Join(root, "release")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release()
+	s, memoryVault := openUnderstandingServer(t, root, cfg)
+	memory := importUnderstandingMemory(t, s, "note.pdf", "%PDF-1.7\nnote fixture\n%%EOF\n")
+	initial := understandingMemoryDetail(t, s, memory, "done").Understanding
+	if initial.UserNote != "" || initial.ActiveRun == nil || initial.ActiveRun.UserNote != "" {
+		t.Fatalf("initial notes = %#v", initial)
+	}
+	post := func(note *string, code int) api.RebuildStatus {
+		t.Helper()
+		var body io.Reader
+		if note != nil {
+			encoded, err := json.Marshal(map[string]string{"user_note": *note})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body = bytes.NewReader(encoded)
+		}
+		request := httptest.NewRequest(http.MethodPost,
+			"/api/v0/memories/"+memory.Id.String()+"/rebuild", body)
+		if body != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		s.Handler().ServeHTTP(response, request)
+		if response.Code != code {
+			t.Fatalf("rebuild = %d %s, want %d", response.Code, response.Body.String(), code)
+		}
+		var handle api.RebuildStatus
+		if err := json.Unmarshal(response.Body.Bytes(), &handle); err != nil {
+			t.Fatal(err)
+		}
+		return handle
+	}
+	gate()
+	note := "  Focus on payment dates.\nСрок оплаты  "
+	handle := post(&note, http.StatusAccepted)
+	pending := understandingMemoryDetail(t, s, memory, "running").Understanding
+	if pending.UserNote != note || pending.ActiveRun.ID != initial.ActiveRun.ID {
+		t.Fatalf("pending preference = %#v", pending)
+	}
+	rejected := "Different rejected note"
+	conflict := post(&rejected, http.StatusConflict)
+	pending = understandingMemoryDetail(t, s, memory, "running").Understanding
+	if conflict.Attempt.Id != handle.Attempt.Id || pending.UserNote != note ||
+		pending.LatestAttempt.ID != handle.Attempt.Id.String() {
+		t.Fatalf("conflict changed note or handle: %#v, %#v", pending, conflict)
+	}
+	release()
+	success := understandingMemoryDetail(t, s, memory, "done").Understanding
+	if success.ActiveRun.ID == initial.ActiveRun.ID || success.ActiveRun.UserNote != note {
+		t.Fatalf("successful Run snapshot = %#v", success)
+	}
+	gate()
+	if err := os.WriteFile(filepath.Join(root, "fail"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nextNote := "Focus on totals"
+	post(&nextNote, http.StatusAccepted)
+	release()
+	failed := understandingMemoryDetail(t, s, memory, "failed").Understanding
+	if failed.UserNote != nextNote || !reflect.DeepEqual(failed.ActiveRun, success.ActiveRun) {
+		t.Fatalf("failure changed historical Run: %#v", failed)
+	}
+	closeUnderstandingServer(t, s, memoryVault)
+	s, memoryVault = openUnderstandingServer(t, root, cfg)
+	defer closeUnderstandingServer(t, s, memoryVault)
+	restarted := understandingMemoryDetail(t, s, memory, "failed").Understanding
+	if restarted.UserNote != nextNote ||
+		!reflect.DeepEqual(restarted.ActiveRun, success.ActiveRun) {
+		t.Fatalf("restart lost preference or snapshot: %#v", restarted)
+	}
+	if err := os.Remove(filepath.Join(root, "fail")); err != nil {
+		t.Fatal(err)
+	}
+	gate()
+	post(nil, http.StatusAccepted)
+	release()
+	reused := understandingMemoryDetail(t, s, memory, "done").Understanding
+	if reused.UserNote != nextNote || reused.ActiveRun.UserNote != nextNote ||
+		reused.ActiveRun.ID == success.ActiveRun.ID {
+		t.Fatalf("bodyless Rebuild did not reuse saved note: %#v", reused)
+	}
+	gate()
+	empty := ""
+	post(&empty, http.StatusAccepted)
+	release()
+	cleared := understandingMemoryDetail(t, s, memory, "done").Understanding
+	if cleared.UserNote != "" || cleared.ActiveRun.UserNote != "" ||
+		cleared.ActiveRun.ID == reused.ActiveRun.ID {
+		t.Fatalf("clear did not publish empty notes: %#v", cleared)
+	}
+}
+
 func requestUnderstandingRefresh(
 	t *testing.T,
 	s *Server,
@@ -622,6 +735,7 @@ func writeUnderstandingPlugin(t *testing.T, root, name, body string) string {
 type understandingWireDetail struct {
 	Understanding struct {
 		Status        string `json:"status"`
+		UserNote      string `json:"user_note"`
 		LatestAttempt *struct {
 			ID          string `json:"id"`
 			Status      string `json:"status"`
@@ -639,6 +753,7 @@ type understandingWireDetail struct {
 			PluginID      string   `json:"plugin_id"`
 			PluginVersion string   `json:"plugin_version"`
 			SourceBlobref string   `json:"source_blobref"`
+			UserNote      string   `json:"user_note"`
 			Warnings      []string `json:"warnings"`
 			Artifacts     []struct {
 				ID          string         `json:"id"`

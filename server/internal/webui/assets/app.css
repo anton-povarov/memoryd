@@ -41,7 +41,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -53,6 +54,7 @@ a {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 label:has(input:focus-visible) {
   outline: 3px solid rgb(231 91 63 / 25%);
   outline-offset: 2px;
@@ -174,15 +176,7 @@ label:has(input:focus-visible) {
   font-size: 13px;
   font-weight: 720;
   text-decoration: none;
-  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
-}
-
-.button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.button:active:not(:disabled) {
-  transform: translateY(0);
+  transition: background 160ms ease, box-shadow 160ms ease;
 }
 
 .button:disabled {
@@ -360,18 +354,21 @@ p {
   background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
 .memory-row:hover {
   background: rgb(255 254 250 / 60%);
-  transform: translateX(2px);
 }
 
 .memory-row.is-selected {
   border-color: #ddd6ca;
   background: var(--color-white);
   box-shadow: var(--shadow-card);
+}
+
+.memory-row.is-selected:hover {
+  background: var(--color-paper-deep);
 }
 
 .file-icon,
@@ -1232,7 +1229,8 @@ p {
   line-height: 1.5;
 }
 
-.import-message.is-duplicate {
+.import-message.is-duplicate,
+.understanding-warnings {
   color: #6b5431;
   background: #f3e8cf;
 }
@@ -1326,15 +1324,75 @@ p {
   white-space: nowrap;
 }
 
-#refresh-understanding {
+.rebuild-split .button {
   border: 1px solid var(--color-line);
   color: var(--color-ink);
   background: var(--color-white);
 }
 
-#refresh-understanding:hover:not(:disabled) {
+.rebuild-split .button:hover:not(:disabled) {
   background: var(--color-paper);
 }
+
+.rebuild-split {
+  display: inline-flex;
+}
+
+#refresh-understanding {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+#rebuild-note-toggle {
+  width: 42px;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+#rebuild-note-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-medium);
+  color: var(--color-ink);
+  background: var(--color-white);
+  box-shadow: var(--shadow-card);
+}
+
+#rebuild-note-form {
+  display: grid;
+  gap: 10px;
+}
+
+#rebuild-note-form label {
+  font-weight: 700;
+}
+
+#rebuild-user-note {
+  width: 100%;
+  min-height: 144px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+#rebuild-note-help {
+  margin: 0;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 
 .detail-tabs {
   display: flex;
@@ -1347,6 +1405,14 @@ p {
 .detail-tabs [aria-pressed="true"] {
   color: white;
   background: var(--color-ink);
+}
+
+.detail-tabs .button:hover:not(:disabled) {
+  background: var(--color-paper-deep);
+}
+
+.detail-tabs [aria-pressed="true"]:hover:not(:disabled) {
+  background: #343a32;
 }
 
 #original-panel[hidden],
@@ -1375,6 +1441,27 @@ p {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-large);
   background: var(--color-white);
+}
+
+.understanding-warnings {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-left: 3px solid #c6a858;
+  border-radius: 10px;
+}
+
+.understanding-warnings h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.understanding-warnings ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+#understanding-completion {
+  margin-bottom: 20px;
 }
 
 #understanding-sections button {

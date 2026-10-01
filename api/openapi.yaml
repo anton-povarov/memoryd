@@ -107,9 +107,18 @@ paths:
       summary: Request a Memory Rebuild
       description: |
         Accept process-local work using current Document Understanding methods.
+        An optional user_note replaces the saved Memory guidance; absent or
+        null user_note reuses the saved note, and an empty string clears it.
         The original Blob and previous active Run remain unchanged. Acceptance
         is best effort: queued/running work and polling handles are lost on
-        restart. Competing queued/running work returns 409 without scheduling.
+        restart. Competing queued/running work returns 409 without scheduling
+        or changing the saved note.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RebuildRequest"
       responses:
         "202":
           description: A new attempt was accepted by this process.
@@ -143,6 +152,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "400":
+          description: The request body is malformed or user_note is not a string or null.
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /rebuild-status/{rebuildId}:
     parameters:
@@ -436,10 +451,21 @@ components:
         understanding:
           $ref: "#/components/schemas/UnderstandingDetails"
 
+    RebuildRequest:
+      type: object
+      properties:
+        user_note:
+          type: string
+          nullable: true
+          description: Optional owner guidance; null reuses the saved note, empty string clears it.
+
     UnderstandingDetails:
       type: object
-      required: [status, latest_attempt, active_run]
+      required: [status, latest_attempt, active_run, user_note]
       properties:
+        user_note:
+          type: string
+          description: Latest saved owner guidance for this Memory; empty when absent or cleared.
         status:
           type: string
           enum: [not_started, queued, running, done, failed]
@@ -518,7 +544,7 @@ components:
 
     UnderstandingRun:
       type: object
-      required: [id, attempt_id, plugin_id, plugin_version, source_blobref, created_at, completed_at, warnings, artifacts]
+      required: [id, attempt_id, plugin_id, plugin_version, source_blobref, created_at, completed_at, warnings, artifacts, user_note]
       properties:
         id:
           type: string
@@ -539,6 +565,9 @@ components:
         completed_at:
           type: string
           format: date-time
+        user_note:
+          type: string
+          description: Owner guidance captured by this successful Run; empty when absent.
         warnings:
           type: array
           items:

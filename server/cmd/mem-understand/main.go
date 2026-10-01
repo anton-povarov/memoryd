@@ -317,11 +317,11 @@ func prepareRequest(
 	var encodedRequest []byte
 	if model == nil {
 		request, encodedRequest, err = understanding.BuildRequest(
-			content, mediaType, normalizedContext,
+			content, mediaType, normalizedContext, "",
 		)
 	} else {
 		request, encodedRequest, err = understanding.BuildRequest(
-			content, mediaType, normalizedContext, *model,
+			content, mediaType, normalizedContext, "", *model,
 		)
 	}
 	if err != nil {

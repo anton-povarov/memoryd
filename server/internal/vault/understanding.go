@@ -79,6 +79,7 @@ type UnderstandingRun struct {
 	SourceBlobref Blobref
 	CreatedAt     time.Time
 	CompletedAt   time.Time
+	UserNote      string
 	Warnings      []string
 	Statistics    *Statistics
 	CostEstimate  *CostEstimate
@@ -92,12 +93,57 @@ type understandingRunReporting struct {
 
 type UnderstandingDetails struct {
 	Status    string
+	UserNote  string
 	Attempt   *UnderstandingAttempt
 	ActiveRun *UnderstandingRun
 }
 
 func formatUnderstandingTime(value time.Time) string {
 	return value.UTC().Format(understandingTimeLayout)
+}
+
+const selectUnderstandingUserNoteSQL = `
+	SELECT COALESCE(note.user_note, '')
+	FROM memories memory
+	LEFT JOIN memory_understanding_notes note ON note.memory_id = memory.id
+	WHERE memory.id = ?
+`
+
+func (v *Vault) ResolveUnderstandingUserNote(
+	ctx context.Context,
+	memoryID uuid.UUID,
+	replacement *string,
+) (string, error) {
+	if replacement == nil {
+		var userNote string
+		err := v.db.QueryRowContext(
+			ctx, selectUnderstandingUserNoteSQL, memoryID.String(),
+		).Scan(&userNote)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrMemoryNotFound
+		}
+		if err != nil {
+			return "", fmt.Errorf("read saved Understanding user note: %w", err)
+		}
+		return userNote, nil
+	}
+
+	result, err := v.db.ExecContext(ctx, `
+		INSERT INTO memory_understanding_notes (memory_id, user_note)
+		SELECT id, ? FROM memories WHERE id = ?
+		ON CONFLICT(memory_id) DO UPDATE SET user_note = excluded.user_note
+	`, *replacement, memoryID.String())
+	if err != nil {
+		return "", fmt.Errorf("save Understanding user note: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("check saved Understanding user note: %w", err)
+	}
+	if rowsAffected == 0 {
+		return "", ErrMemoryNotFound
+	}
+	return *replacement, nil
 }
 
 func (v *Vault) FinishUnderstanding(
@@ -109,6 +155,7 @@ func (v *Vault) FinishUnderstanding(
 	warnings []string,
 	statistics *Statistics,
 	costEstimate *CostEstimate,
+	userNote string,
 ) (UnderstandingAttempt, error) {
 	if attempt.Status != understandingStatusRunning {
 		return UnderstandingAttempt{}, ErrUnderstandingAttemptNotRunning
@@ -185,6 +232,15 @@ func (v *Vault) FinishUnderstanding(
 		formatUnderstandingTime(now), string(warningsJSON))
 	if err != nil {
 		return UnderstandingAttempt{}, fmt.Errorf("insert Understanding Run: %w", err)
+	}
+	if userNote != "" {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO understanding_run_notes (run_id, user_note)
+			VALUES (?, ?)
+		`, runID.String(), userNote)
+		if err != nil {
+			return UnderstandingAttempt{}, fmt.Errorf("insert Understanding Run user note: %w", err)
+		}
 	}
 	if len(reportingJSON) > 0 {
 		_, err = tx.ExecContext(ctx, `
@@ -357,18 +413,19 @@ func (v *Vault) Understanding(
 		return UnderstandingDetails{}, fmt.Errorf("begin Understanding details read: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := scanMemory(tx.QueryRowContext(
-		ctx,
-		selectMemorySQL+` WHERE id = ?`,
-		memoryID.String(),
-	)); err != nil {
-		return UnderstandingDetails{}, err
-	}
-
 	details := UnderstandingDetails{
 		Status:    "not_started",
 		Attempt:   nil,
 		ActiveRun: nil,
+	}
+	err = tx.QueryRowContext(
+		ctx, selectUnderstandingUserNoteSQL, memoryID.String(),
+	).Scan(&details.UserNote)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UnderstandingDetails{}, ErrMemoryNotFound
+	}
+	if err != nil {
+		return UnderstandingDetails{}, fmt.Errorf("read saved Understanding user note: %w", err)
 	}
 	attempt, err := scanUnderstandingAttempt(tx.QueryRowContext(ctx, `
 		SELECT id, memory_id, status, plugin_id, queued_at, started_at,
@@ -391,12 +448,14 @@ func (v *Vault) Understanding(
 	run, err := scanUnderstandingRun(tx.QueryRowContext(ctx, `
 		SELECT run.id, run.memory_id, run.attempt_id, run.plugin_id,
 			run.plugin_version, run.source_blobref, run.created_at,
-			run.completed_at, run.warnings_json, statistics.statistics_json
+			run.completed_at, run.warnings_json, statistics.statistics_json,
+			COALESCE(run_notes.user_note, '')
 		FROM active_understanding_runs active
 		JOIN understanding_runs run
 			ON run.id = active.run_id AND run.memory_id = active.memory_id
 		LEFT JOIN understanding_run_statistics statistics
 			ON statistics.run_id = run.id
+		LEFT JOIN understanding_run_notes run_notes ON run_notes.run_id = run.id
 		WHERE active.memory_id = ?
 	`, memoryID.String()))
 	switch {
@@ -488,6 +547,7 @@ func scanUnderstandingRun(row rowScanner) (UnderstandingRun, error) {
 		&completedAt,
 		&warningsJSON,
 		&statisticsJSON,
+		&run.UserNote,
 	); err != nil {
 		return UnderstandingRun{}, err
 	}
