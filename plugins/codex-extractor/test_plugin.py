@@ -246,6 +246,36 @@ class WorkflowLoggingTests(unittest.TestCase):
         self.assertIsNone(plugin.estimate_api_cost(None, "gpt-6-luna"))
         self.assertIsNone(plugin.estimate_api_cost({**usage, "cached_input_tokens": 101}, "gpt-6-luna"))
 
+    def test_cost_validation_defaults_cache_writes_and_rejects_boolean_counts(self):
+        usage = {
+            "input_tokens": 100,
+            "cached_input_tokens": 20,
+            "output_tokens": 10,
+            "reasoning_output_tokens": 2,
+            "total_tokens": 110,
+        }
+        estimate = plugin.estimate_api_cost(usage, "gpt-6-luna")
+        self.assertAlmostEqual(estimate["amount_usd"], 0.0000132, places=9)
+        self.assertIsNone(plugin.cost_unavailable_reason(usage, "gpt-6-luna"))
+
+        boolean_count = {**usage, "input_tokens": True}
+        self.assertIsNone(plugin.estimate_api_cost(boolean_count, "gpt-6-luna"))
+        self.assertEqual(
+            plugin.cost_unavailable_reason(boolean_count, "gpt-6-luna"),
+            "invalid_usage_breakdown",
+        )
+
+        excess_cache = {
+            **usage,
+            "cached_input_tokens": 90,
+            "cache_write_input_tokens": 11,
+        }
+        self.assertIsNone(plugin.estimate_api_cost(excess_cache, "gpt-6-luna"))
+        self.assertEqual(
+            plugin.cost_unavailable_reason(excess_cache, "gpt-6-luna"),
+            "cache_tokens_exceed_input_tokens",
+        )
+
     def test_equal_call_counts_with_growing_total_remain_visible(self):
         completed, _ = self.run_plugin(extra_usage=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)

@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -100,7 +103,7 @@ func New(
 	)
 
 	api.HandlerFromMuxWithBaseURL(
-		strictHandler,
+		rebuildRequestValidator{ServerInterface: strictHandler},
 		mux,
 		api.ServerUrlLocalMemorydServer,
 	)
@@ -130,6 +133,31 @@ func New(
 		logger:        httpLogger,
 		understanding: worker,
 	}, nil
+}
+
+// Validate the complete optional body before the generated decoder can admit work.
+type rebuildRequestValidator struct {
+	api.ServerInterface
+}
+
+func (handler rebuildRequestValidator) RebuildMemory(
+	w http.ResponseWriter,
+	r *http.Request,
+	memoryID api.MemoryId,
+) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "can't read JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(bytes.TrimSpace(body)) != 0 && !json.Valid(body) {
+		http.Error(w, "can't decode JSON body: malformed JSON", http.StatusBadRequest)
+		return
+	}
+	if len(body) != 0 {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	handler.ServerInterface.RebuildMemory(w, r, memoryID)
 }
 
 // Handler exposes the complete HTTP surface for black-box tests and embedding.

@@ -335,7 +335,7 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	_, err = v.db.ExecContext(ctx, `
 		INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
 		VALUES (?, ?, ?, ?)
-	`, "attempt", memory.ID.String(), understandingStatusDone, now)
+	`, "attempt", memory.ID.String(), UnderstandingStatusDone, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, legacyStatus := range []string{"queued", understandingStatusRunning} {
+	for _, legacyStatus := range []string{"queued", UnderstandingStatusRunning} {
 		if _, err := v.db.ExecContext(ctx, `
 			INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
 			VALUES (?, ?, ?, ?)
@@ -522,7 +522,7 @@ func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing
 	queuedAt := time.Now().UTC().Add(-time.Minute)
 	startedAt := queuedAt.Add(time.Second)
 	input := UnderstandingAttempt{
-		ID: uuid.New(), MemoryID: memory.ID, Status: understandingStatusRunning,
+		ID: uuid.New(), MemoryID: memory.ID, Status: UnderstandingStatusRunning,
 		PluginID: "codex", QueuedAt: queuedAt, StartedAt: &startedAt,
 	}
 	exitCode := 23
@@ -534,7 +534,7 @@ func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != understandingStatusFailed || failed.CompletedAt == nil ||
+	if failed.Status != UnderstandingStatusFailed || failed.CompletedAt == nil ||
 		failed.Diagnostics == nil || failed.Diagnostics.Error != diagnostics.Error {
 		t.Fatalf("failed attempt snapshot = %#v", failed)
 	}
@@ -558,7 +558,7 @@ func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if details.Status != understandingStatusFailed || details.Attempt == nil ||
+	if details.Status != UnderstandingStatusFailed || details.Attempt == nil ||
 		details.Attempt.ID != input.ID || details.Attempt.CompletedAt == nil ||
 		!details.Attempt.CompletedAt.Equal(*failed.CompletedAt) ||
 		details.Attempt.Diagnostics == nil ||
@@ -604,7 +604,7 @@ func TestUnderstandingRejectsFailureForMissingMemory(t *testing.T) {
 	t.Cleanup(func() { _ = v.Close() })
 	now := time.Now().UTC()
 	attempt := UnderstandingAttempt{
-		ID: uuid.New(), MemoryID: uuid.New(), Status: understandingStatusRunning,
+		ID: uuid.New(), MemoryID: uuid.New(), Status: UnderstandingStatusRunning,
 		QueuedAt: now, StartedAt: &now,
 	}
 	if _, err := v.FailUnderstanding(
@@ -650,7 +650,7 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 		queuedAt := time.Now().UTC().Add(-time.Minute)
 		startedAt := queuedAt.Add(time.Second)
 		attempt, err := v.FinishUnderstanding(ctx, UnderstandingAttempt{
-			ID: uuid.New(), MemoryID: memory.ID, Status: understandingStatusRunning,
+			ID: uuid.New(), MemoryID: memory.ID, Status: UnderstandingStatusRunning,
 			PluginID: "codex", QueuedAt: queuedAt, StartedAt: &startedAt,
 		}, uuid.New(), "1.0", []DerivedContent{{
 			Content: "# Derived\n",
@@ -659,7 +659,7 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if attempt.Status != understandingStatusDone || attempt.CompletedAt == nil {
+		if attempt.Status != UnderstandingStatusDone || attempt.CompletedAt == nil {
 			t.Fatalf("committed attempt = %#v", attempt)
 		}
 		return attempt
@@ -753,7 +753,7 @@ func assertCommittedUnderstandingAttempt(
 	want UnderstandingAttempt,
 ) {
 	t.Helper()
-	if got == nil || got.ID != want.ID || got.Status != understandingStatusDone ||
+	if got == nil || got.ID != want.ID || got.Status != UnderstandingStatusDone ||
 		got.CompletedAt == nil || !got.CompletedAt.Equal(*want.CompletedAt) {
 		t.Fatalf("reopened terminal attempt = %#v; committed snapshot %#v", got, want)
 	}

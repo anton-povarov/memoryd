@@ -16,10 +16,12 @@ import (
 )
 
 const (
-	understandingStatusRunning = "running"
-	understandingStatusDone    = "done"
-	understandingStatusFailed  = "failed"
-	understandingTimeLayout    = "2006-01-02T15:04:05.000000000Z07:00"
+	UnderstandingStatusNotStarted = "not_started"
+	UnderstandingStatusQueued     = "queued"
+	UnderstandingStatusRunning    = "running"
+	UnderstandingStatusDone       = "done"
+	UnderstandingStatusFailed     = "failed"
+	understandingTimeLayout       = "2006-01-02T15:04:05.000000000Z07:00"
 )
 
 var ErrUnderstandingAttemptNotRunning = errors.New("understanding attempt is not running")
@@ -157,7 +159,7 @@ func (v *Vault) FinishUnderstanding(
 	costEstimate *CostEstimate,
 	userNote string,
 ) (UnderstandingAttempt, error) {
-	if attempt.Status != understandingStatusRunning {
+	if attempt.Status != UnderstandingStatusRunning {
 		return UnderstandingAttempt{}, ErrUnderstandingAttemptNotRunning
 	}
 	if _, err := v.Memory(ctx, attempt.MemoryID); err != nil {
@@ -216,7 +218,7 @@ func (v *Vault) FinishUnderstanding(
 	}
 	now := time.Now().UTC()
 	terminalAttempt := attempt
-	terminalAttempt.Status = understandingStatusDone
+	terminalAttempt.Status = UnderstandingStatusDone
 	terminalAttempt.CompletedAt = &now
 	terminalAttempt.Diagnostics = nil
 	if err := insertUnderstandingAttempt(ctx, tx, terminalAttempt); err != nil {
@@ -371,7 +373,7 @@ func (v *Vault) FailUnderstanding(
 	attempt UnderstandingAttempt,
 	diagnostics UnderstandingDiagnostics,
 ) (UnderstandingAttempt, error) {
-	if attempt.Status != understandingStatusRunning {
+	if attempt.Status != UnderstandingStatusRunning {
 		return UnderstandingAttempt{}, ErrUnderstandingAttemptNotRunning
 	}
 	tx, err := v.db.BeginTx(ctx, nil)
@@ -385,7 +387,7 @@ func (v *Vault) FailUnderstanding(
 		return UnderstandingAttempt{}, err
 	}
 	now := time.Now().UTC()
-	attempt.Status = understandingStatusFailed
+	attempt.Status = UnderstandingStatusFailed
 	attempt.CompletedAt = &now
 	attempt.Diagnostics = &diagnostics
 	if err := insertUnderstandingAttempt(ctx, tx, attempt); err != nil {
@@ -414,7 +416,7 @@ func (v *Vault) Understanding(
 	}
 	defer func() { _ = tx.Rollback() }()
 	details := UnderstandingDetails{
-		Status:    "not_started",
+		Status:    UnderstandingStatusNotStarted,
 		Attempt:   nil,
 		ActiveRun: nil,
 	}
@@ -434,7 +436,7 @@ func (v *Vault) Understanding(
 		FROM understanding_attempts
 		WHERE memory_id = ? AND status IN (?, ?)
 		ORDER BY queued_at DESC, id DESC LIMIT 1
-	`, memoryID.String(), understandingStatusDone, understandingStatusFailed))
+	`, memoryID.String(), UnderstandingStatusDone, UnderstandingStatusFailed))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		details.Attempt = nil
@@ -465,7 +467,7 @@ func (v *Vault) Understanding(
 		return UnderstandingDetails{}, fmt.Errorf("read active Understanding Run: %w", err)
 	default:
 		if details.Attempt == nil {
-			details.Status = understandingStatusDone
+			details.Status = UnderstandingStatusDone
 		}
 		if err := v.readUnderstandingArtifacts(ctx, tx, &run); err != nil {
 			return UnderstandingDetails{}, err
@@ -515,7 +517,7 @@ func scanUnderstandingAttempt(row rowScanner) (UnderstandingAttempt, error) {
 	if attempt.CompletedAt, err = parseNullableTime(completedAt); err != nil {
 		return UnderstandingAttempt{}, err
 	}
-	if attempt.Status == understandingStatusFailed {
+	if attempt.Status == UnderstandingStatusFailed {
 		diagnostics := UnderstandingDiagnostics{
 			Error:    diagnosticError.String,
 			Stdout:   stdout.String,

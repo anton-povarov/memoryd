@@ -611,10 +611,7 @@ def parse_usage_breakdown(breakdown):
     return usage
 
 
-def estimate_api_cost(usage, model_name):
-    """Estimate gpt-6-luna Standard short-context API-equivalent cost."""
-    if model_name != "gpt-6-luna" or not isinstance(usage, dict):
-        return None
+def _usage_cost_unavailable_reason(usage):
     required = (
         "input_tokens",
         "cached_input_tokens",
@@ -628,19 +625,29 @@ def estimate_api_cost(usage, model_name):
         or usage[key] < 0
         for key in required
     ):
-        return None
+        return "invalid_usage_breakdown"
     cache_write_tokens = usage.get("cache_write_input_tokens", 0)
     if (
         isinstance(cache_write_tokens, bool)
         or not isinstance(cache_write_tokens, int)
         or cache_write_tokens < 0
     ):
+        return "invalid_usage_breakdown"
+    if usage["cached_input_tokens"] + cache_write_tokens > usage["input_tokens"]:
+        return "cache_tokens_exceed_input_tokens"
+    return None
+
+
+def estimate_api_cost(usage, model_name):
+    """Estimate gpt-6-luna Standard short-context API-equivalent cost."""
+    if model_name != "gpt-6-luna" or not isinstance(usage, dict):
         return None
+    if _usage_cost_unavailable_reason(usage) is not None:
+        return None
+    cache_write_tokens = usage.get("cache_write_input_tokens", 0)
     regular_input = (
         usage["input_tokens"] - usage["cached_input_tokens"] - cache_write_tokens
     )
-    if regular_input < 0:
-        return None
     amount = (
         regular_input * LUNA_INPUT_RATE
         + usage["cached_input_tokens"] * LUNA_CACHED_INPUT_RATE
@@ -662,30 +669,7 @@ def cost_unavailable_reason(usage, model_name):
         return "no_rate_for_model"
     if not isinstance(usage, dict):
         return "usage_missing"
-    if estimate_api_cost(usage, model_name) is not None:
-        return None
-    token_fields = (
-        "input_tokens",
-        "cached_input_tokens",
-        "output_tokens",
-        "reasoning_output_tokens",
-        "total_tokens",
-    )
-    cache_write_tokens = usage.get("cache_write_input_tokens", 0)
-    if any(
-        isinstance(usage.get(key), bool)
-        or not isinstance(usage.get(key), int)
-        or usage[key] < 0
-        for key in token_fields
-    ) or (
-        isinstance(cache_write_tokens, bool)
-        or not isinstance(cache_write_tokens, int)
-        or cache_write_tokens < 0
-    ):
-        return "invalid_usage_breakdown"
-    if usage["cached_input_tokens"] + cache_write_tokens > usage["input_tokens"]:
-        return "cache_tokens_exceed_input_tokens"
-    return "invalid_usage_breakdown"
+    return _usage_cost_unavailable_reason(usage)
 
 
 def usage_from_message(message):
@@ -802,6 +786,19 @@ class AppServer:
             LOGGER.event(f"app_server.{method}", params=params)
         return message
 
+    def reject_unsupported_request(self, message):
+        LOGGER.event(
+            "app_server.unsupported_request",
+            method=message.get("method"),
+        )
+        self.send({
+            "id": message["id"],
+            "error": {
+                "code": -32601,
+                "message": "This client does not support server requests",
+            },
+        })
+
     def response(self, request_id, deadline):
         while True:
             message = self.receive(deadline)
@@ -814,14 +811,7 @@ class AppServer:
                     raise RuntimeError(f"app-server request failed: {message['error']}")
                 return message["result"]
             if "id" in message and "method" in message:
-                log_unsupported_request(message)
-                self.send({
-                    "id": message["id"],
-                    "error": {
-                        "code": -32601,
-                        "message": "This client does not support server requests",
-                    },
-                })
+                self.reject_unsupported_request(message)
             else:
                 self.pending.append(message)
 
@@ -842,13 +832,6 @@ class AppServer:
             returncode=self.process.poll(),
             elapsed_seconds=f"{time.monotonic() - self.started_at:.1f}s",
         )
-
-
-def log_unsupported_request(message):
-    LOGGER.event(
-        "app_server.unsupported_request",
-        method=message.get("method"),
-    )
 
 
 def initialize_server(server):
@@ -1040,14 +1023,7 @@ def run_turn(
             )
             raise
         if "id" in message and "method" in message:
-            log_unsupported_request(message)
-            server.send({
-                "id": message["id"],
-                "error": {
-                    "code": -32601,
-                    "message": "This client does not support server requests",
-                },
-            })
+            server.reject_unsupported_request(message)
             continue
         params = message.get("params", {})
         method = message.get("method")

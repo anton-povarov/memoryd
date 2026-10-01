@@ -537,6 +537,44 @@ func TestFailedRunCommitDoesNotExposePartialDerivedContent(t *testing.T) {
 	}
 }
 
+func TestRebuildRejectsMalformedJSONWithoutChangingUnderstanding(t *testing.T) {
+	s, memoryVault := openUnderstandingServer(t, t.TempDir(), config.Defaults())
+	defer closeUnderstandingServer(t, s, memoryVault)
+	memory := importUnderstandingMemory(t, s, "note.txt", "malformed Rebuild fixture")
+	initial := understandingMemoryDetail(t, s, memory, "done").Understanding
+
+	for _, body := range []string{
+		`{"user_note":"changed"} garbage`,
+		`{"user_note":"changed"} {}`,
+		`{"user_note":"changed"`,
+		`{"user_note":42}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost,
+				"/api/v0/memories/"+memory.Id.String()+"/rebuild", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			s.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest ||
+				!strings.HasPrefix(response.Header().Get("Content-Type"), "text/plain") {
+				t.Fatalf(
+					"invalid Rebuild = %d %s, want plain-text 400",
+					response.Code,
+					response.Body.String(),
+				)
+			}
+			current := understandingMemoryDetail(t, s, memory, "done").Understanding
+			if !reflect.DeepEqual(current, initial) {
+				t.Fatalf(
+					"invalid Rebuild changed Understanding: got %#v, want %#v",
+					current,
+					initial,
+				)
+			}
+		})
+	}
+}
+
 func TestRebuildUserNotePersistsAndSnapshots(t *testing.T) {
 	root := t.TempDir()
 	plugin := writeUnderstandingPlugin(t, root, "note-plugin", `cat > /dev/null

@@ -20,9 +20,11 @@ import (
 )
 
 const (
-	ProtocolVersion   = 2
-	MarkdownMediaType = "text/markdown"
-	JSONMediaType     = "application/json"
+	ProtocolVersion     = 2
+	MarkdownMediaType   = "text/markdown"
+	JSONMediaType       = "application/json"
+	AppServerSubcommand = "app-server"
+	AppServerStdioFlag  = "--stdio"
 )
 
 // Request is the complete, path-independent input sent to one plugin process.
@@ -59,7 +61,8 @@ func (model RequestModel) Validate() error {
 		return errors.New("model reasoning_effort must be minimal, low, medium, high, or xhigh")
 	}
 	if len(model.Command) != 3 || strings.TrimSpace(model.Command[0]) == "" ||
-		model.Command[1] != "app-server" || model.Command[2] != "--stdio" {
+		model.Command[1] != AppServerSubcommand ||
+		model.Command[2] != AppServerStdioFlag {
 		return errors.New(
 			"model command must contain a nonempty executable followed by app-server --stdio",
 		)

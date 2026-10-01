@@ -179,7 +179,11 @@ func (v *Vault) initialize(ctx context.Context) error {
 	CREATE TABLE IF NOT EXISTS understanding_attempts (
 		id TEXT PRIMARY KEY,
 		memory_id TEXT NOT NULL,
-		status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed')),
+		status TEXT NOT NULL CHECK (status IN ('` +
+		UnderstandingStatusQueued + `', '` +
+		UnderstandingStatusRunning + `', '` +
+		UnderstandingStatusDone + `', '` +
+		UnderstandingStatusFailed + `')),
 		plugin_id TEXT NOT NULL DEFAULT '',
 		queued_at TEXT NOT NULL,
 		started_at TEXT,

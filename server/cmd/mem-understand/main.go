@@ -232,7 +232,11 @@ func parseArgs(args []string) (options, error) {
 			Provider:        parsed.modelProvider,
 			Name:            parsed.modelName,
 			ReasoningEffort: parsed.modelEffort,
-			Command:         []string{parsed.appServerCommand, "app-server", "--stdio"},
+			Command: []string{
+				parsed.appServerCommand,
+				understanding.AppServerSubcommand,
+				understanding.AppServerStdioFlag,
+			},
 		}
 		if err := model.Validate(); err != nil {
 			return options{}, fmt.Errorf("invalid model settings: %w", err)

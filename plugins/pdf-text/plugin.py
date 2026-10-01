@@ -57,7 +57,7 @@ def extract_pages(data):
                     chunks = pymupdf4llm.to_markdown(
                         document,
                         page_chunks=True,
-                        # use_ocr=False, # auto if commented out
+                        use_ocr=False,
                         write_images=False,
                         embed_images=False,
                         show_progress=False,

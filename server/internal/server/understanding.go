@@ -118,7 +118,8 @@ func (worker *understandingWorker) Enqueue(
 		return vault.UnderstandingAttempt{}, false, errUnderstandingUnavailable
 	}
 	if current := worker.latest[memoryID]; current != nil &&
-		(current.attempt.Status == "queued" || current.attempt.Status == "running") {
+		(current.attempt.Status == vault.UnderstandingStatusQueued ||
+			current.attempt.Status == vault.UnderstandingStatusRunning) {
 		attempt := cloneUnderstandingAttempt(current.attempt)
 		worker.mu.Unlock()
 		return attempt, false, nil
@@ -137,7 +138,7 @@ func (worker *understandingWorker) Enqueue(
 	attempt := vault.UnderstandingAttempt{
 		ID:       uuid.New(),
 		MemoryID: memoryID,
-		Status:   "queued",
+		Status:   vault.UnderstandingStatusQueued,
 		QueuedAt: time.Now().UTC(),
 	}
 	jobCtx := logging.ContextWithRequestID(worker.ctx, logging.RequestID(ctx))
@@ -263,7 +264,7 @@ func (worker *understandingWorker) claim() (*understandingJob, vault.Understandi
 			continue
 		}
 		startedAt := time.Now().UTC()
-		job.attempt.Status = "running"
+		job.attempt.Status = vault.UnderstandingStatusRunning
 		job.attempt.StartedAt = &startedAt
 		return job, cloneUnderstandingAttempt(job.attempt), true
 	}
@@ -568,7 +569,7 @@ func (worker *understandingWorker) fail(
 	if err != nil {
 		logger.ErrorContext(job.ctx, "fail understanding attempt persistence failed", "error", err)
 		failed = attempt
-		failed.Status = "failed"
+		failed.Status = vault.UnderstandingStatusFailed
 		completedAt := time.Now().UTC()
 		failed.CompletedAt = &completedAt
 		diagnosticSnapshot := diagnostics
