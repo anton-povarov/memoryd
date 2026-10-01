@@ -44,24 +44,24 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for UnderstandingAttemptStatus.
+// Defines values for UnderstandingAttemptState.
 const (
-	UnderstandingAttemptStatusDone    UnderstandingAttemptStatus = "done"
-	UnderstandingAttemptStatusFailed  UnderstandingAttemptStatus = "failed"
-	UnderstandingAttemptStatusQueued  UnderstandingAttemptStatus = "queued"
-	UnderstandingAttemptStatusRunning UnderstandingAttemptStatus = "running"
+	UnderstandingAttemptStateDone    UnderstandingAttemptState = "done"
+	UnderstandingAttemptStateFailed  UnderstandingAttemptState = "failed"
+	UnderstandingAttemptStateQueued  UnderstandingAttemptState = "queued"
+	UnderstandingAttemptStateRunning UnderstandingAttemptState = "running"
 )
 
-// Valid indicates whether the value is a known member of the UnderstandingAttemptStatus enum.
-func (e UnderstandingAttemptStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the UnderstandingAttemptState enum.
+func (e UnderstandingAttemptState) Valid() bool {
 	switch e {
-	case UnderstandingAttemptStatusDone:
+	case UnderstandingAttemptStateDone:
 		return true
-	case UnderstandingAttemptStatusFailed:
+	case UnderstandingAttemptStateFailed:
 		return true
-	case UnderstandingAttemptStatusQueued:
+	case UnderstandingAttemptStateQueued:
 		return true
-	case UnderstandingAttemptStatusRunning:
+	case UnderstandingAttemptStateRunning:
 		return true
 	default:
 		return false
@@ -70,10 +70,11 @@ func (e UnderstandingAttemptStatus) Valid() bool {
 
 // Defines values for UnderstandingDetailsStatus.
 const (
-	UnderstandingDetailsStatusDone    UnderstandingDetailsStatus = "done"
-	UnderstandingDetailsStatusFailed  UnderstandingDetailsStatus = "failed"
-	UnderstandingDetailsStatusQueued  UnderstandingDetailsStatus = "queued"
-	UnderstandingDetailsStatusRunning UnderstandingDetailsStatus = "running"
+	UnderstandingDetailsStatusDone       UnderstandingDetailsStatus = "done"
+	UnderstandingDetailsStatusFailed     UnderstandingDetailsStatus = "failed"
+	UnderstandingDetailsStatusNotStarted UnderstandingDetailsStatus = "not_started"
+	UnderstandingDetailsStatusQueued     UnderstandingDetailsStatus = "queued"
+	UnderstandingDetailsStatusRunning    UnderstandingDetailsStatus = "running"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingDetailsStatus enum.
@@ -82,6 +83,8 @@ func (e UnderstandingDetailsStatus) Valid() bool {
 	case UnderstandingDetailsStatusDone:
 		return true
 	case UnderstandingDetailsStatusFailed:
+		return true
+	case UnderstandingDetailsStatusNotStarted:
 		return true
 	case UnderstandingDetailsStatusQueued:
 		return true
@@ -204,6 +207,13 @@ type MemorySummary struct {
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
 }
 
+// RebuildStatus defines model for RebuildStatus.
+type RebuildStatus struct {
+	Attempt   UnderstandingAttempt `json:"attempt"`
+	MemoryId  openapi_types.UUID   `json:"memory_id"`
+	StatusUrl string               `json:"status_url"`
+}
+
 // Statistics defines model for Statistics.
 type Statistics struct {
 	Usage *TokenUsage `json:"usage,omitempty"`
@@ -226,14 +236,14 @@ type UnderstandingAttempt struct {
 	Id          openapi_types.UUID        `json:"id"`
 
 	// PluginId Configured plugin ID; empty when no plugin is selected.
-	PluginId  string                     `json:"plugin_id"`
-	QueuedAt  time.Time                  `json:"queued_at"`
-	StartedAt *time.Time                 `json:"started_at,omitempty"`
-	Status    UnderstandingAttemptStatus `json:"status"`
+	PluginId  string                    `json:"plugin_id"`
+	QueuedAt  time.Time                 `json:"queued_at"`
+	StartedAt *time.Time                `json:"started_at,omitempty"`
+	Status    UnderstandingAttemptState `json:"status"`
 }
 
-// UnderstandingAttemptStatus defines model for UnderstandingAttempt.Status.
-type UnderstandingAttemptStatus string
+// UnderstandingAttemptState defines model for UnderstandingAttemptState.
+type UnderstandingAttemptState string
 
 // UnderstandingDetails defines model for UnderstandingDetails.
 type UnderstandingDetails struct {
@@ -241,6 +251,9 @@ type UnderstandingDetails struct {
 	ActiveRun     *UnderstandingRun          `json:"active_run"`
 	LatestAttempt *UnderstandingAttempt      `json:"latest_attempt"`
 	Status        UnderstandingDetailsStatus `json:"status"`
+
+	// StatusUrl Process-local polling URL; absent for durable history after restart.
+	StatusUrl *string `json:"status_url,omitempty"`
 }
 
 // UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
@@ -315,9 +328,15 @@ type ServerInterface interface {
 	// GetMemoryContent Download and verify a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
+	// RebuildMemory Request a Memory Rebuild
+	// (POST /memories/{memoryId}/rebuild)
+	RebuildMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
 	// GetReadiness Check whether the server can accept requests
 	// (GET /readyz)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
+	// GetRebuildStatus Poll a retained process-local Rebuild
+	// (GET /rebuild-status/{rebuildId})
+	GetRebuildStatus(w http.ResponseWriter, r *http.Request, rebuildId openapi_types.UUID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -481,11 +500,63 @@ func (siw *ServerInterfaceWrapper) GetMemoryContent(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// RebuildMemory operation middleware
+func (siw *ServerInterfaceWrapper) RebuildMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memoryId" -------------
+	var memoryId MemoryId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memoryId", r.PathValue("memoryId"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memoryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RebuildMemory(w, r, memoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReadiness operation middleware
 func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadiness(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRebuildStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetRebuildStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "rebuildId" -------------
+	var rebuildId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rebuildId", r.PathValue("rebuildId"), &rebuildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rebuildId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRebuildStatus(w, r, rebuildId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -620,6 +691,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories", wrapper.BrowseMemories)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/memories/{memoryId}", wrapper.DeleteMemory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}", wrapper.GetMemory)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/{memoryId}/rebuild", wrapper.RebuildMemory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rebuild-status/{rebuildId}", wrapper.GetRebuildStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}/content", wrapper.GetMemoryContent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/import", wrapper.ImportMemory)
 
@@ -910,6 +983,90 @@ func (response GetMemoryContent507JSONResponse) VisitGetMemoryContentResponse(w 
 	return err
 }
 
+type RebuildMemoryRequestObject struct {
+	MemoryId MemoryId `json:"memoryId"`
+}
+
+type RebuildMemoryResponseObject interface {
+	VisitRebuildMemoryResponse(w http.ResponseWriter) error
+}
+
+type RebuildMemory202ResponseHeaders struct {
+	CacheControl *string
+}
+
+type RebuildMemory202JSONResponse struct {
+	Body    RebuildStatus
+	Headers RebuildMemory202ResponseHeaders
+}
+
+func (response RebuildMemory202JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory404JSONResponse Error
+
+func (response RebuildMemory404JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory409ResponseHeaders struct {
+	CacheControl *string
+}
+
+type RebuildMemory409JSONResponse struct {
+	Body    RebuildStatus
+	Headers RebuildMemory409ResponseHeaders
+}
+
+func (response RebuildMemory409JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory503JSONResponse Error
+
+func (response RebuildMemory503JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetReadinessRequestObject struct {
 }
 
@@ -927,6 +1084,62 @@ func (response GetReadiness200JSONResponse) VisitGetReadinessResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRebuildStatusRequestObject struct {
+	RebuildId openapi_types.UUID `json:"rebuildId"`
+}
+
+type GetRebuildStatusResponseObject interface {
+	VisitGetRebuildStatusResponse(w http.ResponseWriter) error
+}
+
+type GetRebuildStatus200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetRebuildStatus200JSONResponse struct {
+	Body    RebuildStatus
+	Headers GetRebuildStatus200ResponseHeaders
+}
+
+func (response GetRebuildStatus200JSONResponse) VisitGetRebuildStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRebuildStatus404ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetRebuildStatus404JSONResponse struct {
+	Body    Error
+	Headers GetRebuildStatus404ResponseHeaders
+}
+
+func (response GetRebuildStatus404JSONResponse) VisitGetRebuildStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -951,9 +1164,15 @@ type StrictServerInterface interface {
 	// GetMemoryContent Download and verify a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(ctx context.Context, request GetMemoryContentRequestObject) (GetMemoryContentResponseObject, error)
+	// RebuildMemory Request a Memory Rebuild
+	// (POST /memories/{memoryId}/rebuild)
+	RebuildMemory(ctx context.Context, request RebuildMemoryRequestObject) (RebuildMemoryResponseObject, error)
 	// GetReadiness Check whether the server can accept requests
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
+	// GetRebuildStatus Poll a retained process-local Rebuild
+	// (GET /rebuild-status/{rebuildId})
+	GetRebuildStatus(ctx context.Context, request GetRebuildStatusRequestObject) (GetRebuildStatusResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1154,6 +1373,32 @@ func (sh *strictHandler) GetMemoryContent(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// RebuildMemory operation middleware
+func (sh *strictHandler) RebuildMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId) {
+	var request RebuildMemoryRequestObject
+
+	request.MemoryId = memoryId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RebuildMemory(ctx, request.(RebuildMemoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RebuildMemory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RebuildMemoryResponseObject); ok {
+		if err := validResponse.VisitRebuildMemoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetReadiness operation middleware
 func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	var request GetReadinessRequestObject
@@ -1178,60 +1423,95 @@ func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetRebuildStatus operation middleware
+func (sh *strictHandler) GetRebuildStatus(w http.ResponseWriter, r *http.Request, rebuildId openapi_types.UUID) {
+	var request GetRebuildStatusRequestObject
+
+	request.RebuildId = rebuildId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRebuildStatus(ctx, request.(GetRebuildStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRebuildStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRebuildStatusResponseObject); ok {
+		if err := validResponse.VisitGetRebuildStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"AA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

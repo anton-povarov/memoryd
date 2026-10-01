@@ -641,6 +641,7 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .detail-header h2 {
@@ -1310,6 +1311,168 @@ p {
   from { opacity: 0; transform: translateY(7px); }
 }
 
+.understanding-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+  border-right: 1px solid var(--color-line);
+}
+
+#understanding-status {
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+#refresh-understanding {
+  border: 1px solid var(--color-line);
+  color: var(--color-ink);
+  background: var(--color-white);
+}
+
+#refresh-understanding:hover:not(:disabled) {
+  background: var(--color-paper);
+}
+
+.detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.detail-tabs [aria-pressed="true"] {
+  color: white;
+  background: var(--color-ink);
+}
+
+#original-panel[hidden],
+#understanding-panel[hidden] {
+  display: none !important;
+}
+
+#understanding-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.understanding-reading,
+.understanding-sidebar {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.understanding-reading {
+  padding: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-large);
+  background: var(--color-white);
+}
+
+#understanding-sections button {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--color-ink-soft);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+#understanding-sections button:hover {
+  background: var(--color-paper);
+}
+
+#understanding-sections button[aria-pressed="true"] {
+  border-color: var(--color-line);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-weight: 700;
+}
+
+#understanding-panel details {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+#understanding-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+#understanding-panel pre {
+  max-width: 100%;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: rgb(0 0 0 / 3%);
+  font-size: 12px;
+}
+
+.artifact-markdown {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.artifact-markdown h1,
+.artifact-markdown h2,
+.artifact-markdown h3 {
+  margin: 16px 0 8px;
+  line-height: 1.25;
+}
+
+.artifact-markdown p,
+.artifact-markdown ul,
+.artifact-markdown ol {
+  margin: 12px 0;
+}
+
+.artifact-markdown ul,
+.artifact-markdown ol {
+  padding-left: 24px;
+}
+
+.artifact-markdown table {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.artifact-markdown th,
+.artifact-markdown td {
+  padding: 6px 12px;
+  border: 1px solid var(--color-line);
+}
+
+.artifact-markdown pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+#understanding-refresh-error {
+  margin-bottom: 12px;
+  color: #9c3e32;
+  overflow-wrap: anywhere;
+}
+
 @media (min-width: 681px) {
   .workspace {
     height: calc(100vh - 76px);
@@ -1355,6 +1518,13 @@ p {
   .detail-grid {
     min-height: 0;
     flex: 1;
+  }
+
+  #understanding-panel {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .preview-card {

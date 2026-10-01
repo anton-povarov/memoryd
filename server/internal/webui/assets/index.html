@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#f4f0e8">
   <title>memoryd — personal memory vault</title>
   <link rel="stylesheet" href="/app.css">
+  <script src="/markdown-it-15.0.2.min.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -100,6 +101,10 @@
               <div class="detail-pills" id="detail-pills"></div>
             </div>
             <div class="detail-actions">
+              <div class="understanding-toolbar">
+                <span id="understanding-status" role="status">Understanding unavailable</span>
+                <button class="button" id="refresh-understanding" type="button" title="Run Understanding again; may incur model costs.">Refresh</button>
+              </div>
               <a class="button button-dark" id="download-memory" href="#" download>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path>
@@ -112,7 +117,13 @@
             </div>
           </div>
 
-          <div class="detail-grid">
+          <p id="understanding-refresh-error" role="status" hidden></p>
+          <div class="detail-tabs">
+            <button class="button" id="original-tab" type="button" aria-controls="original-panel" aria-pressed="true">Original</button>
+            <button class="button" id="understanding-tab" type="button" aria-controls="understanding-panel" aria-pressed="false">Understanding</button>
+          </div>
+
+          <div class="detail-grid" id="original-panel">
             <section class="preview-card">
               <div class="preview-stage" id="preview-stage"></div>
             </section>
@@ -143,6 +154,29 @@
 
             </aside>
           </div>
+          <section id="understanding-panel" aria-label="Understanding" hidden>
+            <div class="understanding-reading">
+              <div id="understanding-attempt"></div>
+              <div id="understanding-run-summary"></div>
+              <section id="understanding-run-details" data-understanding-section="run-details" hidden>
+                <h3>Run details</h3>
+                <pre></pre>
+              </section>
+              <section id="understanding-diagnostics" data-understanding-section="diagnostics" hidden>
+                <h3>Diagnostics</h3>
+                <pre></pre>
+              </section>
+              <div id="understanding-artifacts"></div>
+            </div>
+            <aside class="understanding-sidebar metadata-card">
+              <div class="section-heading"><h3>Sections</h3></div>
+              <nav id="understanding-sections" aria-label="Understanding sections">
+                <div id="understanding-artifact-sections"></div>
+                <button type="button" data-understanding-section="run-details" aria-controls="understanding-run-details" aria-pressed="false" hidden>Run details</button>
+                <button type="button" data-understanding-section="diagnostics" aria-controls="understanding-diagnostics" aria-pressed="false" hidden>Diagnostics</button>
+              </nav>
+            </aside>
+          </section>
         </article>
 
         <div class="detail-loading" id="detail-loading" hidden>

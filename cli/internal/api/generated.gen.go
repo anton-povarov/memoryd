@@ -32,24 +32,24 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
-// Defines values for UnderstandingAttemptStatus.
+// Defines values for UnderstandingAttemptState.
 const (
-	UnderstandingAttemptStatusDone    UnderstandingAttemptStatus = "done"
-	UnderstandingAttemptStatusFailed  UnderstandingAttemptStatus = "failed"
-	UnderstandingAttemptStatusQueued  UnderstandingAttemptStatus = "queued"
-	UnderstandingAttemptStatusRunning UnderstandingAttemptStatus = "running"
+	UnderstandingAttemptStateDone    UnderstandingAttemptState = "done"
+	UnderstandingAttemptStateFailed  UnderstandingAttemptState = "failed"
+	UnderstandingAttemptStateQueued  UnderstandingAttemptState = "queued"
+	UnderstandingAttemptStateRunning UnderstandingAttemptState = "running"
 )
 
-// Valid indicates whether the value is a known member of the UnderstandingAttemptStatus enum.
-func (e UnderstandingAttemptStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the UnderstandingAttemptState enum.
+func (e UnderstandingAttemptState) Valid() bool {
 	switch e {
-	case UnderstandingAttemptStatusDone:
+	case UnderstandingAttemptStateDone:
 		return true
-	case UnderstandingAttemptStatusFailed:
+	case UnderstandingAttemptStateFailed:
 		return true
-	case UnderstandingAttemptStatusQueued:
+	case UnderstandingAttemptStateQueued:
 		return true
-	case UnderstandingAttemptStatusRunning:
+	case UnderstandingAttemptStateRunning:
 		return true
 	default:
 		return false
@@ -58,10 +58,11 @@ func (e UnderstandingAttemptStatus) Valid() bool {
 
 // Defines values for UnderstandingDetailsStatus.
 const (
-	UnderstandingDetailsStatusDone    UnderstandingDetailsStatus = "done"
-	UnderstandingDetailsStatusFailed  UnderstandingDetailsStatus = "failed"
-	UnderstandingDetailsStatusQueued  UnderstandingDetailsStatus = "queued"
-	UnderstandingDetailsStatusRunning UnderstandingDetailsStatus = "running"
+	UnderstandingDetailsStatusDone       UnderstandingDetailsStatus = "done"
+	UnderstandingDetailsStatusFailed     UnderstandingDetailsStatus = "failed"
+	UnderstandingDetailsStatusNotStarted UnderstandingDetailsStatus = "not_started"
+	UnderstandingDetailsStatusQueued     UnderstandingDetailsStatus = "queued"
+	UnderstandingDetailsStatusRunning    UnderstandingDetailsStatus = "running"
 )
 
 // Valid indicates whether the value is a known member of the UnderstandingDetailsStatus enum.
@@ -70,6 +71,8 @@ func (e UnderstandingDetailsStatus) Valid() bool {
 	case UnderstandingDetailsStatusDone:
 		return true
 	case UnderstandingDetailsStatusFailed:
+		return true
+	case UnderstandingDetailsStatusNotStarted:
 		return true
 	case UnderstandingDetailsStatusQueued:
 		return true
@@ -192,6 +195,13 @@ type MemorySummary struct {
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
 }
 
+// RebuildStatus defines model for RebuildStatus.
+type RebuildStatus struct {
+	Attempt   UnderstandingAttempt `json:"attempt"`
+	MemoryId  openapi_types.UUID   `json:"memory_id"`
+	StatusUrl string               `json:"status_url"`
+}
+
 // Statistics defines model for Statistics.
 type Statistics struct {
 	Usage *TokenUsage `json:"usage,omitempty"`
@@ -214,14 +224,14 @@ type UnderstandingAttempt struct {
 	Id          openapi_types.UUID        `json:"id"`
 
 	// PluginId Configured plugin ID; empty when no plugin is selected.
-	PluginId  string                     `json:"plugin_id"`
-	QueuedAt  time.Time                  `json:"queued_at"`
-	StartedAt *time.Time                 `json:"started_at,omitempty"`
-	Status    UnderstandingAttemptStatus `json:"status"`
+	PluginId  string                    `json:"plugin_id"`
+	QueuedAt  time.Time                 `json:"queued_at"`
+	StartedAt *time.Time                `json:"started_at,omitempty"`
+	Status    UnderstandingAttemptState `json:"status"`
 }
 
-// UnderstandingAttemptStatus defines model for UnderstandingAttempt.Status.
-type UnderstandingAttemptStatus string
+// UnderstandingAttemptState defines model for UnderstandingAttemptState.
+type UnderstandingAttemptState string
 
 // UnderstandingDetails defines model for UnderstandingDetails.
 type UnderstandingDetails struct {
@@ -229,6 +239,9 @@ type UnderstandingDetails struct {
 	ActiveRun     *UnderstandingRun          `json:"active_run"`
 	LatestAttempt *UnderstandingAttempt      `json:"latest_attempt"`
 	Status        UnderstandingDetailsStatus `json:"status"`
+
+	// StatusUrl Process-local polling URL; absent for durable history after restart.
+	StatusUrl *string `json:"status_url,omitempty"`
 }
 
 // UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
@@ -399,10 +412,28 @@ type ClientInterface interface {
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RebuildMemory Request a Memory Rebuild
+	//
+	// Accept process-local work using current Document Understanding methods.
+	// The original Blob and previous active Run remain unchanged. Acceptance
+	// is best effort: queued/running work and polling handles are lost on
+	// restart. Competing queued/running work returns 409 without scheduling.
+	//
+	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+	RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetReadiness Check whether the server can accept requests
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRebuildStatus Poll a retained process-local Rebuild
+	//
+	// Retained until superseded by a newly accepted attempt, Memory deletion,
+	// or restart. Terminal handles remain readable; no artifacts are returned.
+	//
+	// Corresponds with GET /rebuild-status/{rebuildId} (the `GetRebuildStatus` operationId).
+	GetRebuildStatus(ctx context.Context, rebuildId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetLiveness Check whether the process is alive
@@ -507,11 +538,49 @@ func (c *Client) GetMemoryContent(ctx context.Context, memoryId MemoryId, reqEdi
 	return c.Client.Do(req)
 }
 
+// RebuildMemory Request a Memory Rebuild
+//
+// Accept process-local work using current Document Understanding methods.
+// The original Blob and previous active Run remain unchanged. Acceptance
+// is best effort: queued/running work and polling handles are lost on
+// restart. Competing queued/running work returns 409 without scheduling.
+//
+// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+func (c *Client) RebuildMemory(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebuildMemoryRequest(c.Server, memoryId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetReadiness Check whether the server can accept requests
 //
 // Corresponds with GET /readyz (the `GetReadiness` operationId).
 func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReadinessRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRebuildStatus Poll a retained process-local Rebuild
+//
+// Retained until superseded by a newly accepted attempt, Memory deletion,
+// or restart. Terminal handles remain readable; no artifacts are returned.
+//
+// Corresponds with GET /rebuild-status/{rebuildId} (the `GetRebuildStatus` operationId).
+func (c *Client) GetRebuildStatus(ctx context.Context, rebuildId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRebuildStatusRequest(c.Server, rebuildId)
 	if err != nil {
 		return nil, err
 	}
@@ -746,6 +815,40 @@ func NewGetMemoryContentRequest(server string, memoryId MemoryId) (*http.Request
 	return req, nil
 }
 
+// NewRebuildMemoryRequest constructs an http.Request for the RebuildMemory method
+func NewRebuildMemoryRequest(server string, memoryId MemoryId) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "memoryId", memoryId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/memories/%s/rebuild", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetReadinessRequest constructs an http.Request for the GetReadiness method
 func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
@@ -756,6 +859,40 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/readyz")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRebuildStatusRequest constructs an http.Request for the GetRebuildStatus method
+func NewGetRebuildStatusRequest(server string, rebuildId openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "rebuildId", rebuildId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/rebuild-status/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -869,12 +1006,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /memories/{memoryId}/content (the `GetMemoryContent` operationId).
 	GetMemoryContentWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*GetMemoryContentResponse, error)
 
+	// RebuildMemoryWithResponse Request a Memory Rebuild
+	//
+	// Accept process-local work using current Document Understanding methods.
+	// The original Blob and previous active Run remain unchanged. Acceptance
+	// is best effort: queued/running work and polling handles are lost on
+	// restart. Competing queued/running work returns 409 without scheduling.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+	RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error)
+
 	// GetReadinessWithResponse Check whether the server can accept requests
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+
+	// GetRebuildStatusWithResponse Poll a retained process-local Rebuild
+	//
+	// Retained until superseded by a newly accepted attempt, Memory deletion,
+	// or restart. Terminal handles remain readable; no artifacts are returned.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /rebuild-status/{rebuildId} (the `GetRebuildStatus` operationId).
+	GetRebuildStatusWithResponse(ctx context.Context, rebuildId openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetRebuildStatusResponse, error)
 }
 
 type GetLivenessResponse struct {
@@ -1187,6 +1346,82 @@ func (r GetMemoryContentResponse) ContentType() string {
 	return ""
 }
 
+// RebuildMemoryResponse202Headers the declared response headers of an HTTP 202 response for RebuildMemory
+type RebuildMemoryResponse202Headers struct {
+	CacheControl *string
+}
+
+// RebuildMemoryResponse409Headers the declared response headers of an HTTP 409 response for RebuildMemory
+type RebuildMemoryResponse409Headers struct {
+	CacheControl *string
+}
+
+type RebuildMemoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *RebuildStatus
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *RebuildStatus
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *RebuildMemoryResponse202Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *RebuildMemoryResponse409Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RebuildMemoryResponse) GetJSON202() *RebuildStatus {
+	return r.JSON202
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RebuildMemoryResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RebuildMemoryResponse) GetJSON409() *RebuildStatus {
+	return r.JSON409
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RebuildMemoryResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RebuildMemoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RebuildMemoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebuildMemoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RebuildMemoryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetReadinessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1222,6 +1457,68 @@ func (r GetReadinessResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetReadinessResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRebuildStatusResponse200Headers the declared response headers of an HTTP 200 response for GetRebuildStatus
+type GetRebuildStatusResponse200Headers struct {
+	CacheControl *string
+}
+
+// GetRebuildStatusResponse404Headers the declared response headers of an HTTP 404 response for GetRebuildStatus
+type GetRebuildStatusResponse404Headers struct {
+	CacheControl *string
+}
+
+type GetRebuildStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RebuildStatus
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetRebuildStatusResponse200Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *GetRebuildStatusResponse404Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRebuildStatusResponse) GetJSON200() *RebuildStatus {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetRebuildStatusResponse) GetJSON404() *Error {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRebuildStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRebuildStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRebuildStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRebuildStatusResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1316,6 +1613,24 @@ func (c *ClientWithResponses) GetMemoryContentWithResponse(ctx context.Context, 
 	return ParseGetMemoryContentResponse(rsp)
 }
 
+// RebuildMemoryWithResponse Request a Memory Rebuild
+//
+// Accept process-local work using current Document Understanding methods.
+// The original Blob and previous active Run remain unchanged. Acceptance
+// is best effort: queued/running work and polling handles are lost on
+// restart. Competing queued/running work returns 409 without scheduling.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /memories/{memoryId}/rebuild (the `RebuildMemory` operationId).
+func (c *ClientWithResponses) RebuildMemoryWithResponse(ctx context.Context, memoryId MemoryId, reqEditors ...RequestEditorFn) (*RebuildMemoryResponse, error) {
+	rsp, err := c.RebuildMemory(ctx, memoryId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebuildMemoryResponse(rsp)
+}
+
 // GetReadinessWithResponse Check whether the server can accept requests
 //
 // Returns a wrapper object for the known response body format(s).
@@ -1327,6 +1642,22 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetReadinessResponse(rsp)
+}
+
+// GetRebuildStatusWithResponse Poll a retained process-local Rebuild
+//
+// Retained until superseded by a newly accepted attempt, Memory deletion,
+// or restart. Terminal handles remain readable; no artifacts are returned.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /rebuild-status/{rebuildId} (the `GetRebuildStatus` operationId).
+func (c *ClientWithResponses) GetRebuildStatusWithResponse(ctx context.Context, rebuildId openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetRebuildStatusResponse, error) {
+	rsp, err := c.GetRebuildStatus(ctx, rebuildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRebuildStatusResponse(rsp)
 }
 
 // ParseGetLivenessResponse parses an HTTP response from a GetLivenessWithResponse call
@@ -1564,6 +1895,76 @@ func ParseGetMemoryContentResponse(rsp *http.Response) (*GetMemoryContentRespons
 	return response, nil
 }
 
+// ParseRebuildMemoryResponse parses an HTTP response from a RebuildMemoryWithResponse call
+func ParseRebuildMemoryResponse(rsp *http.Response) (*RebuildMemoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebuildMemoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RebuildStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest RebuildStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers RebuildMemoryResponse202Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 409:
+		var headers RebuildMemoryResponse409Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers409 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
 func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1585,6 +1986,62 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetRebuildStatusResponse parses an HTTP response from a GetRebuildStatusWithResponse call
+func ParseGetRebuildStatusResponse(rsp *http.Response) (*GetRebuildStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRebuildStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RebuildStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetRebuildStatusResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 404:
+		var headers GetRebuildStatusResponse404Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers404 = &headers
 	}
 
 	return response, nil

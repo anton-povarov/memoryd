@@ -140,7 +140,113 @@ func (h *Handler) GetMemory(
 	if err != nil {
 		return nil, err
 	}
-	return api.GetMemory200JSONResponse(memoryDetail(memory, understanding)), nil
+	response := memoryDetail(memory, understanding)
+	if h.understanding != nil {
+		if attempt, ok := h.understanding.Latest(memory.ID); ok {
+			response.Understanding.Status = api.UnderstandingDetailsStatus(attempt.Status)
+			snapshot := understandingAttempt(attempt)
+			response.Understanding.LatestAttempt = &snapshot
+			url := understandingStatusURL(attempt)
+			response.Understanding.StatusUrl = &url
+		}
+	}
+	return api.GetMemory200JSONResponse(response), nil
+}
+
+func (h *Handler) RebuildMemory(
+	ctx context.Context,
+	request api.RebuildMemoryRequestObject,
+) (api.RebuildMemoryResponseObject, error) {
+	logger := logging.ForOperationInRequest(
+		h.logger, "RebuildMemory", ctx,
+	)
+	var attempt vault.UnderstandingAttempt
+	var accepted bool
+	err := errUnderstandingUnavailable
+	if h.understanding != nil {
+		attempt, accepted, err = h.understanding.Enqueue(ctx, request.MemoryId)
+	}
+	switch {
+	case errors.Is(err, vault.ErrMemoryNotFound):
+		logger.InfoContext(ctx, "Manual Understanding Memory not found",
+			"memory_id", request.MemoryId.String())
+		return api.RebuildMemory404JSONResponse(notFoundError()), nil
+	case errors.Is(err, errUnderstandingUnavailable):
+		logger.WarnContext(ctx, "Manual Understanding unavailable",
+			"memory_id", request.MemoryId.String())
+		return api.RebuildMemory503JSONResponse{
+			Code: "understanding_unavailable", Details: nil, ExistingMemory: nil,
+			Message: "Document Understanding worker is unavailable",
+		}, nil
+	case err != nil:
+		return nil, err
+	}
+	body := understandingAttemptStatus(attempt)
+	noStore := "no-store"
+	if !accepted {
+		logger.InfoContext(ctx, "Manual Understanding conflicts with pending work",
+			"memory_id", request.MemoryId.String(), "attempt_id", attempt.ID.String())
+		return api.RebuildMemory409JSONResponse{
+			Body:    body,
+			Headers: api.RebuildMemory409ResponseHeaders{CacheControl: &noStore},
+		}, nil
+	}
+	logger.InfoContext(ctx, "Memory queued for manual Document Understanding",
+		"memory_id", request.MemoryId.String(), "attempt_id", attempt.ID.String())
+	return api.RebuildMemory202JSONResponse{
+		Body:    body,
+		Headers: api.RebuildMemory202ResponseHeaders{CacheControl: &noStore},
+	}, nil
+}
+
+func (h *Handler) GetRebuildStatus(
+	ctx context.Context,
+	request api.GetRebuildStatusRequestObject,
+) (api.GetRebuildStatusResponseObject, error) {
+	logger := logging.ForOperationInRequest(h.logger, "GetRebuildStatus", ctx)
+	logger.DebugContext(ctx, "Polling Rebuild status", "rebuild_id", request.RebuildId.String())
+	if h.understanding != nil {
+		if attempt, ok := h.understanding.Snapshot(request.RebuildId); ok {
+			noStore := "no-store"
+			return api.GetRebuildStatus200JSONResponse{
+				Body: understandingAttemptStatus(attempt),
+				Headers: api.GetRebuildStatus200ResponseHeaders{
+					CacheControl: &noStore,
+				},
+			}, nil
+		}
+	}
+	noStore := "no-store"
+	return api.GetRebuildStatus404JSONResponse{
+		Body:    notFoundError(),
+		Headers: api.GetRebuildStatus404ResponseHeaders{CacheControl: &noStore},
+	}, nil
+}
+
+func understandingStatusURL(attempt vault.UnderstandingAttempt) string {
+	return api.ServerUrlLocalMemorydServer + "/rebuild-status/" + attempt.ID.String()
+}
+
+func understandingAttemptStatus(attempt vault.UnderstandingAttempt) api.RebuildStatus {
+	return api.RebuildStatus{
+		MemoryId: attempt.MemoryID, Attempt: understandingAttempt(attempt),
+		StatusUrl: understandingStatusURL(attempt),
+	}
+}
+
+func understandingAttempt(attempt vault.UnderstandingAttempt) api.UnderstandingAttempt {
+	result := api.UnderstandingAttempt{
+		Id: attempt.ID, PluginId: attempt.PluginID,
+		Status: api.UnderstandingAttemptState(attempt.Status), QueuedAt: attempt.QueuedAt,
+		StartedAt: attempt.StartedAt, CompletedAt: attempt.CompletedAt, Diagnostics: nil,
+	}
+	if diagnostics := attempt.Diagnostics; diagnostics != nil {
+		result.Diagnostics = &api.UnderstandingDiagnostics{
+			Error: diagnostics.Error, Stdout: diagnostics.Stdout,
+			Stderr: diagnostics.Stderr, ExitCode: diagnostics.ExitCode,
+		}
+	}
+	return result
 }
 
 func (h *Handler) GetMemoryContent(
@@ -224,6 +330,10 @@ func (h *Handler) DeleteMemory(
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if h.understanding != nil {
+		h.understanding.Forget(request.MemoryId)
 	}
 
 	logger.InfoContext(ctx, "Memory deleted",
@@ -378,11 +488,17 @@ func (h *Handler) ImportMemory(
 	}
 
 	if h.understanding != nil {
-		logger.InfoContext(ctx, "Memory queued for Document Understanding",
-			"memory_id", memory.ID.String(),
-			"media_type", memory.Blob.MediaType,
-		)
-		h.understanding.Wake()
+		attempt, _, err := h.understanding.Enqueue(ctx, memory.ID)
+		if err != nil {
+			logger.ErrorContext(ctx, "Imported Memory Understanding admission failed",
+				"memory_id", memory.ID.String(), "error", err,
+			)
+		} else {
+			logger.InfoContext(ctx, "Memory queued for Document Understanding",
+				"memory_id", memory.ID.String(), "attempt_id", attempt.ID.String(),
+				"media_type", memory.Blob.MediaType,
+			)
+		}
 	}
 
 	return api.ImportMemory201JSONResponse(memorySummary(memory)), nil
@@ -504,24 +620,8 @@ func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDe
 	}
 
 	if attempt := details.Attempt; attempt != nil {
-		result.LatestAttempt = &api.UnderstandingAttempt{
-			Id:          attempt.ID,
-			PluginId:    attempt.PluginID,
-			Status:      api.UnderstandingAttemptStatus(attempt.Status),
-			QueuedAt:    attempt.QueuedAt,
-			StartedAt:   attempt.StartedAt,
-			CompletedAt: attempt.CompletedAt,
-			Diagnostics: nil,
-		}
-
-		if diagnostics := attempt.Diagnostics; diagnostics != nil {
-			result.LatestAttempt.Diagnostics = &api.UnderstandingDiagnostics{
-				Error:    diagnostics.Error,
-				Stdout:   diagnostics.Stdout,
-				Stderr:   diagnostics.Stderr,
-				ExitCode: diagnostics.ExitCode,
-			}
-		}
+		snapshot := understandingAttempt(*attempt)
+		result.LatestAttempt = &snapshot
 	}
 	if run := details.ActiveRun; run != nil {
 		var statistics *api.Statistics

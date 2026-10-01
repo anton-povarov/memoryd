@@ -9,6 +9,12 @@ func ContextWithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, requestIDContextKey{}, id)
 }
 
+// RequestID returns the request ID associated with ctx, or an empty string.
+func RequestID(ctx context.Context) string {
+	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
+	return requestID
+}
+
 // ForOperation derives a logger with the reserved operation attribute.
 func ForOperation(base *Logger, operation string) *Logger {
 	return base.With(SysOperation(operation))
@@ -22,7 +28,7 @@ func ForOperationInRequest(
 	ctx context.Context,
 ) *Logger {
 	logger := ForOperation(base, operation)
-	if requestID, ok := ctx.Value(requestIDContextKey{}).(string); ok && requestID != "" {
+	if requestID := RequestID(ctx); requestID != "" {
 		logger = logger.With("request_id", requestID)
 	}
 

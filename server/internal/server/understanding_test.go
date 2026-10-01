@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -130,7 +131,7 @@ func TestDerivedContentRetainsIndependentProvenanceAfterRestart(t *testing.T) {
 	}
 }
 
-func TestPluginFailuresRetryOnlyAfterRestart(t *testing.T) {
+func TestPluginFailuresRequireExplicitRetryAfterRestart(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       string
@@ -212,6 +213,11 @@ func TestPluginFailuresRetryOnlyAfterRestart(t *testing.T) {
 			closeUnderstandingServer(t, s, memoryVault)
 			s, memoryVault = openUnderstandingServer(t, root, cfg)
 			defer closeUnderstandingServer(t, s, memoryVault)
+			persisted := understandingMemoryDetail(t, s, memory, "failed").Understanding
+			if persisted.LatestAttempt.ID != failed.LatestAttempt.ID {
+				t.Fatal("restart changed terminal failure")
+			}
+			requestUnderstandingRefresh(t, s, memory)
 			recovered := understandingMemoryDetail(t, s, memory, "done").Understanding
 
 			if recovered.LatestAttempt.ID == failed.LatestAttempt.ID || recovered.ActiveRun == nil {
@@ -224,7 +230,175 @@ func TestPluginFailuresRetryOnlyAfterRestart(t *testing.T) {
 	}
 }
 
-func TestInterruptedUnderstandingRecoversWithinSharedProcessLimit(t *testing.T) {
+func TestRefreshMemoryUnderstandingRunsNewAttemptAndPreservesLastRun(t *testing.T) {
+	root := t.TempDir()
+	plugin := writeUnderstandingPlugin(t, root, "refresh-plugin", `cat > /dev/null
+if [ -f "$1/invocations" ]; then
+  count=$(cat "$1/invocations")
+else
+  count=0
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$1/invocations"
+case "$count" in
+  1)
+    cat "$1/first.json"
+    ;;
+  2)
+    : > "$1/second-started"
+    while [ ! -f "$1/second-release" ]; do sleep 0.01; done
+    cat "$1/second.json"
+    ;;
+  3)
+    : > "$1/third-started"
+    while [ ! -f "$1/third-release" ]; do sleep 0.01; done
+    printf 'fixture failed on rerun\n' >&2
+    exit 7
+    ;;
+  *)
+    printf 'unexpected fixture invocation\n' >&2
+    exit 8
+    ;;
+esac
+`)
+	writeFixture := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixture(
+		"first.json",
+		`{"protocol_version":2,"plugin_version":"fixture-1","artifacts":[{"content_type":"text/plain","content":"initial output"}]}`,
+	)
+	writeFixture(
+		"second.json",
+		`{"protocol_version":2,"plugin_version":"fixture-2","artifacts":[{"content_type":"text/plain","content":"manual rerun output"}]}`,
+	)
+
+	s, memoryVault := openUnderstandingServer(
+		t, root, understandingPluginConfig(plugin, root),
+	)
+	source := "%PDF-1.7\nmanual refresh source\n%%EOF\n"
+	memory := importUnderstandingMemory(t, s, "source.pdf", source)
+	initial := understandingMemoryDetail(t, s, memory, "done")
+	if initial.Understanding.ActiveRun == nil {
+		t.Fatalf("initial completed result = %#v", initial.Understanding)
+	}
+	initialRun := initial.Understanding.ActiveRun
+	initialAttemptID := initialRun.AttemptID
+
+	assertUnderstandingUnavailable(t, s, memoryVault, memory, initial)
+
+	postRefresh := func() *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		s.Handler().ServeHTTP(response, httptest.NewRequest(
+			http.MethodPost,
+			"/api/v0/memories/"+memory.Id.String()+"/rebuild",
+			nil,
+		))
+		return response
+	}
+	release := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstRefresh := postRefresh()
+	if firstRefresh.Code != http.StatusAccepted ||
+		firstRefresh.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("manual refresh = %d %q", firstRefresh.Code, firstRefresh.Body.String())
+	}
+	var handle api.RebuildStatus
+	if err := json.Unmarshal(firstRefresh.Body.Bytes(), &handle); err != nil {
+		t.Fatal(err)
+	}
+	waitUnderstandingFixture(t, func() bool {
+		_, err := os.Stat(filepath.Join(root, "second-started"))
+		return err == nil
+	})
+	pending := understandingMemoryDetail(t, s, memory, "running")
+	if pending.Understanding.LatestAttempt == nil ||
+		pending.Understanding.LatestAttempt.ID == initialAttemptID ||
+		!reflect.DeepEqual(pending.Understanding.ActiveRun, initialRun) {
+		t.Fatalf("pending refresh replaced or reused prior result: %#v", pending.Understanding)
+	}
+	if snapshot := pollUnderstandingAttempt(
+		t, s, handle.StatusUrl,
+		http.StatusOK,
+	); snapshot.Attempt.Status != api.UnderstandingAttemptStateRunning {
+		t.Fatalf("pending poll = %#v", snapshot)
+	}
+	conflict := postRefresh()
+	var existing api.RebuildStatus
+	if conflict.Code != http.StatusConflict ||
+		json.Unmarshal(conflict.Body.Bytes(), &existing) != nil ||
+		existing.Attempt.Id != handle.Attempt.Id {
+		t.Fatalf("conflicting refresh = %d %s", conflict.Code, conflict.Body.String())
+	}
+
+	release("second-release")
+	completed := understandingMemoryDetail(t, s, memory, "done")
+	if completed.Understanding.ActiveRun == nil ||
+		completed.Understanding.ActiveRun.ID == initialRun.ID ||
+		len(completed.Understanding.ActiveRun.Artifacts) == 0 ||
+		completed.Understanding.ActiveRun.Artifacts[0].Content != "manual rerun output" {
+		t.Fatalf("manual refresh did not activate fixture result: %#v", completed.Understanding)
+	}
+	completedRun := completed.Understanding.ActiveRun
+	if snapshot := pollUnderstandingAttempt(
+		t, s, handle.StatusUrl,
+		http.StatusOK,
+	); snapshot.Attempt.Status != api.UnderstandingAttemptStateDone ||
+		snapshot.Attempt.Id != handle.Attempt.Id {
+		t.Fatalf("terminal poll = %#v", snapshot)
+	}
+
+	secondRefresh := postRefresh()
+	if secondRefresh.Code != http.StatusAccepted {
+		t.Fatalf("second manual refresh = %d %q", secondRefresh.Code, secondRefresh.Body.String())
+	}
+	pollUnderstandingAttempt(t, s, handle.StatusUrl, http.StatusNotFound)
+	waitUnderstandingFixture(t, func() bool {
+		_, err := os.Stat(filepath.Join(root, "third-started"))
+		return err == nil
+	})
+	understandingMemoryDetail(t, s, memory, "running")
+
+	release("third-release")
+	failed := understandingMemoryDetail(t, s, memory, "failed")
+	if failed.Understanding.LatestAttempt == nil ||
+		failed.Understanding.LatestAttempt.Diagnostics == nil ||
+		!strings.Contains(failed.Understanding.LatestAttempt.Diagnostics.Error, "status 7") ||
+		!reflect.DeepEqual(failed.Understanding.ActiveRun, completedRun) {
+		t.Fatalf("failed refresh lost prior successful Run: %#v", failed.Understanding)
+	}
+
+	contentResponse := httptest.NewRecorder()
+	s.Handler().ServeHTTP(contentResponse, httptest.NewRequest(
+		http.MethodGet,
+		"/api/v0/memories/"+memory.Id.String()+"/content",
+		nil,
+	))
+	if contentResponse.Code != http.StatusOK || contentResponse.Body.String() != source {
+		t.Fatalf("manual refresh changed original Blob = %d %q",
+			contentResponse.Code, contentResponse.Body.String())
+	}
+
+	missingResponse := httptest.NewRecorder()
+	s.Handler().ServeHTTP(missingResponse, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v0/memories/00000000-0000-0000-0000-000000000000/rebuild",
+		nil,
+	))
+	if missingResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing Memory refresh = %d %s",
+			missingResponse.Code, missingResponse.Body.String())
+	}
+}
+
+func TestInterruptedUnderstandingIsLostOnRestart(t *testing.T) {
 	root := t.TempDir()
 	body := `cat > /dev/null
 if ! mkdir "$1/active"; then
@@ -259,7 +433,7 @@ printf '%s\n' '` + completeUnderstandingResult + `'
 		t.Fatal(err)
 	}
 	second := importUnderstandingMemory(t, s, "second.pdf", "%PDF-1.7\nsecond\n%%EOF\n")
-	understandingMemoryDetail(t, s, second, "queued")
+	queued := understandingMemoryDetail(t, s, second, "queued")
 	closeUnderstandingServer(t, s, memoryVault)
 	waitUnderstandingFixture(t, func() bool {
 		return errors.Is(syscall.Kill(childPID, 0), syscall.ESRCH)
@@ -273,23 +447,25 @@ printf '%s\n' '` + completeUnderstandingResult + `'
 	}
 	s, memoryVault = openUnderstandingServer(t, root, cfg)
 	defer closeUnderstandingServer(t, s, memoryVault)
-	waitUnderstandingFixture(t, func() bool {
-		starts, readErr := os.ReadFile(filepath.Join(root, "starts"))
-		return readErr == nil && len(strings.Fields(string(starts))) == 2
-	})
+	understandingMemoryDetail(t, s, first, "not_started")
+	understandingMemoryDetail(t, s, second, "not_started")
+	for _, old := range []string{running.Understanding.LatestAttempt.ID, queued.Understanding.LatestAttempt.ID} {
+		response := httptest.NewRecorder()
+		s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+			"/api/v0/rebuild-status/"+old, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("old handle = %d", response.Code)
+		}
+	}
 	third := importUnderstandingMemory(t, s, "third.pdf", "%PDF-1.7\nthird\n%%EOF\n")
-	understandingMemoryDetail(t, s, third, "queued")
+	understandingMemoryDetail(t, s, third, "running")
 
 	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	recovered := understandingMemoryDetail(t, s, first, "done")
-	understandingMemoryDetail(t, s, second, "done")
 	understandingMemoryDetail(t, s, third, "done")
-
-	if recovered.Understanding.LatestAttempt.ID == running.Understanding.LatestAttempt.ID {
-		t.Fatal("interrupted attempt was not replaced on startup")
-	}
+	understandingMemoryDetail(t, s, first, "not_started")
+	understandingMemoryDetail(t, s, second, "not_started")
 }
 
 func waitUnderstandingFixture(t *testing.T, ready func() bool) {
@@ -352,10 +528,76 @@ func TestFailedRunCommitDoesNotExposePartialDerivedContent(t *testing.T) {
 	closeUnderstandingServer(t, s, memoryVault)
 	s, memoryVault = openUnderstandingServer(t, root, cfg)
 	defer closeUnderstandingServer(t, s, memoryVault)
+	understandingMemoryDetail(t, s, memory, "failed")
+	requestUnderstandingRefresh(t, s, memory)
 	recovered := understandingMemoryDetail(t, s, memory, "done").Understanding
 
 	if recovered.ActiveRun == nil || len(recovered.ActiveRun.Artifacts) != 3 {
 		t.Fatalf("commit retry did not activate complete Run: %#v", recovered)
+	}
+}
+
+func requestUnderstandingRefresh(
+	t *testing.T,
+	s *Server,
+	memory api.MemorySummary,
+) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/api/v0/memories/"+memory.Id.String()+"/rebuild", nil))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("refresh = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func pollUnderstandingAttempt(
+	t *testing.T,
+	s *Server,
+	url string,
+	code int,
+) api.RebuildStatus {
+	t.Helper()
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, url, nil))
+	if response.Code != code || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("poll = %d %s", response.Code, response.Body.String())
+	}
+	var snapshot api.RebuildStatus
+	if code == http.StatusOK {
+		if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return snapshot
+}
+
+func assertUnderstandingUnavailable(
+	t *testing.T,
+	s *Server,
+	memoryVault *vault.Vault,
+	memory api.MemorySummary,
+	initial understandingWireDetail,
+) {
+	t.Helper()
+	unavailableHandler := NewHandler("test", s.logger, memoryVault)
+	unavailableHTTP := api.HandlerFromMuxWithBaseURL(
+		api.NewStrictHandler(unavailableHandler, nil),
+		http.NewServeMux(),
+		api.ServerUrlLocalMemorydServer,
+	)
+	response := httptest.NewRecorder()
+	unavailableHTTP.ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/api/v0/memories/"+memory.Id.String()+"/rebuild", nil))
+	var unavailableError api.Error
+	if response.Code != http.StatusServiceUnavailable ||
+		json.Unmarshal(response.Body.Bytes(), &unavailableError) != nil ||
+		unavailableError.Code != "understanding_unavailable" {
+		t.Fatalf("worker-unavailable refresh = %d %s", response.Code, response.Body.String())
+	}
+	unchanged := understandingMemoryDetail(t, s, memory, "done")
+	if !reflect.DeepEqual(unchanged.Understanding, initial.Understanding) {
+		t.Fatal("worker-unavailable refresh changed Understanding state")
 	}
 }
 
@@ -382,6 +624,7 @@ type understandingWireDetail struct {
 		Status        string `json:"status"`
 		LatestAttempt *struct {
 			ID          string `json:"id"`
+			Status      string `json:"status"`
 			PluginID    string `json:"plugin_id"`
 			Diagnostics *struct {
 				Error    string `json:"error"`

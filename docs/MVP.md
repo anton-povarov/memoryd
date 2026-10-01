@@ -16,13 +16,14 @@ Import personal files into a durable local Vault, understand them as well as cur
 - Perform best-effort Document Understanding in the background.
 - Produce searchable Derived Content from PDFs as the first Document Understanding capability.
 - Browse Memories and inspect their metadata, Derived Content, Facts, and Understanding Run.
+- Manually Rebuild a Memory's Understanding using the current plugin while preserving its original Blob and last successful Run on failure.
 - Search using natural language and inspect the resulting Query Plan.
 - Open or download the whole original Memory.
 - Accept opaque or partially understood content as a valid result.
 
 ### Out of scope
 
-- Memory lifecycle: Rebuild, deletion, garbage collection, and user Fact corrections.
+- Memory lifecycle beyond manual Rebuild: deletion, garbage collection, and user Fact corrections.
 - Understanding extensibility: plugin discovery, dynamic installation, and Codex enhancement.
 - Search sophistication: embeddings, relevance ranking, query relaxation, relationship aliases, and cross-language retrieval.
 - Productization: multiple users, authentication, remote access, and production-grade UI polish.
@@ -49,7 +50,7 @@ The first useful demonstration imports personal files, then answers variations o
 
 - A Memory references one immutable Blob addressed by its content hash.
 - The filesystem content-addressed store holds Blob bytes. SQLite is authoritative for Memories, metadata, Facts, Understanding Runs, active-Run selection, and logs.
-- SQLite records the operational progress of understanding attempts. On startup, memoryd retries work interrupted by shutdown.
+- SQLite records only terminal Understanding outcomes. Pending work and polling handles are process-local; restart drops them and startup schedules nothing.
 
 ## Document Understanding
 
@@ -58,8 +59,8 @@ The first useful demonstration imports personal files, then answers variations o
 - The first extraction increment targets PDFs and does not need to assert structured Facts. A plugin may extract embedded text, perform OCR, or describe visual content. Source text and generated descriptions remain distinguishable Derived Content.
 - Each successful interpretation creates an immutable Understanding Run.
 - A coherent Run may include warnings. An understanding attempt fails only when an operational issue prevents it from committing a coherent Run; the failure produces an informative execution log and does not invalidate the Memory.
-- After the Blob and Memory commit, Document Understanding may run durably in the background, independently of the import request and client connection.
-- Local Document Understanding runs have no explicit resource limits in the MVP.
+- After the Blob and Memory commit, Document Understanding runs best effort in a process-local queue, independently of the client connection. Admission failure does not undo the import; explicit Refresh can retry.
+- One configured process limit covers imports and manual Rebuilds. Refresh returns a polling handle with 202; competing queued/running work returns 409 with the existing handle. Terminal handles remain until superseded, deletion, or restart. Invalid handles return 404.
 - A Fact has a name, category, origin, type, and value. Deeper Fact semantics remain an open design question.
 
 ## Search

@@ -98,6 +98,89 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /memories/{memoryId}/rebuild:
+    parameters:
+      - $ref: "#/components/parameters/MemoryId"
+    post:
+      operationId: rebuildMemory
+      tags: [memories]
+      summary: Request a Memory Rebuild
+      description: |
+        Accept process-local work using current Document Understanding methods.
+        The original Blob and previous active Run remain unchanged. Acceptance
+        is best effort: queued/running work and polling handles are lost on
+        restart. Competing queued/running work returns 409 without scheduling.
+      responses:
+        "202":
+          description: A new attempt was accepted by this process.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "409":
+          description: This Memory already has queued or running work.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "404":
+          description: The requested Memory does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The Document Understanding worker is unavailable; no attempt was queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /rebuild-status/{rebuildId}:
+    parameters:
+      - name: rebuildId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getRebuildStatus
+      tags: [memories]
+      summary: Poll a retained process-local Rebuild
+      description: |
+        Retained until superseded by a newly accepted attempt, Memory deletion,
+        or restart. Terminal handles remain readable; no artifacts are returned.
+      responses:
+        "200":
+          description: The exact retained attempt.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "404":
+          description: The handle is unknown, superseded, deleted, or lost on restart.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 
   /memories/{memoryId}/content:
     parameters:
@@ -359,7 +442,7 @@ components:
       properties:
         status:
           type: string
-          enum: [queued, running, done, failed]
+          enum: [not_started, queued, running, done, failed]
         latest_attempt:
           allOf:
             - $ref: "#/components/schemas/UnderstandingAttempt"
@@ -369,6 +452,25 @@ components:
             - $ref: "#/components/schemas/UnderstandingRun"
           nullable: true
           description: The last complete successful Run; failed attempts do not replace it.
+        status_url:
+          type: string
+          description: Process-local polling URL; absent for durable history after restart.
+
+    RebuildStatus:
+      type: object
+      required: [memory_id, attempt, status_url]
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+        attempt:
+          $ref: "#/components/schemas/UnderstandingAttempt"
+        status_url:
+          type: string
+
+    UnderstandingAttemptState:
+      type: string
+      enum: [queued, running, done, failed]
 
     UnderstandingAttempt:
       type: object
@@ -381,8 +483,7 @@ components:
           type: string
           description: Configured plugin ID; empty when no plugin is selected.
         status:
-          type: string
-          enum: [queued, running, done, failed]
+          $ref: "#/components/schemas/UnderstandingAttemptState"
         queued_at:
           type: string
           format: date-time

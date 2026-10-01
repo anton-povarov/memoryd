@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anton-povarov/memoryd/server/internal/logging"
+	"github.com/google/uuid"
 )
 
 func TestCustomDatabaseDirectorySupportsDurableImport(t *testing.T) {
@@ -210,6 +211,7 @@ func TestVaultPutOpenContentPersistsAndRejectsDuplicate(t *testing.T) {
 	if created.Blob.Ref != wantBlobref {
 		t.Fatalf("Blobref = %s, want %s", created.Blob.Ref, wantBlobref)
 	}
+
 	var storedRef string
 	if err := v.db.QueryRowContext(
 		ctx,
@@ -450,6 +452,141 @@ func TestVaultDeleteRemovesMemoryRunsAndBlob(t *testing.T) {
 	}
 }
 
+func TestUnderstandingIgnoresLegacyPendingAttemptsAndPersistsFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	v, err := openVault(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := v
+	t.Cleanup(func() { _ = initial.Close() })
+	memory, err := v.Put(ctx, Import{
+		Content:       strings.NewReader("understanding history"),
+		MediaTypeHint: "text/plain",
+		Context:       ImportContext{OriginalFilename: "history.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyStatus := range []string{"queued", understandingStatusRunning} {
+		if _, err := v.db.ExecContext(ctx, `
+			INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
+			VALUES (?, ?, ?, ?)
+		`, uuid.NewString(), memory.ID.String(), legacyStatus,
+			formatUnderstandingTime(time.Now().UTC())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	details, err := v.Understanding(ctx, memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Status != "not_started" || details.Attempt != nil {
+		t.Fatalf("legacy pending rows surfaced as current state: %#v", details)
+	}
+
+	queuedAt := time.Now().UTC().Add(-time.Minute)
+	startedAt := queuedAt.Add(time.Second)
+	input := UnderstandingAttempt{
+		ID: uuid.New(), MemoryID: memory.ID, Status: understandingStatusRunning,
+		PluginID: "codex", QueuedAt: queuedAt, StartedAt: &startedAt,
+	}
+	exitCode := 23
+	diagnostics := UnderstandingDiagnostics{
+		Error: "plugin failed", Stdout: "partial result", Stderr: "error output",
+		ExitCode: &exitCode,
+	}
+	failed, err := v.FailUnderstanding(ctx, input, diagnostics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != understandingStatusFailed || failed.CompletedAt == nil ||
+		failed.Diagnostics == nil || failed.Diagnostics.Error != diagnostics.Error {
+		t.Fatalf("failed attempt snapshot = %#v", failed)
+	}
+	if _, err := v.db.ExecContext(ctx, `
+		INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
+		VALUES (?, ?, 'queued', ?)
+	`, uuid.NewString(), memory.ID.String(),
+		formatUnderstandingTime(time.Now().UTC().Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	v, err = openVault(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := v
+	t.Cleanup(func() { _ = reopened.Close() })
+	details, err = v.Understanding(ctx, memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Status != understandingStatusFailed || details.Attempt == nil ||
+		details.Attempt.ID != input.ID || details.Attempt.CompletedAt == nil ||
+		!details.Attempt.CompletedAt.Equal(*failed.CompletedAt) ||
+		details.Attempt.Diagnostics == nil ||
+		details.Attempt.Diagnostics.ExitCode == nil ||
+		*details.Attempt.Diagnostics.ExitCode != exitCode || details.ActiveRun != nil {
+		t.Fatalf("durable failed state = %#v", details)
+	}
+	if err := v.Delete(ctx, memory.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.FinishUnderstanding(
+		ctx,
+		input,
+		uuid.New(),
+		"1.0",
+		nil,
+		nil,
+		nil,
+		nil,
+	); !errors.Is(
+		err,
+		ErrMemoryNotFound,
+	) {
+		t.Fatalf("successful attempt for deleted Memory = %v, want ErrMemoryNotFound", err)
+	}
+	if _, err := v.FailUnderstanding(ctx, input, diagnostics); !errors.Is(err, ErrMemoryNotFound) {
+		t.Fatalf("failed attempt for deleted Memory = %v, want ErrMemoryNotFound", err)
+	}
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnderstandingRejectsFailureForMissingMemory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	v, err := openVault(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	now := time.Now().UTC()
+	attempt := UnderstandingAttempt{
+		ID: uuid.New(), MemoryID: uuid.New(), Status: understandingStatusRunning,
+		QueuedAt: now, StartedAt: &now,
+	}
+	if _, err := v.FailUnderstanding(
+		ctx,
+		attempt,
+		UnderstandingDiagnostics{},
+	); !errors.Is(
+		err,
+		ErrMemoryNotFound,
+	) {
+		t.Fatalf("failed attempt for missing Memory = %v, want ErrMemoryNotFound", err)
+	}
+}
+
 func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 	t.Parallel()
 
@@ -476,24 +613,24 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 		}
 		return memory
 	}
-	finish := func(memory Memory, statistics *Statistics, costEstimate *CostEstimate) {
+	finish := func(memory Memory, statistics *Statistics, costEstimate *CostEstimate) UnderstandingAttempt {
 		t.Helper()
-		_, attempt, err := v.ClaimUnderstanding(ctx)
+		queuedAt := time.Now().UTC().Add(-time.Minute)
+		startedAt := queuedAt.Add(time.Second)
+		attempt, err := v.FinishUnderstanding(ctx, UnderstandingAttempt{
+			ID: uuid.New(), MemoryID: memory.ID, Status: understandingStatusRunning,
+			PluginID: "codex", QueuedAt: queuedAt, StartedAt: &startedAt,
+		}, uuid.New(), "1.0", []DerivedContent{{
+			Content: "# Derived\n",
+			Blob:    BlobInfo{MediaType: "text/markdown"},
+		}}, nil, statistics, costEstimate)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if attempt.MemoryID != memory.ID {
-			t.Fatalf("claimed Memory ID = %s, want %s", attempt.MemoryID, memory.ID)
+		if attempt.Status != understandingStatusDone || attempt.CompletedAt == nil {
+			t.Fatalf("committed attempt = %#v", attempt)
 		}
-		if err := v.SetUnderstandingPlugin(ctx, attempt.ID, "codex"); err != nil {
-			t.Fatal(err)
-		}
-		if err := v.FinishUnderstanding(ctx, attempt, attempt.ID, "1.0", []DerivedContent{{
-			Content: "# Derived\n",
-			Blob:    BlobInfo{MediaType: "text/markdown"},
-		}}, nil, statistics, costEstimate); err != nil {
-			t.Fatal(err)
-		}
+		return attempt
 	}
 
 	withReporting := put("with-reporting.txt", "first memory")
@@ -513,7 +650,7 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 		PricingDate: "2026-09-30",
 		PricingURL:  "https://example.invalid/pricing",
 	}
-	finish(withReporting, wantStatistics, wantCostEstimate)
+	firstTerminal := finish(withReporting, wantStatistics, wantCostEstimate)
 	withoutReporting := put("without-reporting.txt", "second memory")
 	finish(withoutReporting, nil, nil)
 
@@ -531,6 +668,7 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertCommittedUnderstandingAttempt(t, details.Attempt, firstTerminal)
 	if details.ActiveRun == nil ||
 		!reflect.DeepEqual(details.ActiveRun.Statistics, wantStatistics) ||
 		!reflect.DeepEqual(details.ActiveRun.CostEstimate, wantCostEstimate) {
@@ -574,6 +712,18 @@ func TestUnderstandingReportingPersistsAcrossReopen(t *testing.T) {
 			details.ActiveRun.Artifacts,
 		) != 1 || details.ActiveRun.Artifacts[0].Content != "# Derived\n" {
 		t.Fatalf("existing Run after schema upgrade = %#v", details.ActiveRun)
+	}
+}
+
+func assertCommittedUnderstandingAttempt(
+	t *testing.T,
+	got *UnderstandingAttempt,
+	want UnderstandingAttempt,
+) {
+	t.Helper()
+	if got == nil || got.ID != want.ID || got.Status != understandingStatusDone ||
+		got.CompletedAt == nil || !got.CompletedAt.Equal(*want.CompletedAt) {
+		t.Fatalf("reopened terminal attempt = %#v; committed snapshot %#v", got, want)
 	}
 }
 

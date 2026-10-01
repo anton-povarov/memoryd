@@ -191,8 +191,6 @@ func (v *Vault) initialize(ctx context.Context) error {
 		UNIQUE (id, memory_id),
 		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
 	);
-	CREATE INDEX IF NOT EXISTS understanding_attempts_queue
-		ON understanding_attempts (status, queued_at, id);
 	CREATE INDEX IF NOT EXISTS understanding_attempts_history
 		ON understanding_attempts (memory_id, queued_at, id);
 
@@ -577,18 +575,6 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, &DuplicateError{Existing: existing}
 	}
 
-	_, err = tx.ExecContext(
-		durableContext,
-		`INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
-		 VALUES (?, ?, ?, ?)`,
-		uuid.New().String(),
-		memory.ID.String(),
-		understandingStatusQueued,
-		formatUnderstandingTime(memory.ImportedAt),
-	)
-	if err != nil {
-		return Memory{}, fmt.Errorf("queue Memory understanding: %w", err)
-	}
 	if err := tx.Commit(); err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
 	}

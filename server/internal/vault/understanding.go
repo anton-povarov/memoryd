@@ -16,17 +16,13 @@ import (
 )
 
 const (
-	understandingStatusQueued  = "queued"
 	understandingStatusRunning = "running"
 	understandingStatusDone    = "done"
 	understandingStatusFailed  = "failed"
 	understandingTimeLayout    = "2006-01-02T15:04:05.000000000Z07:00"
 )
 
-var (
-	ErrNoUnderstandingWork            = errors.New("no queued understanding work")
-	ErrUnderstandingAttemptNotRunning = errors.New("understanding attempt is not running")
-)
+var ErrUnderstandingAttemptNotRunning = errors.New("understanding attempt is not running")
 
 type UnderstandingDiagnostics struct {
 	Error    string
@@ -100,144 +96,8 @@ type UnderstandingDetails struct {
 	ActiveRun *UnderstandingRun
 }
 
-// RecoverUnderstanding queues never-attempted Memories and retries the latest
-// failed or interrupted attempt once per startup.
-func (v *Vault) RecoverUnderstanding(ctx context.Context) error {
-	tx, err := v.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin understanding recovery: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	rows, err := tx.QueryContext(ctx, `
-		SELECT m.id
-		FROM memories m
-		WHERE (
-			NOT EXISTS (
-				SELECT 1 FROM understanding_attempts a WHERE a.memory_id = m.id
-			) AND NOT EXISTS (
-				SELECT 1 FROM active_understanding_runs r WHERE r.memory_id = m.id
-			)
-		) OR (
-			SELECT a.status FROM understanding_attempts a
-			WHERE a.memory_id = m.id
-			ORDER BY a.queued_at DESC, a.id DESC LIMIT 1
-		) IN ('failed', 'running')
-		ORDER BY m.imported_at, m.id
-	`)
-	if err != nil {
-		return fmt.Errorf("find Memories requiring understanding recovery: %w", err)
-	}
-	var memoryIDs []string
-	for rows.Next() {
-		var memoryID string
-		if err := rows.Scan(&memoryID); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("read Memory requiring understanding recovery: %w", err)
-		}
-		memoryIDs = append(memoryIDs, memoryID)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("read Memories requiring understanding recovery: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close understanding recovery rows: %w", err)
-	}
-
-	queuedAt := time.Now().UTC()
-	for index, memoryID := range memoryIDs {
-		createdAt := queuedAt.Add(time.Duration(index) * time.Nanosecond)
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO understanding_attempts (id, memory_id, status, queued_at)
-			VALUES (?, ?, ?, ?)
-		`, uuid.New().String(), memoryID, understandingStatusQueued,
-			formatUnderstandingTime(createdAt))
-		if err != nil {
-			return fmt.Errorf("queue recovered understanding attempt: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit understanding recovery: %w", err)
-	}
-	return nil
-}
-
 func formatUnderstandingTime(value time.Time) string {
 	return value.UTC().Format(understandingTimeLayout)
-}
-
-// ClaimUnderstanding atomically moves the oldest queued attempt to running.
-func (v *Vault) ClaimUnderstanding(
-	ctx context.Context,
-) (Memory, UnderstandingAttempt, error) {
-	tx, err := v.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Memory{}, UnderstandingAttempt{}, fmt.Errorf("begin understanding claim: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	startedAt := time.Now().UTC()
-	attempt, err := scanUnderstandingAttempt(tx.QueryRowContext(ctx, `
-		UPDATE understanding_attempts
-		SET status = ?, started_at = ?
-		WHERE id = (
-			SELECT id FROM understanding_attempts
-			WHERE status = ? ORDER BY queued_at, id LIMIT 1
-		) AND status = ?
-		RETURNING id, memory_id, status, plugin_id, queued_at, started_at,
-			completed_at, diagnostics_error, diagnostics_stdout, diagnostics_stderr,
-			diagnostics_exit_code
-	`, understandingStatusRunning, formatUnderstandingTime(startedAt),
-		understandingStatusQueued, understandingStatusQueued))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Memory{}, UnderstandingAttempt{}, ErrNoUnderstandingWork
-	}
-	if err != nil {
-		return Memory{}, UnderstandingAttempt{}, fmt.Errorf(
-			"claim queued understanding attempt: %w",
-			err,
-		)
-	}
-	memory, err := scanMemory(tx.QueryRowContext(
-		ctx,
-		selectMemorySQL+` WHERE id = ?`,
-		attempt.MemoryID.String(),
-	))
-	if err != nil {
-		return Memory{}, UnderstandingAttempt{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Memory{}, UnderstandingAttempt{}, fmt.Errorf("commit understanding claim: %w", err)
-	}
-	return memory, attempt, nil
-}
-
-func (v *Vault) SetUnderstandingPlugin(
-	ctx context.Context,
-	attemptID uuid.UUID,
-	pluginID string,
-) error {
-	result, err := v.db.ExecContext(ctx, `
-		UPDATE understanding_attempts SET plugin_id = ?
-		WHERE id = ? AND status = ?
-			AND id = (
-				SELECT latest.id FROM understanding_attempts latest
-				WHERE latest.memory_id = understanding_attempts.memory_id
-				ORDER BY latest.queued_at DESC, latest.id DESC LIMIT 1
-			)
-	`, pluginID, attemptID.String(), understandingStatusRunning)
-	if err != nil {
-		return fmt.Errorf("record understanding plugin: %w", err)
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("inspect understanding plugin update: %w", err)
-	}
-	if updated == 0 {
-		return ErrUnderstandingAttemptNotRunning
-	}
-	return nil
 }
 
 func (v *Vault) FinishUnderstanding(
@@ -249,92 +109,82 @@ func (v *Vault) FinishUnderstanding(
 	warnings []string,
 	statistics *Statistics,
 	costEstimate *CostEstimate,
-) error {
+) (UnderstandingAttempt, error) {
 	if attempt.Status != understandingStatusRunning {
-		return ErrUnderstandingAttemptNotRunning
+		return UnderstandingAttempt{}, ErrUnderstandingAttemptNotRunning
 	}
-
-	checkTx, err := v.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin understanding completion check: %w", err)
+	if _, err := v.Memory(ctx, attempt.MemoryID); err != nil {
+		return UnderstandingAttempt{}, err
 	}
-	defer func() { _ = checkTx.Rollback() }()
-	if _, _, err := runningUnderstandingAttempt(ctx, checkTx, attempt); err != nil {
-		return err
-	}
-	if err := checkTx.Commit(); err != nil {
-		return fmt.Errorf("finish understanding completion check: %w", err)
-	}
-
 	if warnings == nil {
 		warnings = []string{}
 	}
 	warningsJSON, err := json.Marshal(warnings)
 	if err != nil {
-		return fmt.Errorf("encode understanding warnings: %w", err)
+		return UnderstandingAttempt{}, fmt.Errorf("encode understanding warnings: %w", err)
 	}
 	var reportingJSON []byte
 	if statistics != nil || costEstimate != nil {
 		reportingJSON, err = json.Marshal(understandingRunReporting{
-			Statistics:   statistics,
-			CostEstimate: costEstimate,
+			Statistics: statistics, CostEstimate: costEstimate,
 		})
 		if err != nil {
-			return fmt.Errorf("encode Understanding Run reporting: %w", err)
+			return UnderstandingAttempt{}, fmt.Errorf("encode Understanding Run reporting: %w", err)
 		}
 	}
 	storedArtifacts := make([]storedUnderstandingArtifact, len(artifacts))
 	for index, artifact := range artifacts {
 		storedArtifacts[index] = storedUnderstandingArtifact{
-			id:             uuid.New(),
-			ordinal:        index,
-			content:        artifact.Content,
+			id: uuid.New(), ordinal: index, content: artifact.Content,
 			contentType:    artifact.Blob.MediaType,
 			provenanceJSON: rawJSONArgument(artifact.Provenance),
 			scopeJSON:      rawJSONArgument(artifact.Scope),
-			blob:           BlobInfo{},
 		}
 	}
 	for index := range storedArtifacts {
 		if err := ctx.Err(); err != nil {
-			return err
+			return UnderstandingAttempt{}, err
 		}
-		blob, err := v.publishDerivedBlob(
-			ctx,
-			storedArtifacts[index].content,
-			storedArtifacts[index].contentType,
-		)
+		blob, err := v.publishDerivedBlob(ctx, storedArtifacts[index].content,
+			storedArtifacts[index].contentType)
 		if err != nil {
-			return fmt.Errorf("publish derived Blob: %w", err)
+			return UnderstandingAttempt{}, fmt.Errorf("publish derived Blob: %w", err)
 		}
 		storedArtifacts[index].blob = blob
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return UnderstandingAttempt{}, err
 	}
 
 	tx, err := v.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin Understanding Run commit: %w", err)
+		return UnderstandingAttempt{}, fmt.Errorf("begin Understanding Run commit: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	memory, pluginID, err := runningUnderstandingAttempt(ctx, tx, attempt)
-
+	memory, err := scanMemory(tx.QueryRowContext(
+		ctx, selectMemorySQL+` WHERE id = ?`, attempt.MemoryID.String(),
+	))
 	if err != nil {
-		return err
+		return UnderstandingAttempt{}, err
 	}
-
 	now := time.Now().UTC()
+	terminalAttempt := attempt
+	terminalAttempt.Status = understandingStatusDone
+	terminalAttempt.CompletedAt = &now
+	terminalAttempt.Diagnostics = nil
+	if err := insertUnderstandingAttempt(ctx, tx, terminalAttempt); err != nil {
+		return UnderstandingAttempt{}, err
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO understanding_runs (
 			id, memory_id, attempt_id, plugin_id, plugin_version, source_blobref,
 			created_at, completed_at, warnings_json
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, runID.String(), memory.ID.String(), attempt.ID.String(), pluginID, pluginVersion,
-		memory.Blob.Ref.String(), formatUnderstandingTime(now),
+	`, runID.String(), memory.ID.String(), attempt.ID.String(), attempt.PluginID,
+		pluginVersion, memory.Blob.Ref.String(), formatUnderstandingTime(now),
 		formatUnderstandingTime(now), string(warningsJSON))
 	if err != nil {
-		return fmt.Errorf("insert Understanding Run: %w", err)
+		return UnderstandingAttempt{}, fmt.Errorf("insert Understanding Run: %w", err)
 	}
 	if len(reportingJSON) > 0 {
 		_, err = tx.ExecContext(ctx, `
@@ -342,7 +192,7 @@ func (v *Vault) FinishUnderstanding(
 			VALUES (?, ?)
 		`, runID.String(), string(reportingJSON))
 		if err != nil {
-			return fmt.Errorf("insert Understanding Run reporting: %w", err)
+			return UnderstandingAttempt{}, fmt.Errorf("insert Understanding Run reporting: %w", err)
 		}
 	}
 	for _, artifact := range storedArtifacts {
@@ -355,7 +205,7 @@ func (v *Vault) FinishUnderstanding(
 			artifact.blob.Ref.String(), artifact.blob.MediaType, artifact.blob.ByteSize,
 			artifact.provenanceJSON, artifact.scopeJSON)
 		if err != nil {
-			return fmt.Errorf("insert derived artifact: %w", err)
+			return UnderstandingAttempt{}, fmt.Errorf("insert derived artifact: %w", err)
 		}
 	}
 	_, err = tx.ExecContext(ctx, `
@@ -363,71 +213,37 @@ func (v *Vault) FinishUnderstanding(
 		ON CONFLICT(memory_id) DO UPDATE SET run_id = excluded.run_id
 	`, memory.ID.String(), runID.String())
 	if err != nil {
-		return fmt.Errorf("activate Understanding Run: %w", err)
-	}
-	result, err := tx.ExecContext(ctx, `
-		UPDATE understanding_attempts
-		SET status = ?, completed_at = ?, diagnostics_error = NULL,
-			diagnostics_stdout = NULL, diagnostics_stderr = NULL,
-			diagnostics_exit_code = NULL
-		WHERE id = ? AND memory_id = ? AND status = ?
-			AND id = (
-				SELECT latest.id FROM understanding_attempts latest
-				WHERE latest.memory_id = understanding_attempts.memory_id
-				ORDER BY latest.queued_at DESC, latest.id DESC LIMIT 1
-			)
-	`, understandingStatusDone, formatUnderstandingTime(now), attempt.ID.String(),
-		memory.ID.String(), understandingStatusRunning)
-	if err != nil {
-		return fmt.Errorf("complete understanding attempt: %w", err)
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("inspect understanding completion: %w", err)
-	}
-	if updated != 1 {
-		return ErrUnderstandingAttemptNotRunning
+		return UnderstandingAttempt{}, fmt.Errorf("activate Understanding Run: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit Understanding Run: %w", err)
+		return UnderstandingAttempt{}, fmt.Errorf("commit Understanding Run: %w", err)
 	}
-	return nil
+	return terminalAttempt, nil
 }
 
-func runningUnderstandingAttempt(
+func insertUnderstandingAttempt(
 	ctx context.Context,
 	tx *sql.Tx,
 	attempt UnderstandingAttempt,
-) (Memory, string, error) {
-	memory, err := scanMemory(tx.QueryRowContext(
-		ctx, selectMemorySQL+` WHERE id = ?`, attempt.MemoryID.String(),
-	))
-
+) error {
+	var diagnosticsError, stdout, stderr, exitCode any
+	if attempt.Diagnostics != nil {
+		diagnosticsError, stdout, stderr = attempt.Diagnostics.Error,
+			attempt.Diagnostics.Stdout, attempt.Diagnostics.Stderr
+		exitCode = nullableInt(attempt.Diagnostics.ExitCode)
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO understanding_attempts (
+			id, memory_id, status, plugin_id, queued_at, started_at, completed_at,
+			diagnostics_error, diagnostics_stdout, diagnostics_stderr, diagnostics_exit_code
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, attempt.ID.String(), attempt.MemoryID.String(), attempt.Status, attempt.PluginID,
+		formatUnderstandingTime(attempt.QueuedAt), nullableTime(attempt.StartedAt),
+		nullableTime(attempt.CompletedAt), diagnosticsError, stdout, stderr, exitCode)
 	if err != nil {
-		return Memory{}, "", err
+		return fmt.Errorf("insert terminal understanding attempt: %w", err)
 	}
-	var pluginID, status, memoryID string
-	var latest int
-
-	if err := tx.QueryRowContext(ctx, `
-		SELECT attempt.plugin_id, attempt.status, attempt.memory_id,
-			attempt.id = (
-				SELECT latest.id FROM understanding_attempts latest
-				WHERE latest.memory_id = attempt.memory_id
-				ORDER BY latest.queued_at DESC, latest.id DESC LIMIT 1
-			)
-		FROM understanding_attempts attempt WHERE attempt.id = ?
-	`, attempt.ID.String()).Scan(&pluginID, &status, &memoryID, &latest); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Memory{}, "", ErrUnderstandingAttemptNotRunning
-		}
-		return Memory{}, "", fmt.Errorf("read understanding attempt for Run: %w", err)
-	}
-	if status != understandingStatusRunning || memoryID != attempt.MemoryID.String() ||
-		latest != 1 {
-		return Memory{}, "", ErrUnderstandingAttemptNotRunning
-	}
-	return memory, pluginID, nil
+	return nil
 }
 
 type storedUnderstandingArtifact struct {
@@ -496,55 +312,33 @@ func (v *Vault) publishDerivedBlob(
 
 func (v *Vault) FailUnderstanding(
 	ctx context.Context,
-	attemptID uuid.UUID,
+	attempt UnderstandingAttempt,
 	diagnostics UnderstandingDiagnostics,
-) error {
-	completedAt := formatUnderstandingTime(time.Now().UTC())
-	result, err := v.db.ExecContext(ctx, `
-		UPDATE understanding_attempts
-		SET status = ?, completed_at = ?, diagnostics_error = ?,
-			diagnostics_stdout = ?, diagnostics_stderr = ?, diagnostics_exit_code = ?
-		WHERE id = ? AND status = ?
-			AND id = (
-				SELECT latest.id FROM understanding_attempts latest
-				WHERE latest.memory_id = understanding_attempts.memory_id
-				ORDER BY latest.queued_at DESC, latest.id DESC LIMIT 1
-			)
-	`, understandingStatusFailed, completedAt, diagnostics.Error, diagnostics.Stdout,
-		diagnostics.Stderr, nullableInt(diagnostics.ExitCode), attemptID.String(),
-		understandingStatusRunning)
+) (UnderstandingAttempt, error) {
+	if attempt.Status != understandingStatusRunning {
+		return UnderstandingAttempt{}, ErrUnderstandingAttemptNotRunning
+	}
+	tx, err := v.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("record failed understanding attempt: %w", err)
+		return UnderstandingAttempt{}, fmt.Errorf("begin failed understanding attempt: %w", err)
 	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("inspect failed understanding attempt: %w", err)
+	defer func() { _ = tx.Rollback() }()
+	if _, err := scanMemory(tx.QueryRowContext(
+		ctx, selectMemorySQL+` WHERE id = ?`, attempt.MemoryID.String(),
+	)); err != nil {
+		return UnderstandingAttempt{}, err
 	}
-	if updated != 0 {
-		return nil
+	now := time.Now().UTC()
+	attempt.Status = understandingStatusFailed
+	attempt.CompletedAt = &now
+	attempt.Diagnostics = &diagnostics
+	if err := insertUnderstandingAttempt(ctx, tx, attempt); err != nil {
+		return UnderstandingAttempt{}, err
 	}
-	var memoryID, status string
-	err = v.db.QueryRowContext(ctx, `
-		SELECT memory_id, status FROM understanding_attempts WHERE id = ?
-	`, attemptID.String()).Scan(&memoryID, &status)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+	if err := tx.Commit(); err != nil {
+		return UnderstandingAttempt{}, fmt.Errorf("commit failed understanding attempt: %w", err)
 	}
-	if err != nil {
-		return fmt.Errorf("inspect failed understanding attempt: %w", err)
-	}
-	var exists int
-	err = v.db.QueryRowContext(ctx, `SELECT 1 FROM memories WHERE id = ?`, memoryID).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect failed attempt Memory: %w", err)
-	}
-	if status != understandingStatusRunning {
-		return ErrUnderstandingAttemptNotRunning
-	}
-	return nil
+	return attempt, nil
 }
 
 func nullableInt(value *int) any {
@@ -572,7 +366,7 @@ func (v *Vault) Understanding(
 	}
 
 	details := UnderstandingDetails{
-		Status:    understandingStatusQueued,
+		Status:    "not_started",
 		Attempt:   nil,
 		ActiveRun: nil,
 	}
@@ -581,8 +375,9 @@ func (v *Vault) Understanding(
 			completed_at, diagnostics_error, diagnostics_stdout, diagnostics_stderr,
 			diagnostics_exit_code
 		FROM understanding_attempts
-		WHERE memory_id = ? ORDER BY queued_at DESC, id DESC LIMIT 1
-	`, memoryID.String()))
+		WHERE memory_id = ? AND status IN (?, ?)
+		ORDER BY queued_at DESC, id DESC LIMIT 1
+	`, memoryID.String(), understandingStatusDone, understandingStatusFailed))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		details.Attempt = nil

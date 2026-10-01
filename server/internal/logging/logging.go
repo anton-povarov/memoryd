@@ -425,7 +425,7 @@ func addJSONAttr(object map[string]any, groups []string, attr slog.Attr) {
 		target = nested
 	}
 
-	// fmt.Printf("%v <== %#v [%v]\n", attr.Key, jsonValue(attr.Value), attr.Value.Kind())
+	// fmt.Printf("%v <== %#v [%v] [%v]\n", attr.Key, slogValueToAnyValue(attr.Value), attr.Value, attr.Value.Kind())
 	target[attr.Key] = slogValueToAnyValue(attr.Value)
 }
 
@@ -433,11 +433,19 @@ func slogValueToAnyValue(value slog.Value) any {
 	if value.Kind() == slog.KindDuration {
 		return value.Duration().String()
 	}
+
 	anyValue := value.Any()
+	if anyValue == nil {
+		return nil
+	}
 
 	if value.Kind() == slog.KindAny {
 		if err, ok := anyValue.(error); ok {
-			return err.Error()
+			return err
+		}
+
+		if _, ok := anyValue.(fmt.Stringer); ok {
+			return anyValue
 		}
 
 		// pointer to a primitive type
