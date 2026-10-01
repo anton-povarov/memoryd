@@ -12,3 +12,24 @@ storage:
 
 logging:
   level: info
+
+understanding:
+  max_concurrent: 1
+  plugins:
+    pdf:
+      media_types: [application/pdf]
+      # Optional raw stdout/stderr logs, written when each plugin process exits.
+      # log_dir: ./server/data/understanding-logs
+      # Relative to the server's working directory (here, the repository root).
+      command: [./plugins/codex-extractor/mem-understand-codex-extractor]
+
+# Required by the Codex extractor. Omit this section for a model-free plugin.
+# Codex is resolved through PATH; an absolute or relative executable path also works.
+# YAML does not expand ~, environment variables, or shell expressions.
+models:
+  document_understanding:
+    provider: codex_app_server
+    name: gpt-6-luna
+    reasoning_effort: medium
+    # Codex uses the server user's existing local sign-in; no credentials belong here.
+    command: [codex, app-server, --stdio]

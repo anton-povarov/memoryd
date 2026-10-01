@@ -70,7 +70,7 @@ paths:
       summary: Get committed Memory details
       responses:
         "200":
-          description: The Memory and its stored Import Context.
+          description: The Memory, its Import Context, and background understanding status and active Run.
           content:
             application/json:
               schema:
@@ -98,6 +98,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /memories/{memoryId}/rebuild:
+    parameters:
+      - $ref: "#/components/parameters/MemoryId"
+    post:
+      operationId: rebuildMemory
+      tags: [memories]
+      summary: Request a Memory Rebuild
+      description: |
+        Accept process-local work using current Document Understanding methods.
+        An optional user_note replaces the saved Memory guidance; absent or
+        null user_note reuses the saved note, and an empty string clears it.
+        The original Blob and previous active Run remain unchanged. Acceptance
+        is best effort: queued/running work and polling handles are lost on
+        restart. Competing queued/running work returns 409 without scheduling
+        or changing the saved note.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RebuildRequest"
+      responses:
+        "202":
+          description: A new attempt was accepted by this process.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "409":
+          description: This Memory already has queued or running work.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "404":
+          description: The requested Memory does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The Document Understanding worker is unavailable; no attempt was queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "400":
+          description: The request body is malformed or user_note is not a string or null.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /rebuild-status/{rebuildId}:
+    parameters:
+      - name: rebuildId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getRebuildStatus
+      tags: [memories]
+      summary: Poll a retained process-local Rebuild
+      description: |
+        Retained until superseded by a newly accepted attempt, Memory deletion,
+        or restart. Terminal handles remain readable; no artifacts are returned.
+      responses:
+        "200":
+          description: The exact retained attempt.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebuildStatus"
+        "404":
+          description: The handle is unknown, superseded, deleted, or lost on restart.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 
   /memories/{memoryId}/content:
     parameters:
@@ -341,7 +439,7 @@ components:
 
     MemoryDetail:
       type: object
-      required: [memory, import_context]
+      required: [memory, import_context, understanding]
       properties:
         memory:
           $ref: "#/components/schemas/MemorySummary"
@@ -350,6 +448,220 @@ components:
           description: Relative URL of the content download endpoint.
         import_context:
           $ref: "#/components/schemas/ImportContext"
+        understanding:
+          $ref: "#/components/schemas/UnderstandingDetails"
+
+    RebuildRequest:
+      type: object
+      properties:
+        user_note:
+          type: string
+          nullable: true
+          description: Optional owner guidance; null reuses the saved note, empty string clears it.
+
+    UnderstandingDetails:
+      type: object
+      required: [status, latest_attempt, active_run, user_note]
+      properties:
+        user_note:
+          type: string
+          description: Latest saved owner guidance for this Memory; empty when absent or cleared.
+        status:
+          type: string
+          enum: [not_started, queued, running, done, failed]
+        latest_attempt:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingAttempt"
+          nullable: true
+        active_run:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingRun"
+          nullable: true
+          description: The last complete successful Run; failed attempts do not replace it.
+        status_url:
+          type: string
+          description: Process-local polling URL; absent for durable history after restart.
+
+    RebuildStatus:
+      type: object
+      required: [memory_id, attempt, status_url]
+      properties:
+        memory_id:
+          type: string
+          format: uuid
+        attempt:
+          $ref: "#/components/schemas/UnderstandingAttempt"
+        status_url:
+          type: string
+
+    UnderstandingAttemptState:
+      type: string
+      enum: [queued, running, done, failed]
+
+    UnderstandingAttempt:
+      type: object
+      required: [id, plugin_id, status, queued_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+          description: Configured plugin ID; empty when no plugin is selected.
+        status:
+          $ref: "#/components/schemas/UnderstandingAttemptState"
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        diagnostics:
+          allOf:
+            - $ref: "#/components/schemas/UnderstandingDiagnostics"
+          nullable: true
+
+    UnderstandingDiagnostics:
+      type: object
+      required: [error, stdout, stderr]
+      properties:
+        error:
+          type: string
+        stdout:
+          type: string
+          description: Captured plugin stdout, including invalid protocol output.
+        stderr:
+          type: string
+          description: Captured plugin diagnostics; may contain private source content.
+        exit_code:
+          type: integer
+          nullable: true
+
+    UnderstandingRun:
+      type: object
+      required: [id, attempt_id, plugin_id, plugin_version, source_blobref, created_at, completed_at, warnings, artifacts, user_note]
+      properties:
+        id:
+          type: string
+          format: uuid
+        attempt_id:
+          type: string
+          format: uuid
+        plugin_id:
+          type: string
+        plugin_version:
+          type: string
+        source_blobref:
+          type: string
+          pattern: "^sha256-[a-f0-9]{64}$"
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        user_note:
+          type: string
+          description: Owner guidance captured by this successful Run; empty when absent.
+        warnings:
+          type: array
+          items:
+            type: string
+        statistics:
+          allOf:
+            - $ref: "#/components/schemas/Statistics"
+          description: Optional plugin-reported Run totals.
+        cost_estimate:
+          allOf:
+            - $ref: "#/components/schemas/CostEstimate"
+          description: Optional API-equivalent estimate, not subscription charges.
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DerivedContent"
+
+    DerivedContent:
+      type: object
+      required: [id, blob_hash, byte_size, content_type, content]
+      description: Independent text artifact belonging to its containing Run.
+      properties:
+        id:
+          type: string
+          format: uuid
+        blob_hash:
+          type: string
+          pattern: "^sha256-[a-f0-9]{64}$"
+        byte_size:
+          type: integer
+          format: int64
+          minimum: 0
+        content_type:
+          type: string
+        content:
+          type: string
+          description: Literal UTF-8 text content.
+        provenance:
+          description: Optional opaque plugin-defined JSON metadata.
+        scope:
+          description: Optional opaque plugin-defined JSON metadata.
+    Statistics:
+      type: object
+      additionalProperties: false
+      properties:
+        usage:
+          allOf:
+            - $ref: "#/components/schemas/TokenUsage"
+
+    TokenUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cached_input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        cache_write_input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        reasoning_output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        total_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+
+    CostEstimate:
+      type: object
+      required: [amount_usd, basis]
+      additionalProperties: false
+      properties:
+        amount_usd:
+          type: number
+          format: double
+          minimum: 0
+        basis:
+          type: string
+          minLength: 1
+        pricing_date:
+          type: string
+        pricing_url:
+          type: string
 
     ImportContext:
       type: object

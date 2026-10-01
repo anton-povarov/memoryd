@@ -16,9 +16,9 @@ const (
 
 var ErrInvalidMediaType = errors.New("invalid Media Type hint")
 
-// resolveMediaType classifies staged bytes before their Memory metadata commits.
+// ResolveMediaType classifies file bytes using the import path's rules.
 // Generic detector results allow a specific importer hint to supply a type.
-func resolveMediaType(path, hint string) (string, error) {
+func ResolveMediaType(path, hint string) (string, error) {
 	detected, err := mimetype.DetectFile(path)
 	if err != nil {
 		return "", fmt.Errorf("detect Blob media type: %w", err)

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -88,28 +87,33 @@ func (e *DuplicateError) Error() string {
 
 type Vault struct {
 	db             *sql.DB
+	blobRoot       string
 	blobDir        string
+	derivedBlobDir string
 	uploadDir      string
-	logger         *slog.Logger
+	logger         *logging.Logger
 	blobMutationMu sync.Mutex
 }
 
 func Open(
 	ctx context.Context,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	dbPath, blobDir, uploadDir string,
 ) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
-	contentDir := filepath.Join(blobDir, "sha256")
+
+	blobRoot := filepath.Clean(blobDir)
+	contentDir := filepath.Join(blobRoot, "sha256")
+	derivedContentDir := filepath.Join(blobRoot, "derived", "sha256")
 	if err := os.MkdirAll(contentDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create Blob directory: %w", err)
 	}
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create Blob upload directory: %w", err)
 	}
-	if err := removeAbandonedTemporaryFiles(uploadDir, contentDir); err != nil {
+	if err := removeAbandonedTemporaryFiles(uploadDir, blobRoot); err != nil {
 		return nil, err
 	}
 
@@ -126,7 +130,9 @@ func Open(
 
 	v := &Vault{
 		db:             db,
+		blobRoot:       blobRoot,
 		blobDir:        contentDir,
+		derivedBlobDir: derivedContentDir,
 		uploadDir:      uploadDir,
 		logger:         logger,
 		blobMutationMu: sync.Mutex{},
@@ -168,24 +174,52 @@ func (v *Vault) initialize(ctx context.Context) error {
 		byte_size INTEGER NOT NULL,
 		imported_at TEXT NOT NULL
 	);
+	CREATE INDEX IF NOT EXISTS memories_imported_at ON memories (imported_at);
+
+	CREATE TABLE IF NOT EXISTS understanding_attempts (
+		id TEXT PRIMARY KEY,
+		memory_id TEXT NOT NULL,
+		status TEXT NOT NULL CHECK (status IN ('` +
+		UnderstandingStatusQueued + `', '` +
+		UnderstandingStatusRunning + `', '` +
+		UnderstandingStatusDone + `', '` +
+		UnderstandingStatusFailed + `')),
+		plugin_id TEXT NOT NULL DEFAULT '',
+		queued_at TEXT NOT NULL,
+		started_at TEXT,
+		completed_at TEXT,
+		diagnostics_error TEXT,
+		diagnostics_stdout TEXT,
+		diagnostics_stderr TEXT,
+		diagnostics_exit_code INTEGER,
+		UNIQUE (id, memory_id),
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS understanding_attempts_history
+		ON understanding_attempts (memory_id, queued_at, id);
+
 	CREATE TABLE IF NOT EXISTS understanding_runs (
 		id TEXT PRIMARY KEY,
 		memory_id TEXT NOT NULL,
-		pipeline TEXT NOT NULL,
+		attempt_id TEXT NOT NULL,
+		plugin_id TEXT NOT NULL,
+		plugin_version TEXT NOT NULL,
+		source_blobref TEXT NOT NULL CHECK (
+			length(source_blobref) = 71 AND
+			substr(source_blobref, 1, 7) = 'sha256-' AND
+			substr(source_blobref, 8) NOT GLOB '*[^0-9a-f]*'
+		),
 		created_at TEXT NOT NULL,
 		completed_at TEXT NOT NULL,
-		extractor_versions_json TEXT NOT NULL DEFAULT '{}'
-			CHECK (
-				json_valid(extractor_versions_json) AND
-				json_type(extractor_versions_json) = 'object'
-			),
 		warnings_json TEXT NOT NULL DEFAULT '[]'
 			CHECK (
 				json_valid(warnings_json) AND
 				json_type(warnings_json) = 'array'
 			),
 		UNIQUE (id, memory_id),
-		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+		FOREIGN KEY (attempt_id, memory_id)
+			REFERENCES understanding_attempts(id, memory_id) ON DELETE CASCADE
 	);
 	CREATE TABLE IF NOT EXISTS active_understanding_runs (
 		memory_id TEXT PRIMARY KEY,
@@ -193,6 +227,42 @@ func (v *Vault) initialize(ctx context.Context) error {
 		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
 		FOREIGN KEY (run_id, memory_id)
 			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS understanding_artifacts (
+		id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		memory_id TEXT NOT NULL,
+		ordinal INTEGER NOT NULL,
+		blob_hash TEXT NOT NULL CHECK (
+			length(blob_hash) = 71 AND
+			substr(blob_hash, 1, 7) = 'sha256-' AND
+			substr(blob_hash, 8) NOT GLOB '*[^0-9a-f]*'
+		),
+		content_type TEXT NOT NULL,
+		byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+		provenance_json TEXT CHECK (json_valid(provenance_json)),
+		scope_json TEXT CHECK (json_valid(scope_json)),
+		UNIQUE (run_id, ordinal),
+		FOREIGN KEY (run_id, memory_id)
+			REFERENCES understanding_runs(id, memory_id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS understanding_run_statistics (
+		run_id TEXT PRIMARY KEY NOT NULL,
+		statistics_json TEXT NOT NULL CHECK (
+			json_valid(statistics_json) AND json_type(statistics_json) = 'object'
+		),
+		FOREIGN KEY (run_id) REFERENCES understanding_runs(id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS memory_understanding_notes (
+		memory_id TEXT PRIMARY KEY NOT NULL,
+		user_note TEXT NOT NULL,
+		FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+	);
+	CREATE TABLE IF NOT EXISTS understanding_run_notes (
+		run_id TEXT PRIMARY KEY NOT NULL,
+		user_note TEXT NOT NULL,
+		FOREIGN KEY (run_id) REFERENCES understanding_runs(id) ON DELETE CASCADE
 	)`
 
 	logger.DebugContext(ctx, "Initializing schema")
@@ -261,16 +331,45 @@ func (v *Vault) validateSchema(ctx context.Context) error {
 			"byte_size",
 			"imported_at",
 		},
+		"understanding_attempts": {
+			"id",
+			"memory_id",
+			"status",
+			"plugin_id",
+			"queued_at",
+			"started_at",
+			"completed_at",
+			"diagnostics_error",
+			"diagnostics_stdout",
+			"diagnostics_stderr",
+			"diagnostics_exit_code",
+		},
 		"understanding_runs": {
 			"id",
 			"memory_id",
-			"pipeline",
+			"attempt_id",
+			"plugin_id",
+			"plugin_version",
+			"source_blobref",
 			"created_at",
 			"completed_at",
-			"extractor_versions_json",
 			"warnings_json",
 		},
 		"active_understanding_runs": {"memory_id", "run_id"},
+		"understanding_artifacts": {
+			"id",
+			"run_id",
+			"memory_id",
+			"ordinal",
+			"blob_hash",
+			"content_type",
+			"byte_size",
+			"provenance_json",
+			"scope_json",
+		},
+		"understanding_run_statistics": {"run_id", "statistics_json"},
+		"memory_understanding_notes":   {"memory_id", "user_note"},
+		"understanding_run_notes":      {"run_id", "user_note"},
 	}
 	for table, want := range wantColumns {
 		got, err := tableColumns(ctx, v.db, table)
@@ -324,7 +423,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	if candidate.Content == nil {
 		return Memory{}, errors.New("blob content is required")
 	}
-	importContext, err := candidate.Context.normalized()
+	importContext, err := candidate.Context.Normalized()
 	if err != nil {
 		return Memory{}, err
 	}
@@ -361,7 +460,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("close temporary Blob: %w", closeErr)
 	}
 
-	mediaType, err := resolveMediaType(temporaryPath, candidate.MediaTypeHint)
+	mediaType, err := ResolveMediaType(temporaryPath, candidate.MediaTypeHint)
 	if err != nil {
 		return Memory{}, err
 	}
@@ -416,26 +515,56 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 	// The Blob is durable now. The Memory commit must survive client
 	// disconnection so successful storage is never reported as a failed import.
 	insertSQL := `INSERT INTO memories (
-		id, blob_hash, original_filename, relative_path, full_path,
-		filesystem_created_at, filesystem_modified_at, media_type, byte_size,
-		imported_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(blob_hash) DO NOTHING`
+		id, blob_hash, imported_at,
+		media_type, byte_size,
+		original_filename, relative_path, full_path,
+		filesystem_created_at, filesystem_modified_at
+	) VALUES (
+	 	@id, @blob_hash, @imported_at,
+	 	@media_type, @byte_size,
+	 	@original_filename, @relative_path, @full_path,
+		@filesystem_created_at, @filesystem_modified_at)
+	ON CONFLICT(blob_hash) DO NOTHING`
+
+	insertArguments := []any{
+		sql.NamedArg{Name: "id", Value: memory.ID.String()},
+		sql.NamedArg{Name: "blob_hash", Value: memory.Blob.Ref.String()},
+		sql.NamedArg{Name: "imported_at", Value: memory.ImportedAt.Format(time.RFC3339Nano)},
+		sql.NamedArg{Name: "media_type", Value: memory.Blob.MediaType},
+		sql.NamedArg{Name: "byte_size", Value: memory.Blob.ByteSize},
+		sql.NamedArg{Name: "original_filename", Value: memory.ImportContext.OriginalFilename},
+		sql.NamedArg{
+			Name:  "relative_path",
+			Value: nullableString(memory.ImportContext.RelativePath),
+		},
+		sql.NamedArg{Name: "full_path", Value: nullableString(memory.ImportContext.FullPath)},
+		sql.NamedArg{
+			Name:  "filesystem_created_at",
+			Value: nullableTime(memory.ImportContext.FilesystemCreated),
+		},
+		sql.NamedArg{
+			Name:  "filesystem_modified_at",
+			Value: nullableTime(memory.ImportContext.FilesystemModified),
+		},
+	}
 
 	durableContext := context.WithoutCancel(ctx)
-	result, err := v.db.ExecContext(
+	tx, err := v.db.BeginTx(durableContext, nil)
+	if err != nil {
+		return Memory{}, fmt.Errorf("begin Memory commit: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(
 		durableContext,
 		insertSQL,
-		memory.ID.String(),
-		memory.Blob.Ref.String(),
-		memory.ImportContext.OriginalFilename,
-		nullableString(memory.ImportContext.RelativePath),
-		nullableString(memory.ImportContext.FullPath),
-		nullableTime(memory.ImportContext.FilesystemCreated),
-		nullableTime(memory.ImportContext.FilesystemModified),
-		memory.Blob.MediaType,
-		memory.Blob.ByteSize,
-		memory.ImportedAt.Format(time.RFC3339Nano),
+		insertArguments...,
 	)
+	logger.
+		WithError(err).
+		DebugContext(ctx, "Memory import query executed",
+			logging.SqlQuery(insertSQL, insertArguments),
+		)
+
 	if err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
 	}
@@ -444,7 +573,13 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		return Memory{}, fmt.Errorf("inspect Memory commit: %w", err)
 	}
 	if inserted == 0 {
-		existing, err := v.memoryByHash(durableContext, blobRef)
+		existing, err := scanMemory(
+			tx.QueryRowContext(
+				durableContext,
+				selectMemorySQL+` WHERE blob_hash = ?`,
+				blobRef.String(),
+			),
+		)
 		if err != nil {
 			return Memory{}, err
 		}
@@ -454,6 +589,10 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 			"original_filename", existing.ImportContext.OriginalFilename,
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Memory{}, fmt.Errorf("commit Memory: %w", err)
 	}
 
 	logger.InfoContext(durableContext, "Memory imported",
@@ -468,7 +607,7 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 
 func (v *Vault) Memory(ctx context.Context, id uuid.UUID) (Memory, error) {
 	return scanMemory(
-		v.db.QueryRowContext(ctx, selectMemory+` WHERE id = ?`, id.String()),
+		v.db.QueryRowContext(ctx, selectMemorySQL+` WHERE id = ?`, id.String()),
 	)
 }
 
@@ -482,27 +621,30 @@ func (v *Vault) ListMemories(
 	if limit <= 0 || limit > MaxListLimit {
 		limit = DefaultListLimit
 	}
-	query := selectMemory
+	query := selectMemorySQL
 	arguments := []any{}
 	if after != nil {
-		query += ` WHERE julianday(imported_at) < julianday(?) OR ` +
-			`(julianday(imported_at) = julianday(?) AND id < ?)`
+		query += " WHERE " +
+			"\n   julianday(imported_at) < julianday(@time) OR " +
+			"\n   (julianday(imported_at) = julianday(@time) AND id < @id)"
 		encodedTime := after.ImportedAt.Format(time.RFC3339Nano)
-		arguments = append(
-			arguments,
-			encodedTime,
-			encodedTime,
-			after.ID.String(),
+		arguments = append(arguments,
+			sql.Named("time", encodedTime),
+			sql.Named("id", after.ID.String()),
 		)
 	}
-	query += ` ORDER BY julianday(imported_at) DESC, id DESC LIMIT ?`
-	arguments = append(arguments, limit+1)
-
-	logger.DebugContext(ctx, "sqlite query",
-		"query", query,
-		"arguments", arguments)
+	query += " ORDER BY julianday(imported_at) DESC, id DESC"
+	query += " LIMIT @limit"
+	arguments = append(arguments, sql.Named("limit", limit+1))
 
 	rows, err := v.db.QueryContext(ctx, query, arguments...)
+
+	logger.
+		WithError(err).
+		DebugContext(ctx, "list memories query",
+			logging.SqlQuery(query, arguments),
+		)
+
 	if err != nil {
 		return nil, false, fmt.Errorf("list Memories: %w", err)
 	}
@@ -576,11 +718,23 @@ func (v *Vault) Delete(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+
+	deleteSQL := `DELETE FROM memories WHERE id = @id`
+	deleteArguments := []any{
+		sql.NamedArg{Name: "id", Value: id.String()},
+	}
+
 	result, err := v.db.ExecContext(
 		ctx,
-		`DELETE FROM memories WHERE id = ?`,
-		id.String(),
+		deleteSQL,
+		deleteArguments...,
 	)
+	logger.
+		WithError(err).
+		DebugContext(ctx, "Memory delete query executed",
+			logging.SqlQuery(deleteSQL, deleteArguments),
+		)
+
 	if err != nil {
 		return fmt.Errorf("delete Memory: %w", err)
 	}
@@ -707,13 +861,17 @@ func (v *Vault) ensureBlobDirectory(finalPath string) error {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return err
 	}
-	for _, path := range []string{
-		v.blobDir,
-		filepath.Join(v.blobDir, filepath.Base(filepath.Dir(directory))),
-		directory,
-	} {
-		if err := syncDirectory(path); err != nil {
+	relative, err := filepath.Rel(v.blobRoot, directory)
+	if err != nil || relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("blob path is outside storage root")
+	}
+	for current := directory; ; current = filepath.Dir(current) {
+		if err := syncDirectory(current); err != nil {
 			return err
+		}
+		if current == v.blobRoot {
+			break
 		}
 	}
 	return nil
@@ -732,19 +890,21 @@ func syncDirectory(path string) error {
 	return closeErr
 }
 
-func removeAbandonedTemporaryFiles(uploadDir, contentDir string) error {
+func removeAbandonedTemporaryFiles(uploadDir, blobRoot string) error {
 	entries, err := os.ReadDir(uploadDir)
 	if err != nil {
 		return fmt.Errorf("scan Blob upload directory: %w", err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".import-") {
-			if err := os.Remove(filepath.Join(uploadDir, entry.Name())); err != nil {
-				return fmt.Errorf("remove abandoned import staging: %w", err)
-			}
+		if !strings.HasPrefix(entry.Name(), ".import-") &&
+			!strings.HasPrefix(entry.Name(), ".derived-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(uploadDir, entry.Name())); err != nil {
+			return fmt.Errorf("remove abandoned import staging: %w", err)
 		}
 	}
-	return filepath.WalkDir(contentDir, func(path string, entry fs.DirEntry, walkErr error) error {
+	return filepath.WalkDir(blobRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -759,18 +919,28 @@ func removeAbandonedTemporaryFiles(uploadDir, contentDir string) error {
 }
 
 func (v *Vault) blobPath(ref Blobref) string {
+	return blobPathIn(v.blobDir, ref)
+}
+
+func (v *Vault) derivedBlobPath(ref Blobref) string {
+	return blobPathIn(v.derivedBlobDir, ref)
+}
+
+func blobPathIn(root string, ref Blobref) string {
 	digest := ref.digestHex()
 	return filepath.Join(
-		v.blobDir,
+		root,
 		digest[:firstShardEnd],
 		digest[firstShardEnd:secondShardEnd],
 		ref.String(),
 	)
 }
 
-const selectMemory = `SELECT id, blob_hash, original_filename, relative_path, full_path,
+const selectMemorySQL = `
+SELECT id, blob_hash, original_filename, relative_path, full_path,
 	filesystem_created_at, filesystem_modified_at, media_type, byte_size, imported_at
-	FROM memories`
+FROM memories
+`
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -822,12 +992,6 @@ func scanMemory(row rowScanner) (Memory, error) {
 		return Memory{}, err
 	}
 	return memory, nil
-}
-
-func (v *Vault) memoryByHash(ctx context.Context, ref Blobref) (Memory, error) {
-	return scanMemory(
-		v.db.QueryRowContext(ctx, selectMemory+` WHERE blob_hash = ?`, ref.String()),
-	)
 }
 
 func copyWithLimit(

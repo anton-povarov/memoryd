@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"mime/multipart"
 	"strings"
@@ -31,16 +30,18 @@ var (
 )
 
 type Handler struct {
-	version string
-	logger  *slog.Logger
-	vault   *vault.Vault
+	version       string
+	logger        *logging.Logger
+	vault         *vault.Vault
+	understanding *understandingWorker
 }
 
-func NewHandler(version string, logger *slog.Logger, memoryVault *vault.Vault) *Handler {
+func NewHandler(version string, logger *logging.Logger, memoryVault *vault.Vault) *Handler {
 	return &Handler{
-		version: version,
-		logger:  logger,
-		vault:   memoryVault,
+		version:       version,
+		logger:        logger,
+		vault:         memoryVault,
+		understanding: nil,
 	}
 }
 
@@ -131,7 +132,125 @@ func (h *Handler) GetMemory(
 	if err != nil {
 		return nil, err
 	}
-	return api.GetMemory200JSONResponse(memoryDetail(memory)), nil
+	understanding, err := h.vault.Understanding(ctx, memory.ID)
+
+	if errors.Is(err, vault.ErrMemoryNotFound) {
+		return api.GetMemory404JSONResponse(notFoundError()), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	response := memoryDetail(memory, understanding)
+	if h.understanding != nil {
+		if attempt, ok := h.understanding.Latest(memory.ID); ok {
+			response.Understanding.Status = api.UnderstandingDetailsStatus(attempt.Status)
+			snapshot := understandingAttempt(attempt)
+			response.Understanding.LatestAttempt = &snapshot
+			url := understandingStatusURL(attempt)
+			response.Understanding.StatusUrl = &url
+		}
+	}
+	return api.GetMemory200JSONResponse(response), nil
+}
+
+func (h *Handler) RebuildMemory(
+	ctx context.Context,
+	request api.RebuildMemoryRequestObject,
+) (api.RebuildMemoryResponseObject, error) {
+	logger := logging.ForOperationInRequest(
+		h.logger, "RebuildMemory", ctx,
+	)
+	var attempt vault.UnderstandingAttempt
+	var accepted bool
+	var replacement *string
+	if request.Body != nil {
+		replacement = request.Body.UserNote
+	}
+	err := errUnderstandingUnavailable
+	if h.understanding != nil {
+		attempt, accepted, err = h.understanding.Enqueue(ctx, request.MemoryId, replacement)
+	}
+	switch {
+	case errors.Is(err, vault.ErrMemoryNotFound):
+		logger.InfoContext(ctx, "Manual Understanding Memory not found",
+			"memory_id", request.MemoryId.String())
+		return api.RebuildMemory404JSONResponse(notFoundError()), nil
+	case errors.Is(err, errUnderstandingUnavailable):
+		logger.WarnContext(ctx, "Manual Understanding unavailable",
+			"memory_id", request.MemoryId.String())
+		return api.RebuildMemory503JSONResponse{
+			Code: "understanding_unavailable", Details: nil, ExistingMemory: nil,
+			Message: "Document Understanding worker is unavailable",
+		}, nil
+	case err != nil:
+		return nil, err
+	}
+	body := understandingAttemptStatus(attempt)
+	noStore := "no-store"
+	if !accepted {
+		logger.InfoContext(ctx, "Manual Understanding conflicts with pending work",
+			"memory_id", request.MemoryId.String(), "attempt_id", attempt.ID.String())
+		return api.RebuildMemory409JSONResponse{
+			Body:    body,
+			Headers: api.RebuildMemory409ResponseHeaders{CacheControl: &noStore},
+		}, nil
+	}
+	logger.InfoContext(ctx, "Memory queued for manual Document Understanding",
+		"memory_id", request.MemoryId.String(), "attempt_id", attempt.ID.String())
+	return api.RebuildMemory202JSONResponse{
+		Body:    body,
+		Headers: api.RebuildMemory202ResponseHeaders{CacheControl: &noStore},
+	}, nil
+}
+
+func (h *Handler) GetRebuildStatus(
+	ctx context.Context,
+	request api.GetRebuildStatusRequestObject,
+) (api.GetRebuildStatusResponseObject, error) {
+	logger := logging.ForOperationInRequest(h.logger, "GetRebuildStatus", ctx)
+	logger.DebugContext(ctx, "Polling Rebuild status", "rebuild_id", request.RebuildId.String())
+	if h.understanding != nil {
+		if attempt, ok := h.understanding.Snapshot(request.RebuildId); ok {
+			noStore := "no-store"
+			return api.GetRebuildStatus200JSONResponse{
+				Body: understandingAttemptStatus(attempt),
+				Headers: api.GetRebuildStatus200ResponseHeaders{
+					CacheControl: &noStore,
+				},
+			}, nil
+		}
+	}
+	noStore := "no-store"
+	return api.GetRebuildStatus404JSONResponse{
+		Body:    notFoundError(),
+		Headers: api.GetRebuildStatus404ResponseHeaders{CacheControl: &noStore},
+	}, nil
+}
+
+func understandingStatusURL(attempt vault.UnderstandingAttempt) string {
+	return api.ServerUrlLocalMemorydServer + "/rebuild-status/" + attempt.ID.String()
+}
+
+func understandingAttemptStatus(attempt vault.UnderstandingAttempt) api.RebuildStatus {
+	return api.RebuildStatus{
+		MemoryId: attempt.MemoryID, Attempt: understandingAttempt(attempt),
+		StatusUrl: understandingStatusURL(attempt),
+	}
+}
+
+func understandingAttempt(attempt vault.UnderstandingAttempt) api.UnderstandingAttempt {
+	result := api.UnderstandingAttempt{
+		Id: attempt.ID, PluginId: attempt.PluginID,
+		Status: api.UnderstandingAttemptState(attempt.Status), QueuedAt: attempt.QueuedAt,
+		StartedAt: attempt.StartedAt, CompletedAt: attempt.CompletedAt, Diagnostics: nil,
+	}
+	if diagnostics := attempt.Diagnostics; diagnostics != nil {
+		result.Diagnostics = &api.UnderstandingDiagnostics{
+			Error: diagnostics.Error, Stdout: diagnostics.Stdout,
+			Stderr: diagnostics.Stderr, ExitCode: diagnostics.ExitCode,
+		}
+	}
+	return result
 }
 
 func (h *Handler) GetMemoryContent(
@@ -215,6 +334,10 @@ func (h *Handler) DeleteMemory(
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if h.understanding != nil {
+		h.understanding.Forget(request.MemoryId)
 	}
 
 	logger.InfoContext(ctx, "Memory deleted",
@@ -368,12 +491,26 @@ func (h *Handler) ImportMemory(
 		return importInternalError(ctx, logger, err), nil
 	}
 
+	if h.understanding != nil {
+		attempt, _, err := h.understanding.Enqueue(ctx, memory.ID, nil)
+		if err != nil {
+			logger.ErrorContext(ctx, "Imported Memory Understanding admission failed",
+				"memory_id", memory.ID.String(), "error", err,
+			)
+		} else {
+			logger.InfoContext(ctx, "Memory queued for Document Understanding",
+				"memory_id", memory.ID.String(), "attempt_id", attempt.ID.String(),
+				"media_type", memory.Blob.MediaType,
+			)
+		}
+	}
+
 	return api.ImportMemory201JSONResponse(memorySummary(memory)), nil
 }
 
 func importInternalError(
 	ctx context.Context,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	err error,
 ) api.ImportMemoryResponseObject {
 	logger.ErrorContext(ctx, "Memory import failed", "error", err)
@@ -456,7 +593,7 @@ func memorySummary(memory vault.Memory) api.MemorySummary {
 	}
 }
 
-func memoryDetail(memory vault.Memory) api.MemoryDetail {
+func memoryDetail(memory vault.Memory, understanding vault.UnderstandingDetails) api.MemoryDetail {
 	contentURL := api.ServerUrlLocalMemorydServer + "/memories/" + memory.ID.String() + "/content"
 	context := api.ImportContext{
 		FilesystemCreatedAt:  memory.ImportContext.FilesystemCreated,
@@ -475,7 +612,89 @@ func memoryDetail(memory vault.Memory) api.MemoryDetail {
 		Memory:        memorySummary(memory),
 		ContentUrl:    &contentURL,
 		ImportContext: context,
+		Understanding: understandingDetail(understanding),
 	}
+}
+
+func understandingDetail(details vault.UnderstandingDetails) api.UnderstandingDetails {
+	result := api.UnderstandingDetails{
+		Status:        api.UnderstandingDetailsStatus(details.Status),
+		LatestAttempt: nil,
+		ActiveRun:     nil,
+		UserNote:      details.UserNote,
+	}
+
+	if attempt := details.Attempt; attempt != nil {
+		snapshot := understandingAttempt(*attempt)
+		result.LatestAttempt = &snapshot
+	}
+	if run := details.ActiveRun; run != nil {
+		var statistics *api.Statistics
+		if run.Statistics != nil {
+			statistics = &api.Statistics{}
+			if usage := run.Statistics.Usage; usage != nil {
+				statistics.Usage = &api.TokenUsage{
+					InputTokens:           usage.InputTokens,
+					CachedInputTokens:     usage.CachedInputTokens,
+					CacheWriteInputTokens: usage.CacheWriteInputTokens,
+					OutputTokens:          usage.OutputTokens,
+					ReasoningOutputTokens: usage.ReasoningOutputTokens,
+					TotalTokens:           usage.TotalTokens,
+				}
+			}
+		}
+		var costEstimate *api.CostEstimate
+		if estimate := run.CostEstimate; estimate != nil {
+			var pricingDate, pricingURL *string
+			if estimate.PricingDate != "" {
+				pricingDate = &estimate.PricingDate
+			}
+			if estimate.PricingURL != "" {
+				pricingURL = &estimate.PricingURL
+			}
+			costEstimate = &api.CostEstimate{
+				AmountUsd:   estimate.AmountUSD,
+				Basis:       estimate.Basis,
+				PricingDate: pricingDate,
+				PricingUrl:  pricingURL,
+			}
+		}
+		artifacts := make([]api.DerivedContent, 0, len(run.Artifacts))
+
+		for _, artifact := range run.Artifacts {
+			var provenance, scope any
+			if artifact.Provenance != nil {
+				provenance = artifact.Provenance
+			}
+			if artifact.Scope != nil {
+				scope = artifact.Scope
+			}
+			artifacts = append(artifacts, api.DerivedContent{
+				Id:          artifact.ID,
+				BlobHash:    artifact.Blob.Ref.String(),
+				ByteSize:    artifact.Blob.ByteSize,
+				ContentType: artifact.Blob.MediaType,
+				Content:     artifact.Content,
+				Provenance:  provenance,
+				Scope:       scope,
+			})
+		}
+		result.ActiveRun = &api.UnderstandingRun{
+			Id:            run.ID,
+			AttemptId:     run.AttemptID,
+			PluginId:      run.PluginID,
+			PluginVersion: run.PluginVersion,
+			SourceBlobref: run.SourceBlobref.String(),
+			CreatedAt:     run.CreatedAt,
+			CompletedAt:   run.CompletedAt,
+			Warnings:      run.Warnings,
+			Statistics:    statistics,
+			CostEstimate:  costEstimate,
+			UserNote:      run.UserNote,
+			Artifacts:     artifacts,
+		}
+	}
+	return result
 }
 
 func notFoundError() api.Error {

@@ -134,6 +134,12 @@ A crash can leave unreachable immutable objects or a projection that lags CAS, b
 
 Because the MVP has one server writer, memoryd could initially require a single linear revision chain per Memory. A future multi-device writer would force explicit fork and merge semantics and should not be implied by this simplified design.
 
+### Bounded understanding prototype
+
+After the SQLite-authoritative [plugin pipeline](../understanding-plugin-v2.md) is implemented, try this storage direction in a separate prototype. Memoryd would validate a plugin result, store each artifact as a derived Blob, then store a normalized `UnderstandingRun/v1` Blob with artifact content replaced by blobrefs. Retaining the original inline plugin response as another Blob is unnecessary unless an audit need emerges.
+
+Run Blobs alone cannot tell a rebuilder which ones were committed or active. Publish a small, durable per-Memory revision reference outside SQLite as the final commit marker. A crash before that publication leaves ignorable orphan Blobs; a crash after it leaves a SQLite projection to catch up. Prototype acceptance is rebuilding the understanding tables and search projection from those references, while retaining the current SQLite `memories` table, and comparing active Runs and per-artifact provenance. Rebuilding *all* of SQLite still requires authoritative Memory manifests at import.
+
 ### Schema evolution
 
 Every authoritative record requires a stable, canonical encoding and an explicit version. Readers must continue to understand old versions or migrate by appending newer records; rewriting an old content-addressed object changes its identity. The format must define normalization details such as time encoding, numeric representation, absent versus null values, Fact types/cardinality, and deterministic hashing.
@@ -187,11 +193,9 @@ The exact interface will evolve, but the architectural constraint is useful now:
 
 ## Recommendation and decision status
 
-Continue with the current SQLite-authoritative metadata plus filesystem-CAS architecture through the grilling session and MVP design. Do not silently introduce immutable metadata records into implementation work yet.
+Implement the proposed plugin pipeline with the current SQLite-authoritative architecture first. Then run the bounded understanding prototype above separately. Do not migrate the main storage architecture until the prototype demonstrates rebuildability and the trade-off is recorded in an ADR.
 
-Return to Perkeep-lite before the persistence layer becomes expensive to migrate—ideally when defining the concrete SQLite schema, CAS layout, backup contract, or first multi-device roadmap. At that point, prototype canonical record encoding and the delete-SQLite/rebuild acceptance test before accepting an ADR.
-
-**Decision status:** Perkeep-lite is a favored research direction only. It is neither the current memoryd architecture nor an accepted architectural decision.
+**Decision status:** A separate prototype is planned after the plugin pipeline; Perkeep-lite is not the current architecture or an accepted storage decision.
 
 ## Primary sources
 

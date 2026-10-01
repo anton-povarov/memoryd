@@ -41,7 +41,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -53,6 +54,7 @@ a {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 label:has(input:focus-visible) {
   outline: 3px solid rgb(231 91 63 / 25%);
   outline-offset: 2px;
@@ -174,15 +176,7 @@ label:has(input:focus-visible) {
   font-size: 13px;
   font-weight: 720;
   text-decoration: none;
-  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
-}
-
-.button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.button:active:not(:disabled) {
-  transform: translateY(0);
+  transition: background 160ms ease, box-shadow 160ms ease;
 }
 
 .button:disabled {
@@ -360,18 +354,21 @@ p {
   background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
 .memory-row:hover {
   background: rgb(255 254 250 / 60%);
-  transform: translateX(2px);
 }
 
 .memory-row.is-selected {
   border-color: #ddd6ca;
   background: var(--color-white);
   box-shadow: var(--shadow-card);
+}
+
+.memory-row.is-selected:hover {
+  background: var(--color-paper-deep);
 }
 
 .file-icon,
@@ -641,6 +638,7 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .detail-header h2 {
@@ -1231,7 +1229,8 @@ p {
   line-height: 1.5;
 }
 
-.import-message.is-duplicate {
+.import-message.is-duplicate,
+.understanding-warnings {
   color: #6b5431;
   background: #f3e8cf;
 }
@@ -1310,6 +1309,257 @@ p {
   from { opacity: 0; transform: translateY(7px); }
 }
 
+.understanding-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+  border-right: 1px solid var(--color-line);
+}
+
+#understanding-status {
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.rebuild-split .button {
+  border: 1px solid var(--color-line);
+  color: var(--color-ink);
+  background: var(--color-white);
+}
+
+.rebuild-split .button:hover:not(:disabled) {
+  background: var(--color-paper);
+}
+
+.rebuild-split {
+  display: inline-flex;
+}
+
+#refresh-understanding {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+#rebuild-note-toggle {
+  width: 42px;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+#rebuild-note-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-medium);
+  color: var(--color-ink);
+  background: var(--color-white);
+  box-shadow: var(--shadow-card);
+}
+
+#rebuild-note-form {
+  display: grid;
+  gap: 10px;
+}
+
+#rebuild-note-form label {
+  font-weight: 700;
+}
+
+#rebuild-user-note {
+  width: 100%;
+  min-height: 144px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+#rebuild-note-help {
+  margin: 0;
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+
+.detail-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.detail-tabs [aria-pressed="true"] {
+  color: white;
+  background: var(--color-ink);
+}
+
+.detail-tabs .button:hover:not(:disabled) {
+  background: var(--color-paper-deep);
+}
+
+.detail-tabs [aria-pressed="true"]:hover:not(:disabled) {
+  background: #343a32;
+}
+
+#original-panel[hidden],
+#understanding-panel[hidden] {
+  display: none !important;
+}
+
+#understanding-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.understanding-reading,
+.understanding-sidebar {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.understanding-reading {
+  padding: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-large);
+  background: var(--color-white);
+}
+
+.understanding-warnings {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-left: 3px solid #c6a858;
+  border-radius: 10px;
+}
+
+.understanding-warnings h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.understanding-warnings ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+#understanding-completion {
+  margin-bottom: 20px;
+}
+
+#understanding-sections button {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--color-ink-soft);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+#understanding-sections button:hover {
+  background: var(--color-paper);
+}
+
+#understanding-sections button[aria-pressed="true"] {
+  border-color: var(--color-line);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-weight: 700;
+}
+
+#understanding-panel details {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+#understanding-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+#understanding-panel pre {
+  max-width: 100%;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: rgb(0 0 0 / 3%);
+  font-size: 12px;
+}
+
+.artifact-markdown {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.artifact-markdown h1,
+.artifact-markdown h2,
+.artifact-markdown h3 {
+  margin: 16px 0 8px;
+  line-height: 1.25;
+}
+
+.artifact-markdown p,
+.artifact-markdown ul,
+.artifact-markdown ol {
+  margin: 12px 0;
+}
+
+.artifact-markdown ul,
+.artifact-markdown ol {
+  padding-left: 24px;
+}
+
+.artifact-markdown table {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.artifact-markdown th,
+.artifact-markdown td {
+  padding: 6px 12px;
+  border: 1px solid var(--color-line);
+}
+
+.artifact-markdown pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+#understanding-refresh-error {
+  margin-bottom: 12px;
+  color: #9c3e32;
+  overflow-wrap: anywhere;
+}
+
 @media (min-width: 681px) {
   .workspace {
     height: calc(100vh - 76px);
@@ -1355,6 +1605,13 @@ p {
   .detail-grid {
     min-height: 0;
     flex: 1;
+  }
+
+  #understanding-panel {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .preview-card {

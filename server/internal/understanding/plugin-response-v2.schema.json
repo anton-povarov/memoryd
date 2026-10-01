@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["protocol_version", "artifacts"],
+  "properties": {
+    "protocol_version": {"type": "integer", "const": 2},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["content_type", "content"],
+        "properties": {
+          "content_type": {"type": "string", "minLength": 1},
+          "content": {"type": "string"}
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input_tokens": {"$ref": "#/$defs/token_count"},
+            "cached_input_tokens": {"$ref": "#/$defs/token_count"},
+            "cache_write_input_tokens": {"$ref": "#/$defs/token_count"},
+            "output_tokens": {"$ref": "#/$defs/token_count"},
+            "reasoning_output_tokens": {"$ref": "#/$defs/token_count"},
+            "total_tokens": {"$ref": "#/$defs/token_count"}
+          }
+        }
+      }
+    },
+    "cost_estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount_usd", "basis"],
+      "properties": {
+        "amount_usd": {"type": "number", "minimum": 0},
+        "basis": {"type": "string", "minLength": 1},
+        "pricing_date": {"type": "string"},
+        "pricing_url": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "token_count": {"type": "integer", "minimum": 0}
+  }
+}

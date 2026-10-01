@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -22,19 +25,23 @@ import (
 const requestIDHeader = "X-Request-ID"
 
 type Server struct {
-	config     config.ServerConfig
-	httpServer *http.Server
-	logger     *slog.Logger
+	config        config.ServerConfig
+	httpServer    *http.Server
+	logger        *logging.Logger
+	understanding *understandingWorker
 }
 
 func New(
 	version string,
 	cfg config.Config,
-	logger *slog.Logger,
+	logger *logging.Logger,
 	memoryVault *vault.Vault,
 ) (*Server, error) {
 	if logger == nil {
 		panic("server.New: must provide a logger")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	httpLogger := logger.With(logging.System("http"))
@@ -96,7 +103,7 @@ func New(
 	)
 
 	api.HandlerFromMuxWithBaseURL(
-		strictHandler,
+		rebuildRequestValidator{ServerInterface: strictHandler},
 		mux,
 		api.ServerUrlLocalMemorydServer,
 	)
@@ -111,12 +118,46 @@ func New(
 	httpServer.Handler = handler
 	httpServer.ErrorLog = slog.NewLogLogger(
 		logging.ForOperation(httpLogger, "ServeHTTP").Handler(), slog.LevelError)
+	worker, err := newUnderstandingWorker(
+		memoryVault, cfg.Understanding, cfg.Models.DocumentUnderstanding, logger,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+	httpHandler.understanding = worker
 
 	return &Server{
-		config:     cfg.Server,
-		httpServer: httpServer,
-		logger:     httpLogger,
+		config:        cfg.Server,
+		httpServer:    httpServer,
+		logger:        httpLogger,
+		understanding: worker,
 	}, nil
+}
+
+// Validate the complete optional body before the generated decoder can admit work.
+type rebuildRequestValidator struct {
+	api.ServerInterface
+}
+
+func (handler rebuildRequestValidator) RebuildMemory(
+	w http.ResponseWriter,
+	r *http.Request,
+	memoryID api.MemoryId,
+) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "can't read JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(bytes.TrimSpace(body)) != 0 && !json.Valid(body) {
+		http.Error(w, "can't decode JSON body: malformed JSON", http.StatusBadRequest)
+		return
+	}
+	if len(body) != 0 {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	handler.ServerInterface.RebuildMemory(w, r, memoryID)
 }
 
 // Handler exposes the complete HTTP surface for black-box tests and embedding.
@@ -124,9 +165,18 @@ func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
+// Close stops background understanding and HTTP serving before the Vault closes.
+// Run calls this automatically; embedders using Handler must call it themselves.
+func (s *Server) Close() error {
+	s.understanding.Close()
+	return s.httpServer.Close()
+}
+
 // Run serves until ctx is cancelled or the listener fails. Cancellation starts
 // graceful shutdown and bounds request draining by the configured timeout.
 func (s *Server) Run(ctx context.Context) error {
+	defer func() { _ = s.Close() }()
+
 	logger := logging.ForOperation(s.logger, "Run")
 	errorsFromServer := make(chan error, 1)
 	go func() {
@@ -194,8 +244,8 @@ const (
 	ansiRed    = "\x1b[31m"
 )
 
-func debugColoredString(logger *slog.Logger, msg string, color string) string {
-	if logging.IsDevelopment(logger) {
+func debugColoredString(logger *logging.Logger, msg string, color string) string {
+	if logger.IsDevelopment() {
 		return fmt.Sprintf("%s%s%s", color, msg, ansiReset)
 	}
 	return msg
@@ -210,7 +260,7 @@ func responseLogLevel(response *responseRecorder) slog.Level {
 	return slog.LevelInfo
 }
 
-func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) http.Handler {
+func apiRequestMiddleware(logger, apiLogger *logging.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
 
@@ -264,13 +314,13 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 						slog.Int("status", http.StatusInternalServerError))
 				}
 
-				message := ""
-				level := responseLogLevel(response)
+				level := slog.LevelInfo
 				color := ansiGreen
-				if level > slog.LevelInfo {
+				if rctx.Err != nil {
+					level = responseLogLevel(response)
 					color = ansiRed
 				}
-				message = debugColoredString(requestLogger, "<< API request completed", color)
+				message := debugColoredString(requestLogger, "<< API request completed", color)
 
 				requestLogger.LogAttrs(r.Context(),
 					level,
@@ -309,7 +359,7 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 
 			// very short logging if everything is ok in developer mode
 			// don't want to flood the log with unimportant stuff
-			if logging.IsDevelopment(staticLogger) && response.status < http.StatusBadRequest {
+			if staticLogger.IsDevelopment() && response.status < http.StatusBadRequest {
 				staticLogger.DebugContext(r.Context(),
 					fmt.Sprintf("HTTP static asset: %d %s", response.status, r.URL.Path))
 			} else {
@@ -333,7 +383,7 @@ func apiRequestMiddleware(logger, apiLogger *slog.Logger, next http.Handler) htt
 	})
 }
 
-func panicRecoveryMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func panicRecoveryMiddleware(logger *logging.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {

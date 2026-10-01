@@ -44,6 +44,82 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for UnderstandingAttemptState.
+const (
+	UnderstandingAttemptStateDone    UnderstandingAttemptState = "done"
+	UnderstandingAttemptStateFailed  UnderstandingAttemptState = "failed"
+	UnderstandingAttemptStateQueued  UnderstandingAttemptState = "queued"
+	UnderstandingAttemptStateRunning UnderstandingAttemptState = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingAttemptState enum.
+func (e UnderstandingAttemptState) Valid() bool {
+	switch e {
+	case UnderstandingAttemptStateDone:
+		return true
+	case UnderstandingAttemptStateFailed:
+		return true
+	case UnderstandingAttemptStateQueued:
+		return true
+	case UnderstandingAttemptStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UnderstandingDetailsStatus.
+const (
+	UnderstandingDetailsStatusDone       UnderstandingDetailsStatus = "done"
+	UnderstandingDetailsStatusFailed     UnderstandingDetailsStatus = "failed"
+	UnderstandingDetailsStatusNotStarted UnderstandingDetailsStatus = "not_started"
+	UnderstandingDetailsStatusQueued     UnderstandingDetailsStatus = "queued"
+	UnderstandingDetailsStatusRunning    UnderstandingDetailsStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the UnderstandingDetailsStatus enum.
+func (e UnderstandingDetailsStatus) Valid() bool {
+	switch e {
+	case UnderstandingDetailsStatusDone:
+		return true
+	case UnderstandingDetailsStatusFailed:
+		return true
+	case UnderstandingDetailsStatusNotStarted:
+		return true
+	case UnderstandingDetailsStatusQueued:
+		return true
+	case UnderstandingDetailsStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// CostEstimate defines model for CostEstimate.
+type CostEstimate struct {
+	AmountUsd   float64 `json:"amount_usd"`
+	Basis       string  `json:"basis"`
+	PricingDate *string `json:"pricing_date,omitempty"`
+	PricingUrl  *string `json:"pricing_url,omitempty"`
+}
+
+// DerivedContent Independent text artifact belonging to its containing Run.
+type DerivedContent struct {
+	BlobHash string `json:"blob_hash"`
+	ByteSize int64  `json:"byte_size"`
+
+	// Content Literal UTF-8 text content.
+	Content     string             `json:"content"`
+	ContentType string             `json:"content_type"`
+	Id          openapi_types.UUID `json:"id"`
+
+	// Provenance Optional opaque plugin-defined JSON metadata.
+	Provenance interface{} `json:"provenance,omitempty"`
+
+	// Scope Optional opaque plugin-defined JSON metadata.
+	Scope interface{} `json:"scope,omitempty"`
+}
+
 // DuplicateMemory defines model for DuplicateMemory.
 type DuplicateMemory struct {
 	Id openapi_types.UUID `json:"id"`
@@ -107,8 +183,9 @@ type MemoryDetail struct {
 	ContentUrl *string `json:"content_url,omitempty"`
 
 	// ImportContext Stored provenance from the first successful import.
-	ImportContext ImportContext `json:"import_context"`
-	Memory        MemorySummary `json:"memory"`
+	ImportContext ImportContext        `json:"import_context"`
+	Memory        MemorySummary        `json:"memory"`
+	Understanding UnderstandingDetails `json:"understanding"`
 }
 
 // MemoryPage defines model for MemoryPage.
@@ -130,6 +207,101 @@ type MemorySummary struct {
 	OriginalModifiedAt *time.Time         `json:"original_modified_at,omitempty"`
 }
 
+// RebuildRequest defines model for RebuildRequest.
+type RebuildRequest struct {
+	// UserNote Optional owner guidance; null reuses the saved note, empty string clears it.
+	UserNote *string `json:"user_note,omitempty"`
+}
+
+// RebuildStatus defines model for RebuildStatus.
+type RebuildStatus struct {
+	Attempt   UnderstandingAttempt `json:"attempt"`
+	MemoryId  openapi_types.UUID   `json:"memory_id"`
+	StatusUrl string               `json:"status_url"`
+}
+
+// Statistics defines model for Statistics.
+type Statistics struct {
+	Usage *TokenUsage `json:"usage,omitempty"`
+}
+
+// TokenUsage defines model for TokenUsage.
+type TokenUsage struct {
+	CacheWriteInputTokens *int64 `json:"cache_write_input_tokens,omitempty"`
+	CachedInputTokens     *int64 `json:"cached_input_tokens,omitempty"`
+	InputTokens           *int64 `json:"input_tokens,omitempty"`
+	OutputTokens          *int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens *int64 `json:"reasoning_output_tokens,omitempty"`
+	TotalTokens           *int64 `json:"total_tokens,omitempty"`
+}
+
+// UnderstandingAttempt defines model for UnderstandingAttempt.
+type UnderstandingAttempt struct {
+	CompletedAt *time.Time                `json:"completed_at,omitempty"`
+	Diagnostics *UnderstandingDiagnostics `json:"diagnostics,omitempty"`
+	Id          openapi_types.UUID        `json:"id"`
+
+	// PluginId Configured plugin ID; empty when no plugin is selected.
+	PluginId  string                    `json:"plugin_id"`
+	QueuedAt  time.Time                 `json:"queued_at"`
+	StartedAt *time.Time                `json:"started_at,omitempty"`
+	Status    UnderstandingAttemptState `json:"status"`
+}
+
+// UnderstandingAttemptState defines model for UnderstandingAttemptState.
+type UnderstandingAttemptState string
+
+// UnderstandingDetails defines model for UnderstandingDetails.
+type UnderstandingDetails struct {
+	// ActiveRun The last complete successful Run; failed attempts do not replace it.
+	ActiveRun     *UnderstandingRun          `json:"active_run"`
+	LatestAttempt *UnderstandingAttempt      `json:"latest_attempt"`
+	Status        UnderstandingDetailsStatus `json:"status"`
+
+	// StatusUrl Process-local polling URL; absent for durable history after restart.
+	StatusUrl *string `json:"status_url,omitempty"`
+
+	// UserNote Latest saved owner guidance for this Memory; empty when absent or cleared.
+	UserNote string `json:"user_note"`
+}
+
+// UnderstandingDetailsStatus defines model for UnderstandingDetails.Status.
+type UnderstandingDetailsStatus string
+
+// UnderstandingDiagnostics defines model for UnderstandingDiagnostics.
+type UnderstandingDiagnostics struct {
+	Error    string `json:"error"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+
+	// Stderr Captured plugin diagnostics; may contain private source content.
+	Stderr string `json:"stderr"`
+
+	// Stdout Captured plugin stdout, including invalid protocol output.
+	Stdout string `json:"stdout"`
+}
+
+// UnderstandingRun defines model for UnderstandingRun.
+type UnderstandingRun struct {
+	Artifacts   []DerivedContent   `json:"artifacts"`
+	AttemptId   openapi_types.UUID `json:"attempt_id"`
+	CompletedAt time.Time          `json:"completed_at"`
+
+	// CostEstimate Optional API-equivalent estimate, not subscription charges.
+	CostEstimate  *CostEstimate      `json:"cost_estimate,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"`
+	Id            openapi_types.UUID `json:"id"`
+	PluginId      string             `json:"plugin_id"`
+	PluginVersion string             `json:"plugin_version"`
+	SourceBlobref string             `json:"source_blobref"`
+
+	// Statistics Optional plugin-reported Run totals.
+	Statistics *Statistics `json:"statistics,omitempty"`
+
+	// UserNote Owner guidance captured by this successful Run; empty when absent.
+	UserNote string   `json:"user_note"`
+	Warnings []string `json:"warnings"`
+}
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -147,6 +319,9 @@ type BrowseMemoriesParams struct {
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
 type ImportMemoryMultipartRequestBody = ImportMultipart
+
+// RebuildMemoryJSONRequestBody defines body for RebuildMemory for application/json ContentType.
+type RebuildMemoryJSONRequestBody = RebuildRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -168,9 +343,15 @@ type ServerInterface interface {
 	// GetMemoryContent Download and verify a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
+	// RebuildMemory Request a Memory Rebuild
+	// (POST /memories/{memoryId}/rebuild)
+	RebuildMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
 	// GetReadiness Check whether the server can accept requests
 	// (GET /readyz)
 	GetReadiness(w http.ResponseWriter, r *http.Request)
+	// GetRebuildStatus Poll a retained process-local Rebuild
+	// (GET /rebuild-status/{rebuildId})
+	GetRebuildStatus(w http.ResponseWriter, r *http.Request, rebuildId openapi_types.UUID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -334,11 +515,63 @@ func (siw *ServerInterfaceWrapper) GetMemoryContent(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// RebuildMemory operation middleware
+func (siw *ServerInterfaceWrapper) RebuildMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "memoryId" -------------
+	var memoryId MemoryId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "memoryId", r.PathValue("memoryId"), &memoryId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "memoryId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RebuildMemory(w, r, memoryId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReadiness operation middleware
 func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetReadiness(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRebuildStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetRebuildStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "rebuildId" -------------
+	var rebuildId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rebuildId", r.PathValue("rebuildId"), &rebuildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rebuildId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRebuildStatus(w, r, rebuildId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -473,6 +706,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories", wrapper.BrowseMemories)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/memories/{memoryId}", wrapper.DeleteMemory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}", wrapper.GetMemory)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/{memoryId}/rebuild", wrapper.RebuildMemory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/rebuild-status/{rebuildId}", wrapper.GetRebuildStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}/content", wrapper.GetMemoryContent)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/import", wrapper.ImportMemory)
 
@@ -763,6 +998,102 @@ func (response GetMemoryContent507JSONResponse) VisitGetMemoryContentResponse(w 
 	return err
 }
 
+type RebuildMemoryRequestObject struct {
+	MemoryId MemoryId `json:"memoryId"`
+	Body     *RebuildMemoryJSONRequestBody
+}
+
+type RebuildMemoryResponseObject interface {
+	VisitRebuildMemoryResponse(w http.ResponseWriter) error
+}
+
+type RebuildMemory202ResponseHeaders struct {
+	CacheControl *string
+}
+
+type RebuildMemory202JSONResponse struct {
+	Body    RebuildStatus
+	Headers RebuildMemory202ResponseHeaders
+}
+
+func (response RebuildMemory202JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory400TextResponse string
+
+func (response RebuildMemory400TextResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(400)
+
+	_, err := w.Write([]byte(fmt.Sprint(response)))
+	return err
+}
+
+type RebuildMemory404JSONResponse Error
+
+func (response RebuildMemory404JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory409ResponseHeaders struct {
+	CacheControl *string
+}
+
+type RebuildMemory409JSONResponse struct {
+	Body    RebuildStatus
+	Headers RebuildMemory409ResponseHeaders
+}
+
+func (response RebuildMemory409JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RebuildMemory503JSONResponse Error
+
+func (response RebuildMemory503JSONResponse) VisitRebuildMemoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetReadinessRequestObject struct {
 }
 
@@ -780,6 +1111,62 @@ func (response GetReadiness200JSONResponse) VisitGetReadinessResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRebuildStatusRequestObject struct {
+	RebuildId openapi_types.UUID `json:"rebuildId"`
+}
+
+type GetRebuildStatusResponseObject interface {
+	VisitGetRebuildStatusResponse(w http.ResponseWriter) error
+}
+
+type GetRebuildStatus200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetRebuildStatus200JSONResponse struct {
+	Body    RebuildStatus
+	Headers GetRebuildStatus200ResponseHeaders
+}
+
+func (response GetRebuildStatus200JSONResponse) VisitGetRebuildStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRebuildStatus404ResponseHeaders struct {
+	CacheControl *string
+}
+
+type GetRebuildStatus404JSONResponse struct {
+	Body    Error
+	Headers GetRebuildStatus404ResponseHeaders
+}
+
+func (response GetRebuildStatus404JSONResponse) VisitGetRebuildStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -804,9 +1191,15 @@ type StrictServerInterface interface {
 	// GetMemoryContent Download and verify a Memory's immutable Blob
 	// (GET /memories/{memoryId}/content)
 	GetMemoryContent(ctx context.Context, request GetMemoryContentRequestObject) (GetMemoryContentResponseObject, error)
+	// RebuildMemory Request a Memory Rebuild
+	// (POST /memories/{memoryId}/rebuild)
+	RebuildMemory(ctx context.Context, request RebuildMemoryRequestObject) (RebuildMemoryResponseObject, error)
 	// GetReadiness Check whether the server can accept requests
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
+	// GetRebuildStatus Poll a retained process-local Rebuild
+	// (GET /rebuild-status/{rebuildId})
+	GetRebuildStatus(ctx context.Context, request GetRebuildStatusRequestObject) (GetRebuildStatusResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1007,6 +1400,42 @@ func (sh *strictHandler) GetMemoryContent(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// RebuildMemory operation middleware
+func (sh *strictHandler) RebuildMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId) {
+	var request RebuildMemoryRequestObject
+
+	request.MemoryId = memoryId
+
+	var body RebuildMemoryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RebuildMemory(ctx, request.(RebuildMemoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RebuildMemory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RebuildMemoryResponseObject); ok {
+		if err := validResponse.VisitRebuildMemoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetReadiness operation middleware
 func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	var request GetReadinessRequestObject
@@ -1031,48 +1460,98 @@ func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetRebuildStatus operation middleware
+func (sh *strictHandler) GetRebuildStatus(w http.ResponseWriter, r *http.Request, rebuildId openapi_types.UUID) {
+	var request GetRebuildStatusRequestObject
+
+	request.RebuildId = rebuildId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRebuildStatus(ctx, request.(GetRebuildStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRebuildStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRebuildStatusResponseObject); ok {
+		if err := validResponse.VisitGetRebuildStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"rjb/HwA=",
+	"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",
+	"xAe58RK3FXXRYrdp/U19ve3V9t8DAA==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

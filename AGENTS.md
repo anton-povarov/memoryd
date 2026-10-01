@@ -18,7 +18,7 @@ To regenerate code from the OpenAPI specification, run `dev-generate-openapi.sh`
 
 ## Agents
 
-### Code Exploration
+### Exploration
 
 Use the `code-explorer` subagent when exploration requires reading multiple
 files, tracing behavior across components, or investigating an independent

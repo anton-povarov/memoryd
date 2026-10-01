@@ -29,6 +29,64 @@ func TestDefaultsAreSafe(t *testing.T) {
 	}
 }
 
+func TestParseRejectsInvalidUnderstandingPlugins(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "zero worker limit",
+			yaml: "understanding:\n  max_concurrent: 0\n",
+			want: "max_concurrent",
+		},
+		{
+			name: "noncanonical media type",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [Application/PDF]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "media type missing subtype",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [pdf]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "media type parameters",
+			yaml: "understanding:\n  plugins:\n    pdf:\n      command: [/opt/pdf]\n      media_types: [application/pdf; charset=utf-8]\n",
+			want: "canonical Media Type",
+		},
+		{
+			name: "overlapping media types",
+			yaml: "understanding:\n  plugins:\n    first:\n      command: [/opt/first]\n      media_types: [application/pdf]\n    second:\n      command: [/opt/second]\n      media_types: [application/pdf]\n",
+			want: "configured by both plugins",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse([]byte(test.yaml))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Parse error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestParseRejectsUnsafeDocumentUnderstandingModelCommand(t *testing.T) {
+	_, err := Parse([]byte(`models:
+  document_understanding:
+    provider: codex_app_server
+    name: configured-model
+    reasoning_effort: medium
+    command: [/opt/codex, app-server, --stdio, --token, secret]
+`))
+
+	if err == nil || !strings.Contains(err.Error(), "models.document_understanding") {
+		t.Fatalf(
+			"unsafe model command accepted or error did not identify model configuration: %v",
+			err,
+		)
+	}
+}
+
 func TestLoadAppliesValuesAndDerivedPaths(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memoryd.yaml")
 	contents := `server:

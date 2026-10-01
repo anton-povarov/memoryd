@@ -44,7 +44,7 @@ Available Fact value types are: number, string, datetime (more can be added over
 _Avoid_: Attribute, property, tag
 
 **Document Understanding**:
-The process of interpreting a Memory from its Blob and available Import Context, producing Derived Content and asserting Facts. It applies to anything memoryd can import and may use deterministic tools, models, or other means.
+The process of interpreting a Memory from its Blob and available Import Context, potentially producing Derived Content and asserting Facts. It applies to anything memoryd can import and may use deterministic tools, models, or other means.
 _Avoid_: General Extraction, Specialized Enrichment
 
 **Duplicate**:
@@ -64,7 +64,7 @@ Content present in storage that no committed Memory references, normally because
 _Avoid_: Failed Memory, partially understood Memory
 
 **Understanding Plugin**:
-A versioned external component that can recognize supported Memories and contribute specialized Facts in an Understanding Run. Deferred beyond the MVP.
+A versioned external program that can recognize supported Memories and contribute Derived Content or specialized Facts to an Understanding Run.
 _Avoid_: In-process parser, file handler
 
 **Model Task Category**:

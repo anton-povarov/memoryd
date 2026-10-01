@@ -4,8 +4,14 @@
 .DS_Store
 .scratch
 
+# local Python plugin environments and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
 
 # all sort of content used for local testing
 *.pdf
+!plugins/pdf-text/testdata/sample.pdf
 *.jpg
 *.jpeg

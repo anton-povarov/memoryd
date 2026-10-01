@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+plugin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec uv run --locked --no-dev --project "$plugin_dir" python "$plugin_dir/plugin.py"
