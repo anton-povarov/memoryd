@@ -361,11 +361,13 @@ func apiRequestMiddleware(logger, apiLogger *logging.Logger, next http.Handler) 
 			// don't want to flood the log with unimportant stuff
 			if staticLogger.IsDevelopment() && response.status < http.StatusBadRequest {
 				staticLogger.DebugContext(r.Context(),
-					fmt.Sprintf("HTTP static asset: %d %s", response.status, r.URL.Path))
+					fmt.Sprintf("HTTP non-API request: %d %s", response.status, r.URL.Path))
 			} else {
 				// production logging or error response from the `next` handler
 				attrs := []slog.Attr{
+					slog.String("method", r.Method),
 					slog.String("path", r.URL.Path),
+					slog.String("remote_address", r.RemoteAddr),
 					slog.Int("status", response.status),
 					slog.Int64("content_length", response.contentLength),
 					slog.Duration("latency", time.Since(startedAt)),
@@ -376,7 +378,7 @@ func apiRequestMiddleware(logger, apiLogger *logging.Logger, next http.Handler) 
 
 				staticLogger.LogAttrs(r.Context(),
 					level,
-					"HTTP static asset",
+					"HTTP non-API request",
 					attrs...)
 			}
 		}
