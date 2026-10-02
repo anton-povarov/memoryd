@@ -125,11 +125,16 @@ reloads Memory details for the new Run; failure keeps the prior Run. An expired
 handle reloads durable state without starting work. Failed detail reloads retry
 while visible. These reads preserve Original preview and same-Run selection.
 
-Markdown artifacts render headings, lists, and tables with exact **View source**
-access. Raw HTML and unsafe links are disabled; all images become alt text without
-automatic loads. Other content types remain literal text. Artifact **Metadata**,
-**Run details**, and failure **Diagnostics** display formatted JSON. Failed
-attempts preserve any last successful result; empty Runs show **No Derived Content**.
+Original previews with detected Media Type `text/markdown` and Markdown artifacts
+render headings, lists, and tables using the same client-side renderer. Leading
+YAML frontmatter stays in a literal block with newlines and indentation preserved;
+the body still renders as Markdown. The UI uses system fonts, with 16px Markdown
+body text and 14px monospace source and code. Artifacts also provide exact
+**View source** access. Raw HTML and unsafe links are disabled;
+all images become alt text without automatic loads. Other text previews and
+artifact content types remain literal text. Artifact **Metadata**, **Run details**,
+and failure **Diagnostics** display formatted JSON. Failed attempts preserve any
+last successful result; empty Runs show **No Derived Content**.
 Run warnings appear in an amber **Understanding warnings** notice above the
 content. Unsupported formats still complete with API status `done`.
 The CLI `mem info` JSON output is unchanged.

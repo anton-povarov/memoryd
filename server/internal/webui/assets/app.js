@@ -17,7 +17,7 @@
         renderer.renderInlineAsText(tokens[index].children, options, env),
       );
   } catch {
-    // Artifact rendering falls back to exact source if the dependency is unavailable.
+    // Markdown rendering falls back to exact source if the dependency is unavailable.
   }
 
   function renderMarkdown(content) {
@@ -25,7 +25,17 @@
     rendered.className = "artifact-markdown";
     try {
       if (!markdown) throw new Error("Markdown unavailable");
-      rendered.innerHTML = markdown.render(content);
+      const frontmatter = content.match(
+        /^(\uFEFF?---[ \t]*\r?\n(?:[^\n]*\n)*?(?:---|\.\.\.)[ \t]*)(?:\r?\n|$)/,
+      );
+      rendered.innerHTML = markdown.render(
+        frontmatter ? content.slice(frontmatter[0].length) : content,
+      );
+      if (frontmatter) {
+        const source = document.createElement("pre");
+        source.textContent = frontmatter[1];
+        rendered.prepend(source);
+      }
     } catch {
       const message = document.createElement("p");
       message.textContent = "Could not render Markdown.";
@@ -889,6 +899,12 @@
         )
           return;
         elements.previewStage.replaceChildren();
+        if (mediaType === "text/markdown") {
+          const rendered = renderMarkdown(text);
+          rendered.classList.add("text-preview");
+          elements.previewStage.append(rendered);
+          return;
+        }
         const pre = document.createElement("pre");
         pre.className = "text-preview";
         pre.textContent = text;
