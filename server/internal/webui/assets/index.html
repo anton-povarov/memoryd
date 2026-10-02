@@ -20,6 +20,9 @@
         <span>memory<span class="brand-slash">/</span>d</span>
       </a>
 
+      <form class="search-form" id="search-form">
+        <input id="search-query" type="search" placeholder="Search…" aria-label="Search memories" autocomplete="off" required>
+      </form>
       <div class="topbar-actions">
         <div class="vault-status" id="vault-status" title="Server connection status">
           <span class="status-dot"></span>
@@ -42,20 +45,6 @@
           <span class="count-badge" id="memory-count" aria-label="Memory count">—</span>
         </div>
 
-        <label class="filter-field" for="memory-filter">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="11" cy="11" r="6.5"></circle>
-            <path d="m16 16 4 4"></path>
-          </svg>
-          <input
-            id="memory-filter"
-            type="search"
-            placeholder="Filter loaded memories"
-            autocomplete="off"
-          >
-          <kbd>/</kbd>
-        </label>
-
         <div class="memory-list" id="memory-list" aria-live="polite">
           <div class="list-loading" aria-label="Loading memories">
             <span></span><span></span><span></span>
@@ -68,6 +57,13 @@
       </aside>
 
       <section class="detail-panel" id="detail-panel">
+        <section class="search-view" id="search-view" hidden>
+          <p class="search-plan" id="search-plan" aria-label="Query plan"></p>
+          <p class="search-status" id="search-status" role="status" aria-live="polite"></p>
+          <div class="search-error" id="search-error" role="alert" hidden></div>
+          <div class="search-results" id="search-results" aria-live="polite"></div>
+        </section>
+
         <div class="welcome-state" id="welcome-state">
           <div class="welcome-art" aria-hidden="true">
             <div class="paper paper-back"></div>
@@ -97,7 +93,12 @@
               <button class="back-button" id="back-to-list" type="button">
                 <span aria-hidden="true">←</span> Memories
               </button>
-              <h2 id="detail-title"></h2>
+              <div class="detail-title-row">
+                <button class="button" id="back-to-search" type="button" aria-label="Back to search results" title="Back to search results" hidden>
+                  <span aria-hidden="true">←</span>
+                </button>
+                <h2 id="detail-title"></h2>
+              </div>
               <div class="detail-pills" id="detail-pills"></div>
             </div>
             <div class="detail-actions">

@@ -277,7 +277,7 @@ func (v *Vault) initialize(ctx context.Context) error {
 	if err := v.validateSchema(ctx); err != nil {
 		return err
 	}
-	return nil
+	return v.initializeSearch(ctx)
 }
 
 func (v *Vault) validateAllBlobrefs(ctx context.Context) error {
@@ -590,7 +590,13 @@ func (v *Vault) Put(ctx context.Context, candidate Import) (Memory, error) {
 		)
 		return Memory{}, &DuplicateError{Existing: existing}
 	}
-
+	body, err := v.searchOriginalBody(memory)
+	if err != nil {
+		return Memory{}, err
+	}
+	if err := v.insertSearchMemory(durableContext, tx, memory, body); err != nil {
+		return Memory{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Memory{}, fmt.Errorf("commit Memory: %w", err)
 	}
@@ -944,11 +950,12 @@ FROM memories
 
 type rowScanner interface{ Scan(...any) error }
 
-func scanMemory(row rowScanner) (Memory, error) {
+func scanMemory(row rowScanner, extra ...any) (Memory, error) {
 	var memory Memory
 	var id, importedAt, blobHash string
 	var relativePath, fullPath, createdAt, modifiedAt sql.NullString
-	err := row.Scan(
+	destinations := make([]any, 0, 10+len(extra))
+	destinations = append(destinations,
 		&id,
 		&blobHash,
 		&memory.ImportContext.OriginalFilename,
@@ -960,6 +967,7 @@ func scanMemory(row rowScanner) (Memory, error) {
 		&memory.Blob.ByteSize,
 		&importedAt,
 	)
+	err := row.Scan(append(destinations, extra...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Memory{}, ErrMemoryNotFound
 	}

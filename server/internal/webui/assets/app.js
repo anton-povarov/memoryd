@@ -63,15 +63,26 @@
     refreshTimer: null,
     refreshing: false,
     understandingReload: false,
+    searchResponse: null,
+    searchGeneration: 0,
+    searchLoading: false,
+    searchVisible: false,
+    detailFromSearch: false,
   };
 
   const elements = {
     vaultStatus: document.querySelector("#vault-status"),
     vaultStatusLabel: document.querySelector("#vault-status-label"),
     memoryCount: document.querySelector("#memory-count"),
-    memoryFilter: document.querySelector("#memory-filter"),
+    searchForm: document.querySelector("#search-form"),
+    searchQuery: document.querySelector("#search-query"),
     memoryList: document.querySelector("#memory-list"),
     loadMore: document.querySelector("#load-more"),
+    searchView: document.querySelector("#search-view"),
+    searchPlan: document.querySelector("#search-plan"),
+    searchStatus: document.querySelector("#search-status"),
+    searchError: document.querySelector("#search-error"),
+    searchResults: document.querySelector("#search-results"),
     welcomeState: document.querySelector("#welcome-state"),
     welcomeEyebrow: document.querySelector("#welcome-eyebrow"),
     welcomeTitle: document.querySelector("#welcome-title"),
@@ -126,6 +137,7 @@
     detailHash: document.querySelector("#detail-hash"),
     copyHash: document.querySelector("#copy-hash"),
     backToList: document.querySelector("#back-to-list"),
+    backToSearch: document.querySelector("#back-to-search"),
     importDialog: document.querySelector("#import-dialog"),
     importForm: document.querySelector("#import-form"),
     closeImport: document.querySelector("#close-import"),
@@ -249,37 +261,17 @@
     return icon;
   }
 
-  function visibleMemories() {
-    const query = elements.memoryFilter.value.trim().toLocaleLowerCase();
-    if (!query) return state.memories;
-
-    return state.memories.filter((memory) => {
-      const searchable = [
-        memory.original_filename,
-        memory.media_type,
-        memory.blob_hash,
-      ]
-        .join(" ")
-        .toLocaleLowerCase();
-      return searchable.includes(query);
-    });
-  }
-
   function renderMemoryList() {
     elements.memoryList.replaceChildren();
     elements.memoryCount.textContent = state.memories.length;
-    const memories = visibleMemories();
-
-    if (memories.length === 0) {
+    if (state.memories.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty-list";
-      empty.textContent = state.memories.length
-        ? "No loaded memories match this filter."
-        : "Your Vault is quiet for now. Add a memory to begin.";
+      empty.textContent = "Your Vault is quiet for now. Add a memory to begin.";
       elements.memoryList.append(empty);
     }
 
-    for (const memory of memories) {
+    for (const memory of state.memories) {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "memory-row";
@@ -310,7 +302,153 @@
     elements.loadMore.hidden = !state.nextCursor;
   }
 
+
+  function invalidateSearch() {
+    state.searchGeneration += 1;
+    state.searchLoading = false;
+    state.searchVisible = false;
+    elements.searchView.hidden = true;
+  }
+
+  function renderSearchResponse(response) {
+    const plan = response.query_plan;
+    const query = document.createElement("p");
+    query.textContent = `Query: ${plan.query}`;
+    const terms = document.createElement("p");
+    terms.textContent = `Text terms: ${plan.terms.join(" AND ")}`;
+    elements.searchPlan.replaceChildren(query, terms);
+
+    const items = response.items || [];
+    elements.searchResults.replaceChildren();
+    for (const hit of items) {
+      const memory = hit.memory;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "search-result memory-row";
+      row.dataset.memoryID = memory.id;
+      row.append(createFileIcon(memory));
+
+      const copy = document.createElement("span");
+      copy.className = "memory-row-copy";
+      const name = document.createElement("strong");
+      const fragments = new RegExp(
+        `(?=(${[...plan.terms]
+          .sort((left, right) => right.length - left.length)
+          .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|")}))`,
+        "giu",
+      );
+      let end = 0;
+      for (const match of memory.original_filename.matchAll(fragments)) {
+        const nextEnd = match.index + match[1].length;
+        if (nextEnd <= end) continue;
+        if (match.index < end) {
+          name.lastChild.textContent += memory.original_filename.slice(end, nextEnd);
+        } else {
+          name.append(document.createTextNode(memory.original_filename.slice(end, match.index)));
+          const marked = document.createElement("mark");
+          marked.textContent = match[1];
+          name.append(marked);
+        }
+        end = nextEnd;
+      }
+      name.append(document.createTextNode(memory.original_filename.slice(end)));
+      const mediaType = document.createElement("span");
+      mediaType.textContent = displayMediaType(memory.media_type);
+      copy.append(name, mediaType);
+
+      if (hit.excerpt?.length) {
+        const excerpt = document.createElement("span");
+        excerpt.className = "search-excerpt";
+        for (const part of hit.excerpt) {
+          const text = document.createElement(part.match ? "mark" : "span");
+          text.textContent = part.text;
+          excerpt.append(text);
+        }
+        copy.append(excerpt);
+      }
+
+      row.append(copy);
+      row.addEventListener("click", () =>
+        selectMemory(memory.id, { fromSearch: true }),
+      );
+      elements.searchResults.append(row);
+    }
+
+    elements.searchStatus.textContent =
+      response.total === 0
+        ? "No memories match this query."
+        : `Showing ${items.length} of ${response.total}`;
+    elements.searchError.hidden = true;
+    elements.searchError.textContent = "";
+    elements.searchView.hidden = false;
+    state.searchVisible = true;
+    elements.detailLoading.hidden = true;
+    elements.memoryDetail.hidden = true;
+    elements.welcomeState.hidden = true;
+    elements.backToSearch.hidden = true;
+  }
+
+  async function startSearch(query) {
+    invalidateSearch();
+    stopUnderstandingRefresh();
+    revokePreviewURL();
+    state.selectedID = null;
+    state.detailFromSearch = false;
+    state.searchResponse = null;
+    state.searchVisible = true;
+    state.searchLoading = true;
+    const generation = state.searchGeneration;
+
+    elements.backToSearch.hidden = true;
+    elements.searchPlan.replaceChildren();
+    elements.searchStatus.textContent = "Searching…";
+    elements.searchError.hidden = true;
+    elements.searchError.textContent = "";
+    elements.searchResults.replaceChildren();
+    elements.searchView.hidden = false;
+    elements.welcomeState.hidden = true;
+    elements.memoryDetail.hidden = true;
+    elements.detailLoading.hidden = true;
+    if (window.innerWidth <= 680) document.body.classList.add("is-detail-open");
+
+    const params = new URLSearchParams({ query, limit: "50" });
+    try {
+      const response = await requestJSON(
+        `${apiBase}/memories/search?${params}`,
+      );
+      if (generation !== state.searchGeneration) return;
+      state.searchResponse = response;
+      state.searchLoading = false;
+      renderSearchResponse(response);
+    } catch (error) {
+      if (generation !== state.searchGeneration) return;
+      state.searchLoading = false;
+      elements.searchStatus.textContent = "";
+      elements.searchError.textContent = `Could not search memories. ${error.message}`;
+      elements.searchError.hidden = false;
+    }
+  }
+
+  function returnToSearchResults() {
+    stopUnderstandingRefresh();
+    invalidateSearch();
+    revokePreviewURL();
+    state.selectedID = null;
+    state.detailFromSearch = false;
+    renderMemoryList();
+    if (state.searchResponse) {
+      renderSearchResponse(state.searchResponse);
+    } else {
+      renderNoSelectionState();
+    }
+  }
+
   function renderNoSelectionState() {
+    state.searchVisible = false;
+    elements.searchView.hidden = true;
+    elements.backToSearch.hidden = true;
+    state.detailFromSearch = false;
     stopUnderstandingRefresh();
     const hasMemories = state.memories.length > 0;
 
@@ -352,7 +490,12 @@
       state.nextCursor = page.next_cursor || null;
       renderMemoryList();
 
-      if (!append && state.selectedID === null) {
+      if (
+        !append &&
+        state.selectedID === null &&
+        !state.searchVisible &&
+        !state.searchLoading
+      ) {
         renderNoSelectionState();
         if (state.memories.length && window.innerWidth > 680) {
           await selectMemory(state.memories[0].id, { openMobile: false });
@@ -550,12 +693,19 @@
     }
   }
 
-  async function selectMemory(memoryID, { openMobile = true } = {}) {
+  async function selectMemory(
+    memoryID,
+    { openMobile = true, fromSearch = false } = {},
+  ) {
     // ponytail: obsolete requests finish; generation guards discard them without cancellation.
+    invalidateSearch();
     stopUnderstandingRefresh();
     const generation = state.detailGeneration;
     let loaded = false;
     state.selectedID = memoryID;
+    state.detailFromSearch = fromSearch;
+    elements.searchView.hidden = true;
+    elements.backToSearch.hidden = !fromSearch;
     selectDetailTab("original");
     state.understanding = null;
     state.understandingReload = false;
@@ -587,7 +737,16 @@
       showToast(`Could not open memory. ${error.message}`);
       state.selectedID = null;
       renderMemoryList();
-      renderNoSelectionState();
+      if (fromSearch && state.searchResponse) {
+        state.detailFromSearch = false;
+        revokePreviewURL();
+        stopUnderstandingRefresh();
+        setDetailLoading(false);
+        renderSearchResponse(state.searchResponse);
+      } else {
+        state.detailFromSearch = false;
+        renderNoSelectionState();
+      }
     } finally {
       if (
         state.selectedID === memoryID &&
@@ -1246,9 +1405,11 @@
   }
 
   function showDeleteDialog() {
-    const memory = state.memories.find(
-      (entry) => entry.id === state.selectedID,
-    );
+    const memory =
+      state.memories.find((entry) => entry.id === state.selectedID) ||
+      state.searchResponse?.items.find(
+        (hit) => hit.memory.id === state.selectedID,
+      )?.memory;
     elements.deleteTitle.textContent =
       memory?.original_filename || "This memory";
     elements.deleteDialog.showModal();
@@ -1257,6 +1418,8 @@
   async function deleteSelectedMemory() {
     const memoryID = state.selectedID;
     if (!memoryID) return;
+    const deletedFromSearch = state.detailFromSearch;
+    const searchQuery = state.searchResponse?.query_plan.query;
     elements.deleteDialog.close();
     elements.deleteMemory.disabled = true;
     elements.deleteMemory.textContent = "Deleting…";
@@ -1285,7 +1448,12 @@
       renderMemoryList();
       showToast("Memory deleted.");
       if (deletedMemoryWasSelected) {
-        renderNoSelectionState();
+        if (deletedFromSearch && searchQuery !== undefined) {
+          elements.searchQuery.value = searchQuery;
+          await startSearch(searchQuery);
+        } else {
+          renderNoSelectionState();
+        }
       }
     } catch (error) {
       showToast(error.message || "Could not delete the memory.");
@@ -1341,12 +1509,24 @@
       ".understanding-reading",
     ).scrollTop = 0;
   });
-  elements.memoryFilter.addEventListener("input", renderMemoryList);
+  elements.searchForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!state.searchLoading) startSearch(elements.searchQuery.value);
+  });
+  elements.backToSearch.addEventListener("click", returnToSearchResults);
   elements.loadMore.addEventListener("click", () =>
     loadMemories({ append: true }),
   );
   elements.backToList.addEventListener("click", () => {
+    invalidateSearch();
     stopUnderstandingRefresh();
+    if (state.detailFromSearch) {
+      state.selectedID = null;
+      revokePreviewURL();
+      renderMemoryList();
+    }
+    state.detailFromSearch = false;
+    elements.backToSearch.hidden = true;
     document.body.classList.remove("is-detail-open");
   });
   elements.copyMemoryId.addEventListener("click", async () => {
@@ -1420,7 +1600,7 @@
       !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)
     ) {
       event.preventDefault();
-      elements.memoryFilter.focus();
+      elements.searchQuery.focus();
     }
   });
 

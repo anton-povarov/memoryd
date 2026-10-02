@@ -408,6 +408,33 @@ func List(
 	return encoder.Encode(items)
 }
 
+func Search(ctx context.Context, serverURL, query string, count int64, stdout io.Writer) error {
+	client, err := api.NewClient(apiBaseURL(serverURL))
+	if err != nil {
+		return fmt.Errorf("create memoryd client: %w", err)
+	}
+	response, err := client.SearchMemories(ctx, &api.SearchMemoriesParams{
+		Query: query, Limit: &count,
+	})
+	if err != nil {
+		return fmt.Errorf("search Memories: %w", err)
+	}
+	defer response.Body.Close()
+	parsed, err := api.ParseSearchMemoriesResponse(response)
+	if err != nil {
+		return fmt.Errorf("decode search results: %w", err)
+	}
+	if parsed.JSON400 != nil {
+		return fmt.Errorf("%s: %s", parsed.JSON400.Code, parsed.JSON400.Message)
+	}
+	if parsed.JSON200 == nil {
+		return fmt.Errorf("search Memories failed with HTTP %s", parsed.Status())
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(parsed.JSON200)
+}
+
 func filenameFromDisposition(disposition, fallback string) string {
 	_, parameters, err := mime.ParseMediaType(disposition)
 	if err == nil {

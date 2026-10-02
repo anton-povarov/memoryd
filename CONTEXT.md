@@ -56,7 +56,7 @@ Replacement of a Memory's Derived Content and Facts using current Document Under
 _Avoid_: Re-import, migration
 
 **Understanding Run**:
-An immutable, versioned interpretation of a Memory containing the Derived Content and Facts produced together. A Run is recorded only after successful processing; one Run is active for search while earlier successful Runs remain available for provenance and rollback.
+An immutable, versioned interpretation of a Memory containing the Derived Content and Facts produced together. A Run is recorded only after successful processing; one Run is active while earlier successful Runs remain available for provenance and rollback.
 _Avoid_: Parse result, extraction version
 
 **Orphan Blob**:
@@ -72,9 +72,9 @@ A named class of model-assisted work, such as Search Planning or Document Unders
 _Avoid_: Model name, provider name
 
 **Search Planning**:
-The process of converting a natural-language search request into a visible Query Plan for execution.
+The process of converting a search request into a visible Query Plan for execution.
 _Avoid_: Query Understanding, query parsing
 
 **Query Plan**:
-The visible interpretation of a natural-language query as exact Fact filters and residual full-text terms. Unresolved terms remain mandatory full-text terms rather than being silently discarded.
+The visible interpretation of a query as mandatory text terms and, when supported, exact Fact filters. Unresolved terms remain mandatory text terms rather than being silently discarded.
 _Avoid_: Search prompt, relaxed query

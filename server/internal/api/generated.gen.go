@@ -220,6 +220,31 @@ type RebuildStatus struct {
 	StatusUrl string               `json:"status_url"`
 }
 
+// SearchExcerptPart defines model for SearchExcerptPart.
+type SearchExcerptPart struct {
+	Match bool   `json:"match"`
+	Text  string `json:"text"`
+}
+
+// SearchHit defines model for SearchHit.
+type SearchHit struct {
+	Excerpt []SearchExcerptPart `json:"excerpt"`
+	Memory  MemorySummary       `json:"memory"`
+}
+
+// SearchPage defines model for SearchPage.
+type SearchPage struct {
+	Items     []SearchHit     `json:"items"`
+	QueryPlan SearchQueryPlan `json:"query_plan"`
+	Total     int64           `json:"total"`
+}
+
+// SearchQueryPlan defines model for SearchQueryPlan.
+type SearchQueryPlan struct {
+	Query string   `json:"query"`
+	Terms []string `json:"terms"`
+}
+
 // Statistics defines model for Statistics.
 type Statistics struct {
 	Usage *TokenUsage `json:"usage,omitempty"`
@@ -311,10 +336,22 @@ type Limit = int32
 // MemoryId defines model for MemoryId.
 type MemoryId = openapi_types.UUID
 
+// SearchLimit defines model for SearchLimit.
+type SearchLimit = int64
+
+// SearchQuery defines model for SearchQuery.
+type SearchQuery = string
+
 // BrowseMemoriesParams defines parameters for BrowseMemories.
 type BrowseMemoriesParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// SearchMemoriesParams defines parameters for SearchMemories.
+type SearchMemoriesParams struct {
+	Query SearchQuery  `form:"query" json:"query"`
+	Limit *SearchLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
@@ -334,6 +371,9 @@ type ServerInterface interface {
 	// ImportMemory Durably import one Blob as a Memory
 	// (POST /memories/import)
 	ImportMemory(w http.ResponseWriter, r *http.Request)
+	// SearchMemories Search committed Memories
+	// (GET /memories/search)
+	SearchMemories(w http.ResponseWriter, r *http.Request, params SearchMemoriesParams)
 	// DeleteMemory Delete one Memory and its Blob
 	// (DELETE /memories/{memoryId})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, memoryId MemoryId)
@@ -428,6 +468,52 @@ func (siw *ServerInterfaceWrapper) ImportMemory(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ImportMemory(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchMemories operation middleware
+func (siw *ServerInterfaceWrapper) SearchMemories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchMemoriesParams
+
+	// ------------- Required query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "query", r.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "query"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "query", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchMemories(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -704,6 +790,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/livez", wrapper.GetLiveness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories", wrapper.BrowseMemories)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/search", wrapper.SearchMemories)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/memories/{memoryId}", wrapper.DeleteMemory)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/memories/{memoryId}", wrapper.GetMemory)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/memories/{memoryId}/rebuild", wrapper.RebuildMemory)
@@ -845,6 +932,62 @@ func (response ImportMemory500JSONResponse) VisitImportMemoryResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchMemoriesRequestObject struct {
+	Params SearchMemoriesParams
+}
+
+type SearchMemoriesResponseObject interface {
+	VisitSearchMemoriesResponse(w http.ResponseWriter) error
+}
+
+type SearchMemories200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type SearchMemories200JSONResponse struct {
+	Body    SearchPage
+	Headers SearchMemories200ResponseHeaders
+}
+
+func (response SearchMemories200JSONResponse) VisitSearchMemoriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchMemories400ResponseHeaders struct {
+	CacheControl *string
+}
+
+type SearchMemories400JSONResponse struct {
+	Body    Error
+	Headers SearchMemories400ResponseHeaders
+}
+
+func (response SearchMemories400JSONResponse) VisitSearchMemoriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(400)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1182,6 +1325,9 @@ type StrictServerInterface interface {
 	// ImportMemory Durably import one Blob as a Memory
 	// (POST /memories/import)
 	ImportMemory(ctx context.Context, request ImportMemoryRequestObject) (ImportMemoryResponseObject, error)
+	// SearchMemories Search committed Memories
+	// (GET /memories/search)
+	SearchMemories(ctx context.Context, request SearchMemoriesRequestObject) (SearchMemoriesResponseObject, error)
 	// DeleteMemory Delete one Memory and its Blob
 	// (DELETE /memories/{memoryId})
 	DeleteMemory(ctx context.Context, request DeleteMemoryRequestObject) (DeleteMemoryResponseObject, error)
@@ -1315,6 +1461,32 @@ func (sh *strictHandler) ImportMemory(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ImportMemoryResponseObject); ok {
 		if err := validResponse.VisitImportMemoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SearchMemories operation middleware
+func (sh *strictHandler) SearchMemories(w http.ResponseWriter, r *http.Request, params SearchMemoriesParams) {
+	var request SearchMemoriesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SearchMemories(ctx, request.(SearchMemoriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SearchMemories")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SearchMemoriesResponseObject); ok {
+		if err := validResponse.VisitSearchMemoriesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1491,67 +1663,70 @@ func (sh *strictHandler) GetRebuildStatus(w http.ResponseWriter, r *http.Request
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"xAe58RK3FXXRYrdp/U19ve3V9t8DAA==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

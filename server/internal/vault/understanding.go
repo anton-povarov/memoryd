@@ -650,12 +650,25 @@ func (v *Vault) readUnderstandingArtifacts(
 }
 
 func readVerifiedBlob(path string, ref Blobref, expectedSize int64) (string, error) {
-	content, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("%w: read %s: %v", ErrBlobUnavailable, ref, err)
 	}
-	actualRef := NewSHA256Blobref(sha256.Sum256(content))
-	actualSize := int64(len(content))
+
+	var content strings.Builder
+	hash := sha256.New()
+	actualSize, copyErr := io.Copy(io.MultiWriter(&content, hash), file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return "", fmt.Errorf("%w: read %s: %v", ErrBlobUnavailable, ref, copyErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("%w: close %s: %v", ErrBlobUnavailable, ref, closeErr)
+	}
+
+	var digest [sha256.Size]byte
+	hash.Sum(digest[:0])
+	actualRef := NewSHA256Blobref(digest)
 	if actualSize != expectedSize || actualRef != ref {
 		return "", fmt.Errorf(
 			"%w: %s has size %d and digest %s; expected size %d and digest %s",
@@ -667,5 +680,5 @@ func readVerifiedBlob(path string, ref Blobref, expectedSize int64) (string, err
 			ref,
 		)
 	}
-	return string(content), nil
+	return content.String(), nil
 }

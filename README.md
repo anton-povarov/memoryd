@@ -7,7 +7,7 @@ Stores content and medatata, understands it with tools and LLMs and provides nat
 Status: MVP in-progress, see [`docs/MVP.md`](docs/MVP.md).
 
 The current implementation imports files up to 100 MiB and supports browsing,
-inspection, and download through a web UI, CLI, and OpenAPI HTTP interface.
+ranked keyword search, inspection, and download through a web UI, CLI, and OpenAPI HTTP interface.
 After the durable import commit, background Understanding Plugins can produce
 separately stored Derived Content. Memory details expose attempt status,
 diagnostics, and the last complete active Understanding Run.
@@ -41,10 +41,57 @@ go run ./cli/cmd/mem list
 go run ./cli/cmd/mem info <memory-id>
 go run ./cli/cmd/mem get <memory-id>
 go run ./cli/cmd/mem delete <memory-id>
+go build -o mem-search ./cli/cmd/mem-search
+./mem-search -n 50 'passports Anton'
+MEMORYD_URL=http://127.0.0.1:8080 ./mem-search 'игры'
 ```
 
 Use `mem --server ADDRESS ...` or set `MEMORYD_URL` to connect to another
 server. Run a command without its required arguments to see its usage.
+
+### Search
+
+The web search input sits in the top header alongside the logo and **Add memory**.
+Press **Enter** to submit; typing alone does not search. Results show
+the original query, mandatory text terms, total matches, and safely highlighted
+excerpts. Selecting a result opens existing details; the compact back arrow beside
+the filename restores the retained first page. Deleting a result refreshes that query.
+
+`mem-search [--server ADDRESS] [-n N] <quoted phrase>` uses the same server API:
+`GET /api/v0/memories/search?query=...&limit=50`. Options precede the phrase.
+Server selection follows `--server`, then `MEMORYD_URL`, then the local default.
+The positive int64 limit defaults to 50. JSON stdout contains `query_plan`,
+`total`, and `items`; empty results succeed. Diagnostics go to stderr with exit
+2 for usage errors and exit 1 for operational failures.
+
+Search covers the whole Vault: original filenames, available Import Context
+paths, valid UTF-8 `text/*` original Blobs without NUL bytes, and saved user
+notes. Other formats remain searchable by metadata and notes. Every compiled
+word or number is mandatory, but may match a whole word/English stem or a
+case-insensitive Unicode substring in any of those fields. `civ2` finds
+`oldCIV2backup` in a filename or content; different terms may use different
+fields and matching modes. Substrings do not supply aliases: `civ2` does not
+automatically mean `Civilization II`.
+
+Complete whole-word/stem matches rank first by BM25. Fragment-dependent matches
+follow, ordered by BM25 for any matching words, then stable Memory identity.
+Fragment-only ties use identity order. Totals include all matching modes even
+when precise matches exist, before applying the limit. Filenames and excerpts
+highlight literal matching fragments safely. `OR`, connectors, and years remain
+literal terms, not operators or date filters. No models run.
+
+Native trigram indexing covers fragments of three or more Unicode characters.
+One/two-character fragments also work through a Unicode-aware scan of indexed
+text; broad or absent short fragments can become expensive as text volume grows.
+
+The rebuildable projection updates with imports, notes, and deletions. Startup
+backfills only missing rows in compatible Vaults using verified original Blobs;
+missing or corrupt supported text fails startup without erasing original data.
+The fragment index is built once from existing projection text, without
+rereading already-indexed Blobs or rerunning Understanding.
+Search responses use `Cache-Control: no-store`. Derived Content, Fact/date
+filters, pagination, and `--all` are not implemented in this slice.
+
 
 - API: <http://127.0.0.1:8080/api/v0>
 - API documentation: <http://127.0.0.1:8080/docs/>

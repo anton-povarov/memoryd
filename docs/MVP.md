@@ -1,6 +1,6 @@
 # memoryd MVP design snapshot
 
-Status: authoritative snapshot of decisions from the current design interview. Earlier notes outside this repository are brainstorming material only.
+Status: design snapshot with the implemented keyword-search slice described below. Broader Fact and temporal search remain design goals.
 
 ## Goal
 
@@ -17,15 +17,15 @@ Import personal files into a durable local Vault, understand them as well as cur
 - Produce searchable Derived Content from PDFs as the first Document Understanding capability.
 - Browse Memories and inspect their metadata, Derived Content, Facts, and Understanding Run.
 - Manually Rebuild a Memory's Understanding using the current plugin while preserving its original Blob and last successful Run on failure.
-- Search using natural language and inspect the resulting Query Plan.
+- Search the whole Vault using keywords and inspect the resulting Query Plan.
 - Open or download the whole original Memory.
 - Accept opaque or partially understood content as a valid result.
 
 ### Out of scope
 
-- Memory lifecycle beyond manual Rebuild: deletion, garbage collection, and user Fact corrections.
+- Memory lifecycle beyond manual Rebuild and deletion: garbage collection and user Fact corrections.
 - Understanding extensibility: plugin discovery, dynamic installation, and Codex enhancement.
-- Search sophistication: embeddings, relevance ranking, query relaxation, relationship aliases, and cross-language retrieval.
+- Search sophistication beyond BM25: embeddings, query relaxation, relationship aliases, and cross-language retrieval.
 - Productization: multiple users, authentication, remote access, and production-grade UI polish.
 
 ### Demonstration scenarios
@@ -35,6 +35,9 @@ The first useful demonstration imports personal files, then answers variations o
 - Find all Tasleem bills from 2026.
 - Find a particular person's passport photo when that person is named explicitly.
 - Show PDFs created during a specified period.
+
+Fact and temporal demonstration queries remain future goals. The current slice
+treats every query word and number as literal mandatory text, including `2026`.
 
 ## Import and Memory identity
 
@@ -51,6 +54,7 @@ The first useful demonstration imports personal files, then answers variations o
 - A Memory references one immutable Blob addressed by its content hash.
 - The filesystem content-addressed store holds Blob bytes. SQLite is authoritative for Memories, metadata, Facts, Understanding Runs, active-Run selection, and logs.
 - SQLite records only terminal Understanding outcomes. Pending work and polling handles are process-local; restart drops them and startup schedules nothing.
+- A rebuildable FTS5 projection contains filenames, available Import Context paths, supported original text, and saved notes. Imports, note changes, and deletions update it in the same database mutation; compatible existing Memories are backfilled without reimport or Document Understanding.
 
 ## Document Understanding
 
@@ -65,15 +69,14 @@ The first useful demonstration imports personal files, then answers variations o
 
 ## Search
 
-- Search Planning converts a natural-language query into a visible Query Plan.
-- Model access for Search Planning is configured through the `search_planning` Model Task Category. The configured provider never falls back automatically in the MVP.
-- Known Fact constraints become exact filters. Remaining or unresolved terms become mandatory full-text search terms.
-- The plan executes immediately and is displayed to the user.
-- Constraints are not silently removed. Query relaxation is out of scope.
-- Search initially uses typed Fact filtering plus full-text search over filenames, metadata, and Derived Content. Embeddings are deferred.
-- Parsers may declare kind-specific fields and date semantics. For example, a Tasleem year constraint should prefer billing period rather than treating all dates as interchangeable.
-- Results return whole Memories with useful metadata and an open/download action.
-- Relationship aliases are not inferred. A query containing `my wife` is treated as literal full text and may return no results; the user must rephrase it with a name.
+- Current Search Planning is deterministic and model-free: trim the query, split Unicode words/numbers, lowercase them, and require every term. Operator-like words, connectors, and numeric years remain literal text.
+- The visible Query Plan contains the submitted query and mandatory text terms. No Fact or date interpretation is performed yet; `search_planning` model routing remains unimplemented.
+- Search covers original filenames, available Import Context paths, valid UTF-8 `text/*` original Blobs without NUL bytes, and saved user notes across the whole Vault. Other formats retain metadata/note search. Active Derived Content is not searched in this slice.
+- Each mandatory term may match a whole word/English stem or a case-insensitive Unicode substring across current searchable fields. Complete whole-word/stem matches rank first by BM25; fragment-dependent matches follow by BM25 for matching words, then deterministic identity. Fragment-only ties use identity. Totals cover all modes before limiting, and each whole Memory appears once. Filenames and matching body/note excerpts are safely highlighted; metadata-only matches have no fabricated body excerpt.
+- Native FTS5 trigram indexing supports fragments of at least three Unicode characters; one/two-character fragments use a Unicode-aware scan of indexed text. Both indexes update transactionally and the fragment index backfills from existing projection text without reimport or models.
+- The plan executes only on explicit submission and remains visible with empty results. Constraints are not silently removed. Models, aliases, translation, query relaxation, and embeddings are not used.
+- HTTP and `mem-search` return a limited first page with total matches independent of the positive int64 limit (default 50). No pagination or `--all` exists yet. Search responses forbid caching so committed changes are visible on repeated queries.
+- Fact filtering, active Derived Content, and calendar/relative date interpretation belong to later slices. Future parsers may declare kind-specific date semantics rather than treating all dates as interchangeable.
 
 ## Interfaces
 
@@ -81,7 +84,7 @@ Both clients use the server API; neither accesses storage directly.
 
 ### CLI
 
-The `cli/mem` tool provides `get`, `put`, `list`, and `info` operations.
+The `mem` tool provides `get`, `put`, `list`, `info`, and `delete`. The standalone `mem-search [--server ADDRESS] [-n N] <quoted phrase>` executable prints the complete first-page Search response as JSON and shares server selection with `mem`.
 
 ### Web UI
 
@@ -102,7 +105,7 @@ The standalone `mem-understand` tool runs an Understanding Plugin executable sup
 ## Implementation constraints
 
 - Implement the main server in Go, with SQLite/FTS5 and filesystem content-addressed storage.
-- Use Ollama as the initial model runtime for Document Understanding and Search Planning.
+- Model-assisted Document Understanding uses centrally configured providers. The implemented search slice requires no model runtime.
 - The Go server uses `destel/rill` to bound concurrent understanding across requests and startup recovery, but introduces no persistent queue table, separate worker service, or external queue.
 - Initial Understanding Plugins are configured executable paths launched as child processes by memoryd. They exchange JSON over standard streams. Plugin discovery, manifests, and a general plugin framework are deferred.
 - Require no application login in the MVP.
@@ -118,16 +121,15 @@ The standalone `mem-understand` tool runs an Understanding Plugin executable sup
 ### API
 
 - Import and background understanding status and progress
-- Browsing, Memory details, and search
+- Fact/date search and pagination beyond the implemented keyword operation
 
 ### Storage
 
-- SQLite schema and FTS5 projection design
-- CAS layout, hashing algorithm, atomic writes, and integrity verification
+- Backup and recovery of authoritative SQLite/CAS data; the implemented FTS5 projection is derived and rebuildable
 
 ### Search
 
-- Ollama model selection and Query Plan schema
+- Active Derived Content, temporal interpretation, and stable search pagination
 
 ### UI
 

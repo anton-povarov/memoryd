@@ -61,6 +61,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /memories/search:
+    get:
+      operationId: searchMemories
+      tags: [memories]
+      summary: Search committed Memories
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/SearchLimit"
+      responses:
+        "200":
+          description: A ranked page of matching Memories.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchPage"
+        "400":
+          description: The search query or limit is invalid.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /memories/{memoryId}:
     parameters:
       - $ref: "#/components/parameters/MemoryId"
@@ -310,6 +340,22 @@ components:
         minimum: 1
         maximum: 100
         default: 50
+    SearchQuery:
+      name: query
+      in: query
+      required: true
+      schema:
+        type: string
+    SearchLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+        default: 50
+
     Cursor:
       name: cursor
       in: query
@@ -436,6 +482,52 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    SearchPage:
+      type: object
+      required: [query_plan, total, items]
+      properties:
+        query_plan:
+          $ref: "#/components/schemas/SearchQueryPlan"
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+
+    SearchQueryPlan:
+      type: object
+      required: [query, terms]
+      properties:
+        query:
+          type: string
+        terms:
+          type: array
+          items:
+            type: string
+
+    SearchHit:
+      type: object
+      required: [memory, excerpt]
+      properties:
+        memory:
+          $ref: "#/components/schemas/MemorySummary"
+        excerpt:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchExcerptPart"
+
+    SearchExcerptPart:
+      type: object
+      required: [text, match]
+      properties:
+        text:
+          type: string
+        match:
+          type: boolean
 
     MemoryDetail:
       type: object

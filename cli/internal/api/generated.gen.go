@@ -209,6 +209,31 @@ type RebuildStatus struct {
 	StatusUrl string               `json:"status_url"`
 }
 
+// SearchExcerptPart defines model for SearchExcerptPart.
+type SearchExcerptPart struct {
+	Match bool   `json:"match"`
+	Text  string `json:"text"`
+}
+
+// SearchHit defines model for SearchHit.
+type SearchHit struct {
+	Excerpt []SearchExcerptPart `json:"excerpt"`
+	Memory  MemorySummary       `json:"memory"`
+}
+
+// SearchPage defines model for SearchPage.
+type SearchPage struct {
+	Items     []SearchHit     `json:"items"`
+	QueryPlan SearchQueryPlan `json:"query_plan"`
+	Total     int64           `json:"total"`
+}
+
+// SearchQueryPlan defines model for SearchQueryPlan.
+type SearchQueryPlan struct {
+	Query string   `json:"query"`
+	Terms []string `json:"terms"`
+}
+
 // Statistics defines model for Statistics.
 type Statistics struct {
 	Usage *TokenUsage `json:"usage,omitempty"`
@@ -300,10 +325,22 @@ type Limit = int32
 // MemoryId defines model for MemoryId.
 type MemoryId = openapi_types.UUID
 
+// SearchLimit defines model for SearchLimit.
+type SearchLimit = int64
+
+// SearchQuery defines model for SearchQuery.
+type SearchQuery = string
+
 // BrowseMemoriesParams defines parameters for BrowseMemories.
 type BrowseMemoriesParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// SearchMemoriesParams defines parameters for SearchMemories.
+type SearchMemoriesParams struct {
+	Query SearchQuery  `form:"query" json:"query"`
+	Limit *SearchLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
@@ -408,6 +445,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchMemories Search committed Memories
+	//
+	// Corresponds with GET /memories/search (the `SearchMemories` operationId).
+	SearchMemories(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteMemory Delete one Memory and its Blob
 	//
@@ -515,6 +557,21 @@ func (c *Client) BrowseMemories(ctx context.Context, params *BrowseMemoriesParam
 // Corresponds with POST /memories/import (the `ImportMemory` operationId).
 func (c *Client) ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewImportMemoryRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchMemories Search committed Memories
+//
+// Corresponds with GET /memories/search (the `SearchMemories` operationId).
+func (c *Client) SearchMemories(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchMemoriesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -775,6 +832,68 @@ func NewImportMemoryRequestWithBody(server string, contentType string, body io.R
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSearchMemoriesRequest constructs an http.Request for the SearchMemories method
+func NewSearchMemoriesRequest(server string, params *SearchMemoriesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/memories/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "query", params.Query, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1060,6 +1179,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /memories/import (the `ImportMemory` operationId).
 	ImportMemoryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportMemoryResponse, error)
 
+	// SearchMemoriesWithResponse Search committed Memories
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /memories/search (the `SearchMemories` operationId).
+	SearchMemoriesWithResponse(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error)
+
 	// DeleteMemoryWithResponse Delete one Memory and its Blob
 	//
 	// Permanently deletes the Memory, its Understanding Runs, and the
@@ -1285,6 +1411,68 @@ func (r ImportMemoryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ImportMemoryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SearchMemoriesResponse200Headers the declared response headers of an HTTP 200 response for SearchMemories
+type SearchMemoriesResponse200Headers struct {
+	CacheControl *string
+}
+
+// SearchMemoriesResponse400Headers the declared response headers of an HTTP 400 response for SearchMemories
+type SearchMemoriesResponse400Headers struct {
+	CacheControl *string
+}
+
+type SearchMemoriesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SearchPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SearchMemoriesResponse200Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *SearchMemoriesResponse400Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchMemoriesResponse) GetJSON200() *SearchPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SearchMemoriesResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchMemoriesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchMemoriesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchMemoriesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchMemoriesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1667,6 +1855,19 @@ func (c *ClientWithResponses) ImportMemoryWithBodyWithResponse(ctx context.Conte
 	return ParseImportMemoryResponse(rsp)
 }
 
+// SearchMemoriesWithResponse Search committed Memories
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /memories/search (the `SearchMemories` operationId).
+func (c *ClientWithResponses) SearchMemoriesWithResponse(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*SearchMemoriesResponse, error) {
+	rsp, err := c.SearchMemories(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchMemoriesResponse(rsp)
+}
+
 // DeleteMemoryWithResponse Delete one Memory and its Blob
 //
 // Permanently deletes the Memory, its Understanding Runs, and the
@@ -1889,6 +2090,62 @@ func ParseImportMemoryResponse(rsp *http.Response) (*ImportMemoryResponse, error
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseSearchMemoriesResponse parses an HTTP response from a SearchMemoriesWithResponse call
+func ParseSearchMemoriesResponse(rsp *http.Response) (*SearchMemoriesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchMemoriesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SearchPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SearchMemoriesResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 400:
+		var headers SearchMemoriesResponse400Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers400 = &headers
 	}
 
 	return response, nil

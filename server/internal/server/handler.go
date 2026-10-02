@@ -110,6 +110,54 @@ func (h *Handler) BrowseMemories(
 	return response, nil
 }
 
+func (h *Handler) SearchMemories(
+	ctx context.Context, request api.SearchMemoriesRequestObject,
+) (api.SearchMemoriesResponseObject, error) {
+	limit := int64(50)
+	if request.Params.Limit != nil {
+		limit = *request.Params.Limit
+	}
+
+	page, err := h.vault.SearchMemories(ctx, request.Params.Query, limit)
+	if errors.Is(err, vault.ErrInvalidSearchQuery) ||
+		errors.Is(err, vault.ErrInvalidSearchLimit) {
+		noStore := "no-store"
+		return api.SearchMemories400JSONResponse{
+			Body: api.Error{
+				Code: "invalid_search", Message: err.Error(),
+			},
+			Headers: api.SearchMemories400ResponseHeaders{CacheControl: &noStore},
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]api.SearchHit, 0, len(page.Items))
+	for _, hit := range page.Items {
+		excerpt := make([]api.SearchExcerptPart, 0, len(hit.Excerpt))
+		for _, part := range hit.Excerpt {
+			excerpt = append(excerpt, api.SearchExcerptPart{
+				Text: part.Text, Match: part.Match,
+			})
+		}
+		items = append(items, api.SearchHit{
+			Memory: memorySummary(hit.Memory), Excerpt: excerpt,
+		})
+	}
+	noStore := "no-store"
+	return api.SearchMemories200JSONResponse{
+		Body: api.SearchPage{
+			QueryPlan: api.SearchQueryPlan{
+				Query: page.QueryPlan.Query, Terms: page.QueryPlan.Terms,
+			},
+			Total: page.Total,
+			Items: items,
+		},
+		Headers: api.SearchMemories200ResponseHeaders{CacheControl: &noStore},
+	}, nil
+}
+
 func (h *Handler) GetMemory(
 	ctx context.Context,
 	request api.GetMemoryRequestObject,
