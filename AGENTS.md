@@ -1,71 +1,39 @@
 This is a Personal Memory Vault project. Store content and medatata, understand it with tools and LLMs and provide natural language search.
 
 Stage: MVP design, see `docs/MVP.md`.
+Ubiquitous Language: `CONTEXT.md` 
 
 ## Structure
-/api: OpenAPI specification
-/cli: cli programs
-/server: server
-	/internal/webui: web UI
+/api                 OpenAPI specification
+/cli                 cli programs
+/plugins             understanding plugins
+/server              server
+	/internal/webui    web UI
 
 ## Go
 
 When you're done editing Go code, run `dev-lint-go.sh` to format and lint it.
 These commands would already perform `go fmt`, `go vet` so no need to run them separately.
-Fix issues. If you need to ignore a warning with `nolint` comment, explicitly report it to the user.
+Fix issues. If you need to ignore a warning by adding a `nolint` comment, explicitly report it to the user.
 
 To regenerate code from the OpenAPI specification, run `dev-generate-openapi.sh`.
 
+## Project rules
+This is an MVP stage project.
+Breaking API contracts, database schemas, and file formats is ok, this is an MVP still.
+Learning quickly is more important than all corner cases covered.
+Make assumptions to simplify solutions, be explicit about them with the user.
+You can assume desktop environments, desktop browsers, no need for other platforms yet.
+
+Testing is important, but should be best effort, no need to very deep, things will change quickly.
+Smoke tests are good, add extra tests only where critical, do not overengineer.
+Testing core assumptions and mechanics that are unlikely to change is useful.
+
+Code quality and simplicity are still important, do not sacrifice them.
+APIs, interfaces, cross-process seams are most important, make sure to design them well.
+
+
 ## Agents
-
-### Exploration
-
-Use the `code-explorer` subagent when exploration requires reading multiple
-files, tracing behavior across components, or investigating an independent
-technical question.
-
-For simple known-file lookups, inspect directly.
-
-Parallelize independent exploration tasks when useful. Prefer narrowly scoped
-explorers with distinct questions over one broad exploration task.
-
-When spawning a `code-explorer`:
-- Use `fork_turns = "none"` by default.
-- Give it a specific question and clear scope.
-- Provide only the context needed for that investigation. Summarize relevant
-  prior decisions explicitly rather than passing the broader conversation.
-- Use medium reasoning by default.
-- Use low reasoning for straightforward search and code mapping.
-- Use high reasoning when the task requires substantial reasoning about
-  control flow, lifetimes, concurrency, invariants, or similarly subtle behavior.
-
-The main agent owns synthesis, architectural decisions, and conclusions.
-
-
-### Implementation
-
-Use the `code-worker` subagent for bounded implementation tasks once the
-relevant behavior, constraints, and design decisions are sufficiently understood.
-
-For small changes that are faster and clearer to implement directly, do so.
-
-When spawning a `code-worker`:
-- Use `fork_turns = "none"` by default.
-- Give it a concrete implementation goal, scope, and relevant constraints.
-- Include established design decisions and important context explicitly rather
-  than passing the broader conversation.
-- Identify files or components likely involved when known, but let the worker
-  verify the actual implementation.
-- Use xhigh reasoning by default.
-- Use medium oh high reasoning for mechanical or highly localized changes.
-- Use max reasoning when implementation involves subtle lifetimes,
-  concurrency, invariants, complex APIs, or non-obvious interactions.
-
-Parallelize implementation only when tasks have clearly separable ownership.
-Avoid concurrent workers modifying the same code or tightly coupled areas.
-
-The main agent owns architecture, decomposition, integration, and final
-verification.
 
 ### Issue tracker
 
