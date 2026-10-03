@@ -243,6 +243,7 @@ label:has(input:focus-visible) {
   align-items: center;
   flex: 1;
   min-width: 0;
+  gap: 8px;
 }
 
 
@@ -528,6 +529,10 @@ p {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+.search-load-more {
+  flex: 0 0 auto;
+  align-self: flex-start;
 }
 
 .search-result {

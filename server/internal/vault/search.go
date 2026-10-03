@@ -22,7 +22,8 @@ func (v *Vault) initializeSearch(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := initializeSearchIndexes(ctx, tx); err != nil {
+	rebuilt, err := initializeSearchIndexes(ctx, tx)
+	if err != nil {
 		return fmt.Errorf("create Memory search indexes: %w", err)
 	}
 	for _, trigger := range []struct {
@@ -78,6 +79,23 @@ func (v *Vault) initializeSearch(ctx context.Context) error {
 		}
 	}
 
+	// A repaired original row must also reload its selected Run, even if its marker survived.
+	var markersExist bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_schema WHERE name = 'memory_search_derived'
+	)`).Scan(&markersExist); err != nil {
+		return fmt.Errorf("inspect active search markers: %w", err)
+	}
+	if markersExist {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM memory_search_derived
+			WHERE NOT EXISTS (
+				SELECT 1 FROM memories JOIN memory_search ON memory_search.rowid = memories.rowid
+				WHERE memories.id = memory_search_derived.memory_id
+			)`); err != nil {
+			return fmt.Errorf("invalidate repaired Memory search markers: %w", err)
+		}
+	}
+
 	rows, err := tx.QueryContext(ctx, `
 		SELECT memories.id, memories.blob_hash, memories.original_filename,
 			memories.relative_path, memories.full_path,
@@ -127,6 +145,9 @@ func (v *Vault) initializeSearch(ctx context.Context) error {
 		if err := insertSearchRow(ctx, tx, row.rowid, row.memory, body, row.note); err != nil {
 			return fmt.Errorf("backfill Memory %s search projection: %w", row.memory.ID, err)
 		}
+	}
+	if err := v.initializeSearchDerived(ctx, tx, rebuilt); err != nil {
+		return fmt.Errorf("initialize active Derived Content search: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit Memory search initialization: %w", err)
@@ -191,8 +212,8 @@ func insertSearchRow(
 	paths += memory.ImportContext.FullPath
 	const normalize = "replace(replace(?, char(1), ' '), char(2), ' ')"
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO memory_search (rowid, filename, paths, body, note)
-		VALUES (?, `+normalize+`, `+normalize+`, `+normalize+`, `+normalize+`)
+		INSERT INTO memory_search (rowid, filename, paths, body, note, derived)
+		VALUES (?, `+normalize+`, `+normalize+`, `+normalize+`, `+normalize+`, '')
 	`, rowid, memory.ImportContext.OriginalFilename, paths, body, note)
 	if err != nil {
 		return err
@@ -217,18 +238,28 @@ type SearchHit struct {
 }
 
 type SearchPage struct {
-	QueryPlan SearchPlan
-	Total     int64
-	Items     []SearchHit
+	QueryPlan  SearchPlan
+	Total      int64
+	Items      []SearchHit
+	NextCursor string
 }
 
-func (v *Vault) SearchMemories(ctx context.Context, query string, limit int64) (SearchPage, error) {
+func (v *Vault) SearchMemories(
+	ctx context.Context,
+	query string,
+	limit int64,
+	continuation string,
+) (SearchPage, error) {
 	if limit <= 0 {
 		return SearchPage{}, ErrInvalidSearchLimit
 	}
 	plan := compileSearchPlan(query)
 	if len(plan.Terms) == 0 {
 		return SearchPage{}, ErrInvalidSearchQuery
+	}
+	offset, err := decodeSearchCursor(plan.Query, continuation)
+	if err != nil {
+		return SearchPage{}, err
 	}
 
 	tx, err := v.db.BeginTx(ctx, nil)
@@ -244,22 +275,32 @@ func (v *Vault) SearchMemories(ctx context.Context, query string, limit int64) (
 		return SearchPage{}, fmt.Errorf("count Memory search matches: %w", err)
 	}
 
-	resultQuery, resultArgs := searchResultQuery(plan.Terms, limit)
+	resultQuery, resultArgs := searchResultQuery(plan.Terms, limit, offset)
 	args = append(args, resultArgs...)
 	rows, err := tx.QueryContext(ctx, candidates+resultQuery, args...)
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("retrieve Memory search matches: %w", err)
 	}
 	for rows.Next() {
-		var bodySnippet, fragmentBody, noteSnippet, fragmentNote, shortBody, shortNote string
-		memory, scanErr := scanMemory(rows,
-			&bodySnippet, &fragmentBody, &noteSnippet, &fragmentNote, &shortBody, &shortNote)
+		var bodySnippet, fragmentBody, noteSnippet, fragmentNote, derivedSnippet, fragmentDerived, shortBody, shortNote, shortDerived string
+		memory, scanErr := scanMemory(
+			rows,
+			&bodySnippet,
+			&fragmentBody,
+			&noteSnippet,
+			&fragmentNote,
+			&derivedSnippet,
+			&fragmentDerived,
+			&shortBody,
+			&shortNote,
+			&shortDerived,
+		)
 		if scanErr != nil {
 			_ = rows.Close()
 			return SearchPage{}, fmt.Errorf("read Memory search result: %w", scanErr)
 		}
 		excerpt := make([]SearchExcerptPart, 0)
-		for _, snippet := range []string{bodySnippet, fragmentBody, shortBody, noteSnippet, fragmentNote, shortNote} {
+		for _, snippet := range []string{bodySnippet, fragmentBody, shortBody, noteSnippet, fragmentNote, shortNote, derivedSnippet, fragmentDerived, shortDerived} {
 			if strings.Contains(snippet, "\x01") {
 				excerpt = highlightFragments(splitSearchExcerpt(snippet), plan.Terms)
 				break
@@ -276,6 +317,10 @@ func (v *Vault) SearchMemories(ctx context.Context, query string, limit int64) (
 	}
 	if err := tx.Commit(); err != nil {
 		return SearchPage{}, fmt.Errorf("commit Memory search: %w", err)
+	}
+	// Cursor advances only by returned rows, never by an unbounded caller-supplied limit.
+	if count := int64(len(page.Items)); count > 0 && offset < page.Total-count {
+		page.NextCursor = encodeSearchCursor(plan.Query, offset+count)
 	}
 	return page, nil
 }

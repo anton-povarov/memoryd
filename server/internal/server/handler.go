@@ -22,6 +22,7 @@ const (
 	multipartFormMemoryBytes        = 1 << 20
 	multipartProtocolOverhead       = 1 << 20
 	MaxImportRequestBytes     int64 = vault.MaxBlobBytes + multipartProtocolOverhead
+	maxSearchPageSize         int64 = 100
 )
 
 var (
@@ -117,14 +118,35 @@ func (h *Handler) SearchMemories(
 	if request.Params.Limit != nil {
 		limit = *request.Params.Limit
 	}
-
-	page, err := h.vault.SearchMemories(ctx, request.Params.Query, limit)
+	if limit > maxSearchPageSize {
+		noStore := "no-store"
+		return api.SearchMemories400JSONResponse{
+			Body: api.Error{
+				Code: "invalid_search", Message: "search limit must not exceed 100",
+			},
+			Headers: api.SearchMemories400ResponseHeaders{CacheControl: &noStore},
+		}, nil
+	}
+	cursor := ""
+	if request.Params.Cursor != nil {
+		cursor = *request.Params.Cursor
+	}
+	page, err := h.vault.SearchMemories(ctx, request.Params.Query, limit, cursor)
 	if errors.Is(err, vault.ErrInvalidSearchQuery) ||
 		errors.Is(err, vault.ErrInvalidSearchLimit) {
 		noStore := "no-store"
 		return api.SearchMemories400JSONResponse{
 			Body: api.Error{
 				Code: "invalid_search", Message: err.Error(),
+			},
+			Headers: api.SearchMemories400ResponseHeaders{CacheControl: &noStore},
+		}, nil
+	}
+	if errors.Is(err, vault.ErrInvalidSearchCursor) {
+		noStore := "no-store"
+		return api.SearchMemories400JSONResponse{
+			Body: api.Error{
+				Code: "invalid_search_cursor", Message: err.Error(),
 			},
 			Headers: api.SearchMemories400ResponseHeaders{CacheControl: &noStore},
 		}, nil
@@ -145,14 +167,19 @@ func (h *Handler) SearchMemories(
 			Memory: memorySummary(hit.Memory), Excerpt: excerpt,
 		})
 	}
+	var nextCursor *string
+	if page.NextCursor != "" {
+		nextCursor = &page.NextCursor
+	}
 	noStore := "no-store"
 	return api.SearchMemories200JSONResponse{
 		Body: api.SearchPage{
 			QueryPlan: api.SearchQueryPlan{
 				Query: page.QueryPlan.Query, Terms: page.QueryPlan.Terms,
 			},
-			Total: page.Total,
-			Items: items,
+			Total:      page.Total,
+			Items:      items,
+			NextCursor: nextCursor,
 		},
 		Headers: api.SearchMemories200ResponseHeaders{CacheControl: &noStore},
 	}, nil

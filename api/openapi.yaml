@@ -66,9 +66,14 @@ paths:
       operationId: searchMemories
       tags: [memories]
       summary: Search committed Memories
+      description: |
+        Search results are returned in ranked pages. Supply the returned cursor
+        with the same trimmed query to continue. Cursors do not snapshot Vault
+        mutations between requests.
       parameters:
         - $ref: "#/components/parameters/SearchQuery"
         - $ref: "#/components/parameters/SearchLimit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
           description: A ranked page of matching Memories.
@@ -354,6 +359,7 @@ components:
         type: integer
         format: int64
         minimum: 1
+        maximum: 100
         default: 50
 
     Cursor:
@@ -497,7 +503,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchHit"
-
+        next_cursor:
+          type: string
+          nullable: true
     SearchQueryPlan:
       type: object
       required: [query, terms]

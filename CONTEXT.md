@@ -35,7 +35,7 @@ A recognized semantic category of Memory, such as a Tasleem bill or identity doc
 _Avoid_: File type, MIME type, document type
 
 **Derived Content**:
-Content produced while understanding a Memory, such as extracted text, image metadata, or a summary. It describes the Memory but is not itself a separately searchable Memory.
+Content produced while understanding a Memory, such as extracted text, image metadata, or a summary. Supported text and meaningful structured values from the active Understanding Run participate in whole-Memory search; historical Runs and processing logs do not. Derived Content is not itself a separately searchable Memory.
 _Avoid_: Child memory, sub-document
 
 **Fact**:

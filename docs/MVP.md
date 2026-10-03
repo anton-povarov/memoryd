@@ -54,7 +54,7 @@ treats every query word and number as literal mandatory text, including `2026`.
 - A Memory references one immutable Blob addressed by its content hash.
 - The filesystem content-addressed store holds Blob bytes. SQLite is authoritative for Memories, metadata, Facts, Understanding Runs, active-Run selection, and logs.
 - SQLite records only terminal Understanding outcomes. Pending work and polling handles are process-local; restart drops them and startup schedules nothing.
-- A rebuildable FTS5 projection contains filenames, available Import Context paths, supported original text, and saved notes. Imports, note changes, and deletions update it in the same database mutation; compatible existing Memories are backfilled without reimport or Document Understanding.
+- A rebuildable FTS5 projection contains filenames, available Import Context paths, supported original text, saved notes, and supported active Derived Content. Imports, note changes, deletion, and successful Understanding activation update both word and fragment indexes transactionally. Existing compatible Memories and active Runs are backfilled without reimport or model calls.
 
 ## Document Understanding
 
@@ -71,12 +71,13 @@ treats every query word and number as literal mandatory text, including `2026`.
 
 - Current Search Planning is deterministic and model-free: trim the query, split Unicode words/numbers, lowercase them, and require every term. Operator-like words, connectors, and numeric years remain literal text.
 - The visible Query Plan contains the submitted query and mandatory text terms. No Fact or date interpretation is performed yet; `search_planning` model routing remains unimplemented.
-- Search covers original filenames, available Import Context paths, valid UTF-8 `text/*` original Blobs without NUL bytes, and saved user notes across the whole Vault. Other formats retain metadata/note search. Active Derived Content is not searched in this slice.
-- Each mandatory term may match a whole word/English stem or a case-insensitive Unicode substring across current searchable fields. Complete whole-word/stem matches rank first by BM25; fragment-dependent matches follow by BM25 for matching words, then deterministic identity. Fragment-only ties use identity. Totals cover all modes before limiting, and each whole Memory appears once. Filenames and matching body/note excerpts are safely highlighted; metadata-only matches have no fabricated body excerpt.
+- Search covers original filenames, available Import Context paths, valid UTF-8 `text/*` original Blobs without NUL bytes, saved user notes, and active textual Derived Content across the whole Vault. Supported JSON artifacts contribute meaningful scalar values from Facts, events, references, and signals, not syntax or processing metadata. Historical Runs and logs are excluded; failed Rebuilds retain the prior searchable active Run.
+- Each mandatory term may match a whole word/English stem or a case-insensitive Unicode substring across current searchable fields. Complete whole-word/stem matches rank first by BM25; fragment-dependent matches follow by BM25 for matching words, then deterministic identity. Fragment-only ties use identity. Totals cover all modes before limiting, and each whole Memory appears once. Filenames and matching original/note/derived excerpts are safely highlighted; metadata-only matches have no fabricated content excerpt.
 - Native FTS5 trigram indexing supports fragments of at least three Unicode characters; one/two-character fragments use a Unicode-aware scan of indexed text. Both indexes update transactionally and the fragment index backfills from existing projection text without reimport or models.
 - The plan executes only on explicit submission and remains visible with empty results. Constraints are not silently removed. Models, aliases, translation, query relaxation, and embeddings are not used.
-- HTTP and `mem-search` return a limited first page with total matches independent of the positive int64 limit (default 50). No pagination or `--all` exists yet. Search responses forbid caching so committed changes are visible on repeated queries.
-- Fact filtering, active Derived Content, and calendar/relative date interpretation belong to later slices. Future parsers may declare kind-specific date semantics rather than treating all dates as interchangeable.
+- HTTP search pages default to 50, with limits from 1 to 100 and validated query-bound continuations. For an unchanged Vault, paging covers the complete combined ranked set without duplicates or omissions. Concurrent mutations have no snapshot guarantee. Search responses forbid caching.
+- `mem-search -n N` follows pages up to a positive int64 count; `--all` follows to exhaustion. Web **Load more** appends results; Back retains query, loaded pages, and scroll position. Clearing the query restores browsing.
+- Fact filtering and calendar/relative date interpretation belong to later slices. Structured dates are currently searchable text, not normalized temporal constraints.
 
 ## Interfaces
 
@@ -84,7 +85,7 @@ Both clients use the server API; neither accesses storage directly.
 
 ### CLI
 
-The `mem` tool provides `get`, `put`, `list`, `info`, and `delete`. The standalone `mem-search [--server ADDRESS] [-n N] <quoted phrase>` executable prints the complete first-page Search response as JSON and shares server selection with `mem`.
+The `mem` tool provides `get`, `put`, `list`, `info`, and `delete`. The standalone `mem-search [--server ADDRESS] [-n N | --all] <quoted phrase>` executable aggregates ordered search pages as JSON and shares server selection with `mem`.
 
 ### Web UI
 
@@ -121,7 +122,7 @@ The standalone `mem-understand` tool runs an Understanding Plugin executable sup
 ### API
 
 - Import and background understanding status and progress
-- Fact/date search and pagination beyond the implemented keyword operation
+- Fact/date search beyond the implemented paginated keyword operation
 
 ### Storage
 
@@ -129,7 +130,7 @@ The standalone `mem-understand` tool runs an Understanding Plugin executable sup
 
 ### Search
 
-- Active Derived Content, temporal interpretation, and stable search pagination
+- Temporal interpretation and structured-date filtering
 
 ### UI
 

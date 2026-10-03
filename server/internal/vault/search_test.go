@@ -493,7 +493,7 @@ func TestSearchMemoriesMandatoryTermsAndExcerpts(t *testing.T) {
 		OriginalFilename: "volcano.txt",
 	})
 
-	page, err := v.SearchMemories(ctx, "  passports, Anton!  ", 50)
+	page, err := v.SearchMemories(ctx, "  passports, Anton!  ", 50, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +517,7 @@ func TestSearchMemoriesMandatoryTermsAndExcerpts(t *testing.T) {
 		t.Fatalf("passport term missing from marked excerpt: %#v", page.Items[0].Excerpt)
 	}
 
-	pathPage, err := v.SearchMemories(ctx, "passport", 50)
+	pathPage, err := v.SearchMemories(ctx, "passport", 50, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func TestSearchMemoriesMandatoryTermsAndExcerpts(t *testing.T) {
 		t.Fatal("filename/path-only Memory did not match")
 	}
 
-	operatorPage, err := v.SearchMemories(ctx, "Anton OR Vesuvius", 50)
+	operatorPage, err := v.SearchMemories(ctx, "Anton OR Vesuvius", 50, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +542,7 @@ func TestSearchMemoriesMandatoryTermsAndExcerpts(t *testing.T) {
 		strings.Join(operatorPage.QueryPlan.Terms, ",") != "anton,or,vesuvius" {
 		t.Fatalf("literal OR query = %#v", operatorPage)
 	}
-	punctuationPage, err := v.SearchMemories(ctx, "!!passports... Anton??", 50)
+	punctuationPage, err := v.SearchMemories(ctx, "!!passports... Anton??", 50, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,12 +561,12 @@ func TestSearchMemoriesUnicodeNumbersAndValidation(t *testing.T) {
 		OriginalFilename: "annual-report.txt",
 	})
 
-	russianPage, err := v.SearchMemories(ctx, "игры", 1)
+	russianPage, err := v.SearchMemories(ctx, "игры", 1, "")
 	if err != nil || russianPage.Total != 1 || len(russianPage.Items) != 1 ||
 		russianPage.Items[0].Memory.ID != russian.ID {
 		t.Fatalf("Russian search = %#v, %v", russianPage, err)
 	}
-	numericPage, err := v.SearchMemories(ctx, "2026", 1)
+	numericPage, err := v.SearchMemories(ctx, "2026", 1, "")
 	if err != nil || numericPage.Total != 1 || len(numericPage.Items) != 1 ||
 		numericPage.Items[0].Memory.ID != numeric.ID ||
 		strings.Join(numericPage.QueryPlan.Terms, ",") != "2026" {
@@ -579,12 +579,20 @@ func TestSearchMemoriesUnicodeNumbersAndValidation(t *testing.T) {
 		t.Fatalf("Unicode query compilation = %#v", plan)
 	}
 	for _, query := range []string{"", " \t ", "?!—"} {
-		if _, err := v.SearchMemories(ctx, query, 1); !errors.Is(err, ErrInvalidSearchQuery) {
+		if _, err := v.SearchMemories(ctx, query, 1, ""); !errors.Is(err, ErrInvalidSearchQuery) {
 			t.Errorf("SearchMemories(%q) error = %v, want ErrInvalidSearchQuery", query, err)
 		}
 	}
 	for _, limit := range []int64{0, -1} {
-		if _, err := v.SearchMemories(ctx, "games", limit); !errors.Is(err, ErrInvalidSearchLimit) {
+		if _, err := v.SearchMemories(
+			ctx,
+			"games",
+			limit,
+			"",
+		); !errors.Is(
+			err,
+			ErrInvalidSearchLimit,
+		) {
 			t.Errorf("SearchMemories limit %d error = %v, want ErrInvalidSearchLimit", limit, err)
 		}
 	}
@@ -599,14 +607,14 @@ func TestSearchMemoriesCountLimitAndOrdering(t *testing.T) {
 			OriginalFilename: "bulk-" + suffix + ".txt",
 		})
 	}
-	limited, err := v.SearchMemories(ctx, "bulkterm", 2)
+	limited, err := v.SearchMemories(ctx, "bulkterm", 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if limited.Total != 105 || len(limited.Items) != 2 {
 		t.Fatalf("limited page = total %d, items %d", limited.Total, len(limited.Items))
 	}
-	large, err := v.SearchMemories(ctx, "bulkterm", 1000)
+	large, err := v.SearchMemories(ctx, "bulkterm", 1000, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +629,7 @@ func TestSearchMemoriesCountLimitAndOrdering(t *testing.T) {
 	second := putSearchFixture(t, ctx, tieVault, "alpha tieword", ImportContext{
 		OriginalFilename: "second-tie.txt",
 	})
-	ties, err := tieVault.SearchMemories(ctx, "tieword", 10)
+	ties, err := tieVault.SearchMemories(ctx, "tieword", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +656,7 @@ func TestSearchMemoriesCountLimitAndOrdering(t *testing.T) {
 			OriginalFilename: "long.txt",
 		},
 	)
-	ranked, err := rankVault.SearchMemories(ctx, "rankword", 10)
+	ranked, err := rankVault.SearchMemories(ctx, "rankword", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +683,7 @@ func TestSearchMemoriesTracksNotesDeletionAndBackfill(t *testing.T) {
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &oldNote); err != nil {
 		t.Fatal(err)
 	}
-	oldPage, err := v.SearchMemories(ctx, oldNote, 10)
+	oldPage, err := v.SearchMemories(ctx, oldNote, 10, "")
 	if err != nil || oldPage.Total != 1 || len(oldPage.Items) != 1 ||
 		oldPage.Items[0].Memory.ID != memory.ID {
 		t.Fatalf("saved-note result = %#v, %v", oldPage, err)
@@ -683,10 +691,10 @@ func TestSearchMemoriesTracksNotesDeletionAndBackfill(t *testing.T) {
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &newNote); err != nil {
 		t.Fatal(err)
 	}
-	if oldPage, err = v.SearchMemories(ctx, oldNote, 10); err != nil || oldPage.Total != 0 {
+	if oldPage, err = v.SearchMemories(ctx, oldNote, 10, ""); err != nil || oldPage.Total != 0 {
 		t.Fatalf("replaced note still searchable: %#v, %v", oldPage, err)
 	}
-	newPage, err := v.SearchMemories(ctx, newNote, 10)
+	newPage, err := v.SearchMemories(ctx, newNote, 10, "")
 	if err != nil || newPage.Total != 1 || len(newPage.Items) != 1 ||
 		newPage.Items[0].Memory.ID != memory.ID {
 		t.Fatalf("replacement note result = %#v, %v", newPage, err)
@@ -696,7 +704,7 @@ func TestSearchMemoriesTracksNotesDeletionAndBackfill(t *testing.T) {
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &clearedNote); err != nil {
 		t.Fatal(err)
 	}
-	clearedPage, err := v.SearchMemories(ctx, newNote, 10)
+	clearedPage, err := v.SearchMemories(ctx, newNote, 10, "")
 	if err != nil || clearedPage.Total != 0 || len(clearedPage.Items) != 0 {
 		t.Fatalf("cleared note remains searchable: %#v, %v", clearedPage, err)
 	}
@@ -708,7 +716,7 @@ func TestSearchMemoriesTracksNotesDeletionAndBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	v = reopenSearchVault(t, ctx, root, v)
-	backfilled, err := v.SearchMemories(ctx, newNote, 10)
+	backfilled, err := v.SearchMemories(ctx, newNote, 10, "")
 	if err != nil || backfilled.Total != 1 || len(backfilled.Items) != 1 ||
 		backfilled.Items[0].Memory.ID != memory.ID {
 		t.Fatalf("reopened backfilled note result = %#v, %v", backfilled, err)
@@ -716,7 +724,7 @@ func TestSearchMemoriesTracksNotesDeletionAndBackfill(t *testing.T) {
 	if err := v.Delete(ctx, memory.ID); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := v.SearchMemories(ctx, newNote, 10)
+	deleted, err := v.SearchMemories(ctx, newNote, 10, "")
 	if err != nil || deleted.Total != 0 || deleted.Items == nil || len(deleted.Items) != 0 {
 		t.Fatalf("deleted Memory search result = %#v, %v", deleted, err)
 	}
@@ -733,7 +741,7 @@ func TestSearchMemoriesChoosesMatchingExcerpt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"noteunique", "bodypriority"} {
-		page, err := v.SearchMemories(ctx, query, 10)
+		page, err := v.SearchMemories(ctx, query, 10, "")
 		if err != nil || len(page.Items) != 1 {
 			t.Fatalf("query %q: %#v, %v", query, page, err)
 		}

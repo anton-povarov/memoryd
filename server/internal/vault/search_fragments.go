@@ -12,7 +12,7 @@ import (
 	"modernc.org/sqlite"
 )
 
-const fragmentColumns = "rowid, filename, paths, body, note"
+const fragmentColumns = "rowid, filename, paths, body, note, derived"
 
 const deleteFragmentsSQL = `INSERT INTO memory_search_fragments (memory_search_fragments, ` + fragmentColumns + `)
 	SELECT 'delete', ` + fragmentColumns + ` FROM memory_search`
@@ -64,41 +64,69 @@ func init() {
 		})
 }
 
-func initializeSearchIndexes(ctx context.Context, tx *sql.Tx) error {
-	var existing int
+func initializeSearchIndexes(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var columnCount, derivedCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*), COALESCE(sum(name = 'derived'), 0)
+		FROM pragma_table_info('memory_search')`).Scan(&columnCount, &derivedCount); err != nil {
+		return false, fmt.Errorf("inspect search projection: %w", err)
+	}
+	existing, hasDerived := columnCount != 0, derivedCount != 0
+	upgrade := existing && !hasDerived
+	if upgrade {
+		// Only derived storage changes; preserve indexed originals without Blob rereads.
+		for _, statement := range []string{
+			`CREATE TEMP TABLE memory_search_upgrade AS
+				SELECT rowid, filename, paths, body, note FROM memory_search`,
+			`DROP TABLE IF EXISTS memory_search_fragments`,
+			`DROP TABLE memory_search`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return false, fmt.Errorf("upgrade search projection: %w", err)
+			}
+		}
+	}
+	var fragmentsExist int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema
-		WHERE name IN ('memory_search', 'memory_search_fragments')`).Scan(&existing); err != nil {
-		return err
+		WHERE name = 'memory_search_fragments'`).Scan(&fragmentsExist); err != nil {
+		return false, err
 	}
 	for _, statement := range []string{
 		`CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
-			filename, paths, body, note, tokenize = 'porter unicode61')`,
+			filename, paths, body, note, derived, tokenize = 'porter unicode61')`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS memory_search_fragments USING fts5(
-			filename, paths, body, note, content='memory_search', tokenize='trigram')`,
+			filename, paths, body, note, derived, content='memory_search', tokenize='trigram')`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("create search projection: %w", err)
+			return false, fmt.Errorf("create search projection: %w", err)
 		}
 	}
-	if existing != 2 {
-		// Reuse stored projection text; never reread original Blobs to add this index.
+	if upgrade {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO memory_search
+			(rowid, filename, paths, body, note, derived)
+			SELECT rowid, filename, paths, body, note, '' FROM memory_search_upgrade`); err != nil {
+			return false, fmt.Errorf("restore search projection: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DROP TABLE memory_search_upgrade`); err != nil {
+			return false, err
+		}
+	}
+	if fragmentsExist == 0 || !existing {
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO memory_search_fragments(memory_search_fragments) VALUES ('delete-all')`,
 		); err != nil {
-			return fmt.Errorf("reset fragment index: %w", err)
+			return false, fmt.Errorf("reset fragment index: %w", err)
 		}
-		_, err := tx.ExecContext(ctx, insertFragmentsSQL)
-		if err != nil {
-			return fmt.Errorf("backfill fragment index: %w", err)
+		if _, err := tx.ExecContext(ctx, insertFragmentsSQL); err != nil {
+			return false, fmt.Errorf("backfill fragment index: %w", err)
 		}
 	}
-	return nil
+	return !existing || upgrade, nil
 }
 
 func searchCandidates(terms []string) (string, []any) {
 	var query strings.Builder
-	args := make([]any, 0, len(terms)*5)
+	args := make([]any, 0, len(terms)*6)
 	query.WriteString("WITH ")
 	for i, term := range terms {
 		if i > 0 {
@@ -119,8 +147,9 @@ func searchCandidates(terms []string) (string, []any) {
 			// ponytail: one/two-rune fragments scan indexed text; measure before adding a short-gram index.
 			query.WriteString(`SELECT rowid FROM memory_search WHERE
 				memory_search_contains(filename, ?) OR memory_search_contains(paths, ?) OR
-				memory_search_contains(body, ?) OR memory_search_contains(note, ?))`)
-			args = append(args, term, term, term, term)
+				memory_search_contains(body, ?) OR memory_search_contains(note, ?) OR
+				memory_search_contains(derived, ?))`)
+			args = append(args, term, term, term, term, term)
 		}
 	}
 	query.WriteString(", matches AS (")
@@ -134,7 +163,7 @@ func searchCandidates(terms []string) (string, []any) {
 	return query.String(), args
 }
 
-func searchResultQuery(terms []string, limit int64) (string, []any) {
+func searchResultQuery(terms []string, limit, offset int64) (string, []any) {
 	var longTerms []string
 	for _, term := range terms {
 		if utf8.RuneCountInString(term) >= 3 {
@@ -142,12 +171,18 @@ func searchResultQuery(terms []string, limit int64) (string, []any) {
 		}
 	}
 	fragmentCondition := "0"
-	args := []any{ftsTerms(terms, "AND"), ftsTerms(terms, "OR"), limit, ftsTerms(terms, "OR")}
+	args := []any{
+		ftsTerms(terms, "AND"),
+		ftsTerms(terms, "OR"),
+		limit,
+		offset,
+		ftsTerms(terms, "OR"),
+	}
 	if len(longTerms) > 0 {
 		fragmentCondition = "memory_search_fragments MATCH ?"
 		args = append(args, ftsTerms(longTerms, "OR"))
 	}
-	shortBody, shortNote := "''", "''"
+	shortBody, shortNote, shortDerived := "''", "''", "''"
 	if len(longTerms) != len(terms) {
 		shortBody = "CASE WHEN instr(COALESCE(words.body, ''), char(1)) OR instr(COALESCE(fragments.body, ''), char(1)) THEN '' ELSE " +
 			shortExcerptSQL(
@@ -161,6 +196,12 @@ func searchResultQuery(terms []string, limit int64) (string, []any) {
 				terms,
 				&args,
 			) + " END"
+		shortDerived = "CASE WHEN instr(COALESCE(words.derived, ''), char(1)) OR instr(COALESCE(fragments.derived, ''), char(1)) THEN '' ELSE " +
+			shortExcerptSQL(
+				"memory_search.derived",
+				terms,
+				&args,
+			) + " END"
 	}
 	query := `, precise AS MATERIALIZED (SELECT rowid FROM memory_search WHERE memory_search MATCH ?),
 		word_ranks AS MATERIALIZED (
@@ -171,16 +212,18 @@ func searchResultQuery(terms []string, limit int64) (string, []any) {
 			FROM matches JOIN memories ON memories.rowid = matches.rowid
 			LEFT JOIN precise ON precise.rowid = matches.rowid
 			LEFT JOIN word_ranks ON word_ranks.rowid = matches.rowid
-			ORDER BY tier, score, memories.id LIMIT ?),
+			ORDER BY tier, score, memories.id LIMIT ? OFFSET ?),
 		words AS MATERIALIZED (
 			SELECT rowid,
 				snippet(memory_search, 2, char(1), char(2), '…', 32) AS body,
-				snippet(memory_search, 3, char(1), char(2), '…', 32) AS note
+				snippet(memory_search, 3, char(1), char(2), '…', 32) AS note,
+				snippet(memory_search, 4, char(1), char(2), '…', 32) AS derived
 			FROM memory_search WHERE memory_search MATCH ? AND rowid IN (SELECT rowid FROM selected)),
 		fragments AS MATERIALIZED (
 			SELECT rowid,
 				snippet(memory_search_fragments, 2, char(1), char(2), '…', 64) AS body,
-				snippet(memory_search_fragments, 3, char(1), char(2), '…', 64) AS note
+				snippet(memory_search_fragments, 3, char(1), char(2), '…', 64) AS note,
+				snippet(memory_search_fragments, 4, char(1), char(2), '…', 64) AS derived
 			FROM memory_search_fragments WHERE ` + fragmentCondition + ` AND rowid IN (SELECT rowid FROM selected))
 		SELECT memories.id, memories.blob_hash, memories.original_filename,
 			memories.relative_path, memories.full_path,
@@ -188,7 +231,8 @@ func searchResultQuery(terms []string, limit int64) (string, []any) {
 			memories.media_type, memories.byte_size, memories.imported_at,
 			COALESCE(words.body, ''), COALESCE(fragments.body, ''),
 			COALESCE(words.note, ''), COALESCE(fragments.note, ''),
-			` + shortBody + `, ` + shortNote + `
+			COALESCE(words.derived, ''), COALESCE(fragments.derived, ''),
+			` + shortBody + `, ` + shortNote + `, ` + shortDerived + `
 		FROM selected JOIN memories ON memories.rowid = selected.rowid
 		JOIN memory_search ON memory_search.rowid = selected.rowid
 		LEFT JOIN words ON words.rowid = selected.rowid

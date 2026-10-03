@@ -60,7 +60,7 @@ Requests use `protocol_version: 2`; optional fields may be omitted:
 
 The response object requires only integer `protocol_version: 2` and an `artifacts` array. Each artifact requires a nonempty string `content_type` and string `content`. Empty artifact arrays and empty content strings are valid. Additional response and artifact fields are allowed. There is no artifact-kind taxonomy or content-type allowlist. The exact response shape is defined by the shared [protocol v2 JSON Schema](../server/internal/understanding/plugin-response-v2.schema.json).
 
-`content` is always literal text. A `content_type` such as `application/json` does not make memoryd parse or validate embedded JSON. Optional `provenance` and `scope` are opaque JSON values retained as supplied; their shape is plugin-defined.
+`content` is always literal text. Protocol acceptance does not parse or validate embedded JSON for a `content_type` such as `application/json`. Search interprets valid JSON scalar values best effort; unparseable JSON remains a valid retained artifact but does not contribute searchable structured values. Optional `provenance` and `scope` are opaque JSON values retained as supplied; their shape is plugin-defined.
 
 Example response with two text artifacts and optional reporting:
 

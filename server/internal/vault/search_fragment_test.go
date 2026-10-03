@@ -22,7 +22,7 @@ func TestSearchMemoriesSubstringFragmentsAcrossFields(t *testing.T) {
 		RelativePath:     "archive/pathCIV2backup",
 	})
 
-	page, err := v.SearchMemories(ctx, "anton passports", 20)
+	page, err := v.SearchMemories(ctx, "anton passports", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestSearchMemoriesSubstringFragmentsAcrossFields(t *testing.T) {
 	}
 
 	for query, want := range map[string]string{"iv2": "IV2", "anton": "Anton"} {
-		page, err := v.SearchMemories(ctx, query, 20)
+		page, err := v.SearchMemories(ctx, query, 20, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,7 @@ func TestSearchMemoriesSubstringFragmentsAcrossFields(t *testing.T) {
 		}
 	}
 
-	overlap, err := v.SearchMemories(ctx, "ant anton ant", 20)
+	overlap, err := v.SearchMemories(ctx, "ant anton ant", 20, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSearchMemoriesSubstringFragmentsAcrossFields(t *testing.T) {
 		{query: "ж", id: upperRussian.ID.String()},
 		{query: "ан", id: shortRussian.ID.String()},
 	} {
-		page, err := v.SearchMemories(ctx, test.query, 20)
+		page, err := v.SearchMemories(ctx, test.query, 20, "")
 		if err != nil {
 			t.Errorf("SearchMemories(%q): %v", test.query, err)
 			continue
@@ -133,7 +133,7 @@ func TestSearchMemoriesFragmentTierAndStableTies(t *testing.T) {
 		OriginalFilename: "fragment.txt",
 	})
 
-	limited, err := v.SearchMemories(ctx, "needle", 1)
+	limited, err := v.SearchMemories(ctx, "needle", 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestSearchMemoriesFragmentTierAndStableTies(t *testing.T) {
 	wantIDs := []string{first.ID.String(), second.ID.String()}
 	sort.Strings(wantIDs)
 	for attempt := range 3 {
-		page, err := v.SearchMemories(ctx, "iv2 civ2 iv2", 20)
+		page, err := v.SearchMemories(ctx, "iv2 civ2 iv2", 20, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,16 +185,16 @@ func TestSearchMemoriesFragmentNotesBackfillAndReopen(t *testing.T) {
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &oldNote); err != nil {
 		t.Fatal(err)
 	}
-	if page, err := v.SearchMemories(ctx, "iv2", 20); err != nil || page.Total != 1 {
+	if page, err := v.SearchMemories(ctx, "iv2", 20, ""); err != nil || page.Total != 1 {
 		t.Fatalf("initial note fragment = %#v, %v", page, err)
 	}
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &newNote); err != nil {
 		t.Fatal(err)
 	}
-	if page, err := v.SearchMemories(ctx, "oldnote", 20); err != nil || page.Total != 0 {
+	if page, err := v.SearchMemories(ctx, "oldnote", 20, ""); err != nil || page.Total != 0 {
 		t.Fatalf("replaced note remained searchable: %#v, %v", page, err)
 	}
-	page, err := v.SearchMemories(ctx, "iv2", 20)
+	page, err := v.SearchMemories(ctx, "iv2", 20, "")
 	if err != nil || page.Total != 1 || len(page.Items) != 1 ||
 		matchedExcerptText(page.Items[0].Excerpt) != "IV2" {
 		t.Fatalf("updated note fragment/excerpt = %#v, %v", page, err)
@@ -203,7 +203,7 @@ func TestSearchMemoriesFragmentNotesBackfillAndReopen(t *testing.T) {
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &clearNote); err != nil {
 		t.Fatal(err)
 	}
-	if page, err := v.SearchMemories(ctx, "newnote", 20); err != nil || page.Total != 0 {
+	if page, err := v.SearchMemories(ctx, "newnote", 20, ""); err != nil || page.Total != 0 {
 		t.Fatalf("cleared note remained searchable: %#v, %v", page, err)
 	}
 	if _, err := v.ResolveUnderstandingUserNote(ctx, memory.ID, &newNote); err != nil {
@@ -214,7 +214,7 @@ func TestSearchMemoriesFragmentNotesBackfillAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	v = reopenSearchVault(t, ctx, root, v)
-	page, err = v.SearchMemories(ctx, "iv2", 20)
+	page, err = v.SearchMemories(ctx, "iv2", 20, "")
 	if err != nil || page.Total != 1 || len(page.Items) != 1 ||
 		matchedExcerptText(page.Items[0].Excerpt) != "IV2" {
 		t.Fatalf("backfilled note fragment after reopen = %#v, %v", page, err)
@@ -231,14 +231,14 @@ func TestSearchMemoriesFragmentNotesBackfillAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	v = reopenSearchVault(t, ctx, root, v)
-	page, err = v.SearchMemories(ctx, "anton", 20)
+	page, err = v.SearchMemories(ctx, "anton", 20, "")
 	if err != nil || page.Total != 1 || len(page.Items) != 1 {
 		t.Fatalf("existing fragment projection after reopen = %#v, %v", page, err)
 	}
 	if err := v.Delete(ctx, memory.ID); err != nil {
 		t.Fatal(err)
 	}
-	page, err = v.SearchMemories(ctx, "anton", 20)
+	page, err = v.SearchMemories(ctx, "anton", 20, "")
 	if err != nil || page.Total != 0 || page.Items == nil || len(page.Items) != 0 {
 		t.Fatalf("deleted fragment result = %#v, %v", page, err)
 	}
@@ -294,12 +294,12 @@ func TestFragmentIndexFailureRollsBackMutations(t *testing.T) {
 				t.Fatal("mutation committed without its fragment index")
 			}
 			v = reopenSearchVault(t, ctx, root, v)
-			page, err := v.SearchMemories(ctx, "civ2 previous", 50)
+			page, err := v.SearchMemories(ctx, "civ2 previous", 50, "")
 			if err != nil || page.Total != 1 || len(page.Items) != 1 ||
 				page.Items[0].Memory.ID != memory.ID {
 				t.Fatalf("original body/note did not survive failed mutation: %#v, %v", page, err)
 			}
-			page, err = v.SearchMemories(ctx, "replacement", 50)
+			page, err = v.SearchMemories(ctx, "replacement", 50, "")
 			if err != nil || page.Total != 0 {
 				t.Fatalf("failed import leaked searchable content: %#v, %v", page, err)
 			}
@@ -342,7 +342,7 @@ func TestFragmentNoteFailurePreservesBothIndexes(t *testing.T) {
 		t.Fatal("note update ignored injected late failure")
 	}
 	for query, want := range map[string]int64{"oldneedle": 1, "microOldneedleRecord": 1, "newneedle": 0} {
-		page, err := v.SearchMemories(ctx, query, 50)
+		page, err := v.SearchMemories(ctx, query, 50, "")
 		if err != nil || page.Total != want {
 			t.Fatalf("query %q after failed note update: %#v, %v", query, page, err)
 		}

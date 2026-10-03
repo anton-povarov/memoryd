@@ -223,9 +223,10 @@ type SearchHit struct {
 
 // SearchPage defines model for SearchPage.
 type SearchPage struct {
-	Items     []SearchHit     `json:"items"`
-	QueryPlan SearchQueryPlan `json:"query_plan"`
-	Total     int64           `json:"total"`
+	Items      []SearchHit     `json:"items"`
+	NextCursor *string         `json:"next_cursor,omitempty"`
+	QueryPlan  SearchQueryPlan `json:"query_plan"`
+	Total      int64           `json:"total"`
 }
 
 // SearchQueryPlan defines model for SearchQueryPlan.
@@ -339,8 +340,9 @@ type BrowseMemoriesParams struct {
 
 // SearchMemoriesParams defines parameters for SearchMemories.
 type SearchMemoriesParams struct {
-	Query SearchQuery  `form:"query" json:"query"`
-	Limit *SearchLimit `form:"limit,omitempty" json:"limit,omitempty"`
+	Query  SearchQuery  `form:"query" json:"query"`
+	Limit  *SearchLimit `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *Cursor      `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ImportMemoryMultipartRequestBody defines body for ImportMemory for multipart/form-data ContentType.
@@ -447,6 +449,10 @@ type ClientInterface interface {
 	ImportMemoryWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchMemories Search committed Memories
+	//
+	// Search results are returned in ranked pages. Supply the returned cursor
+	// with the same trimmed query to continue. Cursors do not snapshot Vault
+	// mutations between requests.
 	//
 	// Corresponds with GET /memories/search (the `SearchMemories` operationId).
 	SearchMemories(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -568,6 +574,10 @@ func (c *Client) ImportMemoryWithBody(ctx context.Context, contentType string, b
 }
 
 // SearchMemories Search committed Memories
+//
+// Search results are returned in ranked pages. Supply the returned cursor
+// with the same trimmed query to continue. Cursors do not snapshot Vault
+// mutations between requests.
 //
 // Corresponds with GET /memories/search (the `SearchMemories` operationId).
 func (c *Client) SearchMemories(ctx context.Context, params *SearchMemoriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -884,6 +894,18 @@ func NewSearchMemoriesRequest(server string, params *SearchMemoriesParams) (*htt
 
 		}
 
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -1180,6 +1202,10 @@ type ClientWithResponsesInterface interface {
 	ImportMemoryWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportMemoryResponse, error)
 
 	// SearchMemoriesWithResponse Search committed Memories
+	//
+	// Search results are returned in ranked pages. Supply the returned cursor
+	// with the same trimmed query to continue. Cursors do not snapshot Vault
+	// mutations between requests.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1856,6 +1882,10 @@ func (c *ClientWithResponses) ImportMemoryWithBodyWithResponse(ctx context.Conte
 }
 
 // SearchMemoriesWithResponse Search committed Memories
+//
+// Search results are returned in ranked pages. Supply the returned cursor
+// with the same trimmed query to continue. Cursors do not snapshot Vault
+// mutations between requests.
 //
 // Returns a wrapper object for the known response body format(s).
 //

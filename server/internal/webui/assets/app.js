@@ -66,7 +66,10 @@
     searchResponse: null,
     searchGeneration: 0,
     searchLoading: false,
+    searchLoadingMore: false,
     searchVisible: false,
+    searchScrollTop: 0,
+    searchPhrase: "",
     detailFromSearch: false,
   };
 
@@ -83,6 +86,7 @@
     searchStatus: document.querySelector("#search-status"),
     searchError: document.querySelector("#search-error"),
     searchResults: document.querySelector("#search-results"),
+    searchLoadMore: document.querySelector("#search-load-more"),
     welcomeState: document.querySelector("#welcome-state"),
     welcomeEyebrow: document.querySelector("#welcome-eyebrow"),
     welcomeTitle: document.querySelector("#welcome-title"),
@@ -306,11 +310,25 @@
   function invalidateSearch() {
     state.searchGeneration += 1;
     state.searchLoading = false;
+    state.searchLoadingMore = false;
     state.searchVisible = false;
+    elements.searchLoadMore.disabled = false;
+    elements.searchLoadMore.textContent = "Load more results";
     elements.searchView.hidden = true;
   }
 
-  function renderSearchResponse(response) {
+
+  function searchResultStatus(response) {
+    if (response.total === 0) return "No memories match this query.";
+    return response.items.length < response.total
+      ? `Showing ${response.items.length} of ${response.total}`
+      : `${response.total} memories found.`;
+  }
+
+  function renderSearchResponse(
+    response,
+    { items = response.items || [], append = false } = {},
+  ) {
     const plan = response.query_plan;
     const query = document.createElement("p");
     query.textContent = `Query: ${plan.query}`;
@@ -318,8 +336,7 @@
     terms.textContent = `Text terms: ${plan.terms.join(" AND ")}`;
     elements.searchPlan.replaceChildren(query, terms);
 
-    const items = response.items || [];
-    elements.searchResults.replaceChildren();
+    if (!append) elements.searchResults.replaceChildren();
     for (const hit of items) {
       const memory = hit.memory;
       const row = document.createElement("button");
@@ -375,12 +392,11 @@
       elements.searchResults.append(row);
     }
 
-    elements.searchStatus.textContent =
-      response.total === 0
-        ? "No memories match this query."
-        : `Showing ${items.length} of ${response.total}`;
+    elements.searchStatus.textContent = searchResultStatus(response);
     elements.searchError.hidden = true;
     elements.searchError.textContent = "";
+    elements.searchLoadMore.hidden = !response.next_cursor;
+    elements.searchLoadMore.disabled = state.searchLoadingMore;
     elements.searchView.hidden = false;
     state.searchVisible = true;
     elements.detailLoading.hidden = true;
@@ -395,7 +411,9 @@
     revokePreviewURL();
     state.selectedID = null;
     state.detailFromSearch = false;
+    state.searchPhrase = query;
     state.searchResponse = null;
+    state.searchScrollTop = 0;
     state.searchVisible = true;
     state.searchLoading = true;
     const generation = state.searchGeneration;
@@ -406,6 +424,8 @@
     elements.searchError.hidden = true;
     elements.searchError.textContent = "";
     elements.searchResults.replaceChildren();
+    elements.searchResults.scrollTop = 0;
+    elements.searchLoadMore.hidden = true;
     elements.searchView.hidden = false;
     elements.welcomeState.hidden = true;
     elements.memoryDetail.hidden = true;
@@ -430,6 +450,60 @@
     }
   }
 
+  async function loadMoreSearchResults() {
+    const cursor = state.searchResponse?.next_cursor;
+    if (!cursor || state.searchLoadingMore || state.searchLoading) return;
+    const generation = state.searchGeneration;
+    const query = state.searchResponse.query_plan.query;
+    state.searchLoadingMore = true;
+    elements.searchLoadMore.disabled = true;
+    elements.searchLoadMore.textContent = "Loading…";
+    elements.searchStatus.textContent = "Loading more results…";
+    elements.searchError.hidden = true;
+    elements.searchError.textContent = "";
+
+    const params = new URLSearchParams({ query, limit: "50", cursor });
+    try {
+      const page = await requestJSON(
+        `${apiBase}/memories/search?${params}`,
+      );
+      if (generation !== state.searchGeneration || !state.searchVisible) return;
+      if (page.next_cursor === cursor) {
+        throw new Error("The server repeated its search continuation.");
+      }
+      if (page.next_cursor && !(page.items || []).length) {
+        throw new Error("The server returned an empty page with more results.");
+      }
+      const existing = new Set(
+        state.searchResponse.items.map((hit) => hit.memory.id),
+      );
+      const items = (page.items || []).filter((hit) => {
+        if (existing.has(hit.memory.id)) return false;
+        existing.add(hit.memory.id);
+        return true;
+      });
+      state.searchResponse = {
+        ...state.searchResponse,
+        total: page.total,
+        items: [...state.searchResponse.items, ...items],
+        next_cursor: page.next_cursor || null,
+      };
+      state.searchLoadingMore = false;
+      renderSearchResponse(state.searchResponse, { items, append: true });
+    } catch (error) {
+      if (generation !== state.searchGeneration || !state.searchVisible) return;
+      elements.searchStatus.textContent = searchResultStatus(state.searchResponse);
+      elements.searchError.textContent = `Could not load more results. ${error.message}`;
+      elements.searchError.hidden = false;
+    } finally {
+      if (generation === state.searchGeneration) {
+        state.searchLoadingMore = false;
+        elements.searchLoadMore.disabled = false;
+        elements.searchLoadMore.textContent = "Load more results";
+      }
+    }
+  }
+
   function returnToSearchResults() {
     stopUnderstandingRefresh();
     invalidateSearch();
@@ -438,10 +512,43 @@
     state.detailFromSearch = false;
     renderMemoryList();
     if (state.searchResponse) {
+      elements.searchQuery.value = state.searchPhrase;
       renderSearchResponse(state.searchResponse);
+      elements.searchResults.scrollTop = state.searchScrollTop;
     } else {
       renderNoSelectionState();
     }
+  }
+
+  function clearSearch() {
+    if (
+      !state.searchResponse &&
+      !state.searchVisible &&
+      !state.searchLoading &&
+      !state.detailFromSearch
+    )
+      return;
+    const keepBrowseSelection =
+      state.selectedID !== null && !state.detailFromSearch;
+    invalidateSearch();
+    state.searchResponse = null;
+    state.searchPhrase = "";
+    state.searchScrollTop = 0;
+    elements.searchPlan.replaceChildren();
+    elements.searchStatus.textContent = "";
+    elements.searchError.textContent = "";
+    elements.searchError.hidden = true;
+    elements.searchResults.replaceChildren();
+    elements.searchLoadMore.hidden = true;
+    if (keepBrowseSelection) return;
+
+    stopUnderstandingRefresh();
+    revokePreviewURL();
+    state.selectedID = null;
+    state.detailFromSearch = false;
+    renderMemoryList();
+    document.body.classList.remove("is-detail-open");
+    renderNoSelectionState();
   }
 
   function renderNoSelectionState() {
@@ -698,6 +805,9 @@
     { openMobile = true, fromSearch = false } = {},
   ) {
     // ponytail: obsolete requests finish; generation guards discard them without cancellation.
+    if (fromSearch) {
+      state.searchScrollTop = elements.searchResults.scrollTop;
+    }
     invalidateSearch();
     stopUnderstandingRefresh();
     const generation = state.detailGeneration;
@@ -742,7 +852,9 @@
         revokePreviewURL();
         stopUnderstandingRefresh();
         setDetailLoading(false);
+        elements.searchQuery.value = state.searchPhrase;
         renderSearchResponse(state.searchResponse);
+        elements.searchResults.scrollTop = state.searchScrollTop;
       } else {
         state.detailFromSearch = false;
         renderNoSelectionState();
@@ -1419,7 +1531,7 @@
     const memoryID = state.selectedID;
     if (!memoryID) return;
     const deletedFromSearch = state.detailFromSearch;
-    const searchQuery = state.searchResponse?.query_plan.query;
+    const searchQuery = state.searchPhrase;
     elements.deleteDialog.close();
     elements.deleteMemory.disabled = true;
     elements.deleteMemory.textContent = "Deleting…";
@@ -1513,7 +1625,11 @@
     event.preventDefault();
     if (!state.searchLoading) startSearch(elements.searchQuery.value);
   });
+  elements.searchQuery.addEventListener("input", () => {
+    if (elements.searchQuery.value.trim() === "") clearSearch();
+  });
   elements.backToSearch.addEventListener("click", returnToSearchResults);
+  elements.searchLoadMore.addEventListener("click", loadMoreSearchResults);
   elements.loadMore.addEventListener("click", () =>
     loadMemories({ append: true }),
   );

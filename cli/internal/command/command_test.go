@@ -347,3 +347,77 @@ func testMemoryDetail(id uuid.UUID, size int64, filename string) api.MemoryDetai
 		Memory: testMemorySummary(id, size, filename),
 	}
 }
+
+func TestSearchFollowsPagesUntilRequestedCount(t *testing.T) {
+	hits := make([]api.SearchHit, 205)
+	for index := range hits {
+		id := uuid.New()
+		hits[index] = api.SearchHit{
+			Memory:  testMemorySummary(id, int64(index), fmt.Sprintf("memory-%03d.txt", index)),
+			Excerpt: []api.SearchExcerptPart{},
+		}
+	}
+	offsets := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("query") != "needle" {
+			http.Error(w, "unexpected query", http.StatusBadRequest)
+			return
+		}
+		offset := offsets[r.URL.Query().Get("cursor")]
+		end := offset + 100
+		if end > len(hits) {
+			end = len(hits)
+		}
+		var next *string
+		if end < len(hits) {
+			token := fmt.Sprintf("next-page-%d", end)
+			offsets[token] = end
+			next = &token
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.SearchPage{
+			QueryPlan:  api.SearchQueryPlan{Query: "needle", Terms: []string{"needle"}},
+			Total:      int64(len(hits)),
+			Items:      hits[offset:end],
+			NextCursor: next,
+		})
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	if err := Search(t.Context(), server.URL, "needle", 201, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result api.SearchPage
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode search output: %v", err)
+	}
+	if len(result.Items) != 201 || result.Total != 205 ||
+		result.QueryPlan.Query != "needle" {
+		t.Fatalf("bounded search result = total %d, items %d, plan %#v",
+			result.Total, len(result.Items), result.QueryPlan)
+	}
+	for index, hit := range result.Items {
+		if hit.Memory.Id != hits[index].Memory.Id {
+			t.Fatalf("result %d = %s, want %s", index, hit.Memory.Id, hits[index].Memory.Id)
+		}
+	}
+	output.Reset()
+	if err := SearchAll(t.Context(), server.URL, "needle", &output); err != nil {
+		t.Fatal(err)
+	}
+	result = api.SearchPage{}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode all-search output: %v", err)
+	}
+	if len(result.Items) != len(hits) || result.Total != int64(len(hits)) ||
+		result.QueryPlan.Query != "needle" || result.NextCursor != nil {
+		t.Fatalf("all search = total %d, items %d, plan %#v, cursor %v",
+			result.Total, len(result.Items), result.QueryPlan, result.NextCursor)
+	}
+	for index, hit := range result.Items {
+		if hit.Memory.Id != hits[index].Memory.Id {
+			t.Fatalf("all result %d = %s, want %s", index, hit.Memory.Id, hits[index].Memory.Id)
+		}
+	}
+}

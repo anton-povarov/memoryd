@@ -20,23 +20,30 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	server := flags.String("server", "", "memoryd server URL")
 	count := flags.Int64("n", 50, "maximum number of Memories to return")
+	all := flags.Bool("all", false, "return every matching Memory")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "usage: mem-search [--server ADDRESS] [-n N] <quoted phrase>")
+		fmt.Fprintln(stderr, "usage: mem-search [--server ADDRESS] [-n N | --all] <quoted phrase>")
 	}
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" || *count <= 0 {
+	countProvided := false
+	flags.Visit(func(parsed *flag.Flag) {
+		countProvided = countProvided || parsed.Name == "n"
+	})
+	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" ||
+		*count <= 0 || (*all && countProvided) {
 		flags.Usage()
 		return 2
 	}
-	if err := command.Search(
-		ctx,
-		command.ServerURL(*server),
-		flags.Arg(0),
-		*count,
-		stdout,
-	); err != nil {
+	serverURL := command.ServerURL(*server)
+	var err error
+	if *all {
+		err = command.SearchAll(ctx, serverURL, flags.Arg(0), stdout)
+	} else {
+		err = command.Search(ctx, serverURL, flags.Arg(0), *count, stdout)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "mem-search: %v\n", err)
 		return 1
 	}

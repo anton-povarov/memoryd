@@ -273,6 +273,9 @@ func (v *Vault) FinishUnderstanding(
 	if err != nil {
 		return UnderstandingAttempt{}, fmt.Errorf("activate Understanding Run: %w", err)
 	}
+	if err := v.setActiveSearchDerived(ctx, tx, memory.ID, runID, artifacts); err != nil {
+		return UnderstandingAttempt{}, fmt.Errorf("update active search Derived Content: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return UnderstandingAttempt{}, fmt.Errorf("commit Understanding Run: %w", err)
 	}

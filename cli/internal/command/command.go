@@ -409,30 +409,86 @@ func List(
 }
 
 func Search(ctx context.Context, serverURL, query string, count int64, stdout io.Writer) error {
+	return search(ctx, serverURL, query, count, false, stdout)
+}
+
+func SearchAll(ctx context.Context, serverURL, query string, stdout io.Writer) error {
+	return search(ctx, serverURL, query, 0, true, stdout)
+}
+
+func search(
+	ctx context.Context,
+	serverURL, query string,
+	count int64,
+	all bool,
+	stdout io.Writer,
+) error {
+	if !all && count <= 0 {
+		return errors.New("search limit must be positive")
+	}
 	client, err := api.NewClient(apiBaseURL(serverURL))
 	if err != nil {
 		return fmt.Errorf("create memoryd client: %w", err)
 	}
-	response, err := client.SearchMemories(ctx, &api.SearchMemoriesParams{
-		Query: query, Limit: &count,
-	})
-	if err != nil {
-		return fmt.Errorf("search Memories: %w", err)
+
+	result := api.SearchPage{Items: make([]api.SearchHit, 0)}
+	var cursor *api.Cursor
+	firstPage := true
+	for {
+		pageSize := maxPageSize
+		if !all && count-int64(len(result.Items)) < int64(pageSize) {
+			pageSize = int(count - int64(len(result.Items)))
+		}
+		limit := api.SearchLimit(pageSize)
+		response, err := client.SearchMemories(ctx, &api.SearchMemoriesParams{
+			Query: query, Limit: &limit, Cursor: cursor,
+		})
+		if err != nil {
+			return fmt.Errorf("search Memories: %w", err)
+		}
+		parsed, err := api.ParseSearchMemoriesResponse(response)
+		_ = response.Body.Close()
+		if err != nil {
+			return fmt.Errorf("decode search results: %w", err)
+		}
+		if parsed.JSON400 != nil {
+			return fmt.Errorf("%s: %s", parsed.JSON400.Code, parsed.JSON400.Message)
+		}
+		if parsed.JSON200 == nil {
+			return fmt.Errorf("search Memories failed with HTTP %s", parsed.Status())
+		}
+
+		page := parsed.JSON200
+		if firstPage {
+			result.QueryPlan = page.QueryPlan
+			result.Total = page.Total
+			firstPage = false
+		}
+		items := page.Items
+		if !all && int64(len(items)) > count-int64(len(result.Items)) {
+			items = items[:int(count-int64(len(result.Items)))]
+		}
+		result.Items = append(result.Items, items...)
+		result.NextCursor = page.NextCursor
+		if !all && int64(len(result.Items)) >= count {
+			break
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			result.NextCursor = nil
+			break
+		}
+		if len(page.Items) == 0 {
+			return errors.New("search page has continuation but no results")
+		}
+		if cursor != nil && *cursor == *page.NextCursor {
+			return errors.New("search page repeated its continuation")
+		}
+		cursor = page.NextCursor
 	}
-	defer response.Body.Close()
-	parsed, err := api.ParseSearchMemoriesResponse(response)
-	if err != nil {
-		return fmt.Errorf("decode search results: %w", err)
-	}
-	if parsed.JSON400 != nil {
-		return fmt.Errorf("%s: %s", parsed.JSON400.Code, parsed.JSON400.Message)
-	}
-	if parsed.JSON200 == nil {
-		return fmt.Errorf("search Memories failed with HTTP %s", parsed.Status())
-	}
+
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(parsed.JSON200)
+	return encoder.Encode(result)
 }
 
 func filenameFromDisposition(disposition, fallback string) string {

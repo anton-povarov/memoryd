@@ -43,6 +43,8 @@ go run ./cli/cmd/mem get <memory-id>
 go run ./cli/cmd/mem delete <memory-id>
 go build -o mem-search ./cli/cmd/mem-search
 ./mem-search -n 50 'passports Anton'
+./mem-search -n 150 'passports'
+./mem-search --all 'Games'
 MEMORYD_URL=http://127.0.0.1:8080 ./mem-search 'игры'
 ```
 
@@ -55,20 +57,30 @@ The web search input sits in the top header alongside the logo and **Add memory*
 Press **Enter** to submit; typing alone does not search. Results show
 the original query, mandatory text terms, total matches, and safely highlighted
 excerpts. Selecting a result opens existing details; the compact back arrow beside
-the filename restores the retained first page. Deleting a result refreshes that query.
+the filename restores loaded results, query, and scroll position. **Load more**
+appends another page. Clearing the input restores browsing. Deleting a result
+refreshes that query.
 
-`mem-search [--server ADDRESS] [-n N] <quoted phrase>` uses the same server API:
+`mem-search [--server ADDRESS] [-n N | --all] <quoted phrase>` uses the same server API:
 `GET /api/v0/memories/search?query=...&limit=50`. Options precede the phrase.
 Server selection follows `--server`, then `MEMORYD_URL`, then the local default.
-The positive int64 limit defaults to 50. JSON stdout contains `query_plan`,
-`total`, and `items`; empty results succeed. Diagnostics go to stderr with exit
+The positive int64 count defaults to 50 and can span pages; `--all` follows
+continuations to exhaustion. An explicitly supplied `-n` cannot accompany `--all`.
+JSON stdout contains the original `query_plan`, complete match `total`, and
+ordered `items`; empty results succeed. Diagnostics go to stderr with exit
 2 for usage errors and exit 1 for operational failures.
 
 Search covers the whole Vault: original filenames, available Import Context
-paths, valid UTF-8 `text/*` original Blobs without NUL bytes, and saved user
-notes. Other formats remain searchable by metadata and notes. Every compiled
-word or number is mandatory, but may match a whole word/English stem or a
-case-insensitive Unicode substring in any of those fields. `civ2` finds
+paths, valid UTF-8 `text/*` original Blobs without NUL bytes, saved user notes,
+and supported Derived Content from the active Understanding Run. Text artifacts
+include descriptions and summaries; JSON artifacts contribute meaningful scalar
+values, including current Facts, events, references, and signals, not JSON syntax
+or processing metadata. Historical Runs and logs do not match. Opaque original
+formats remain searchable through metadata, notes, and supported active artifacts.
+Unparseable JSON remains a valid retained artifact but contributes no structured
+search values; other supported artifacts and existing fields still participate.
+Every compiled word or number is mandatory, but may match a whole word/English
+stem or a case-insensitive Unicode substring in any of those fields. `civ2` finds
 `oldCIV2backup` in a filename or content; different terms may use different
 fields and matching modes. Substrings do not supply aliases: `civ2` does not
 automatically mean `Civilization II`.
@@ -84,13 +96,21 @@ Native trigram indexing covers fragments of three or more Unicode characters.
 One/two-character fragments also work through a Unicode-aware scan of indexed
 text; broad or absent short fragments can become expensive as text volume grows.
 
-The rebuildable projection updates with imports, notes, and deletions. Startup
-backfills only missing rows in compatible Vaults using verified original Blobs;
-missing or corrupt supported text fails startup without erasing original data.
-The fragment index is built once from existing projection text, without
-rereading already-indexed Blobs or rerunning Understanding.
-Search responses use `Cache-Control: no-store`. Derived Content, Fact/date
-filters, pagination, and `--all` are not implemented in this slice.
+The rebuildable projections update with imports, notes, deletions, and successful
+Understanding activation in the same database transaction. Failed Rebuilds preserve
+the prior active searchable content. Startup backfills missing original rows and
+unindexed active Runs using verified stored Blobs, without models or reimport;
+missing or corrupt supported content fails startup without erasing original data.
+Compatible projection upgrades reuse stored original text, and an already-indexed
+active Run is not reread on every startup.
+
+HTTP pages default to 50 and accept limits from 1 to 100. An optional `cursor`
+continues the same trimmed query; `next_cursor` is absent at exhaustion.
+For an unchanged Vault, pages preserve the combined precise/fragment ordering
+without duplicates or omissions. Continuations are not snapshots: concurrent
+imports, deletions, notes, or Rebuilds can change ordering between requests.
+Search responses use `Cache-Control: no-store`. Fact/date filters and temporal
+interpretation remain unimplemented.
 
 
 - API: <http://127.0.0.1:8080/api/v0>
