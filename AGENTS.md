@@ -19,6 +19,9 @@ Fix issues. If you need to ignore a warning by adding a `nolint` comment, explic
 To regenerate code from the OpenAPI specification, run `dev-generate-openapi.sh`.
 
 ## Project rules
+1. Do NOT touch top level README.md unless instructed by the user.
+
+## MVP rules
 This is an MVP stage project.
 Breaking API contracts, database schemas, and file formats is ok, this is an MVP still.
 Learning quickly is more important than all corner cases covered.

@@ -24,7 +24,7 @@ Import personal files into a durable local Vault, understand them as well as cur
 ### Out of scope
 
 - Memory lifecycle beyond manual Rebuild and deletion: garbage collection and user Fact corrections.
-- Understanding extensibility: plugin discovery, dynamic installation, and Codex enhancement.
+- Understanding extensibility: plugin discovery and dynamic installation.
 - Search sophistication beyond BM25: embeddings, query relaxation, relationship aliases, and cross-language retrieval.
 - Productization: multiple users, authentication, remote access, and production-grade UI polish.
 
@@ -52,27 +52,30 @@ treats every query word and number as literal mandatory text, including `2026`.
 ## Storage and durability
 
 - A Memory references one immutable Blob addressed by its content hash.
-- The filesystem content-addressed store holds Blob bytes. SQLite is authoritative for Memories, metadata, Facts, Understanding Runs, active-Run selection, and logs.
+- The filesystem content-addressed store holds original and derived Blob bytes in separate namespaces. SQLite stores Memories, metadata, saved notes, terminal attempts, successful Understanding Runs, and active-Run selection.
 - SQLite records only terminal Understanding outcomes. Pending work and polling handles are process-local; restart drops them and startup schedules nothing.
 - A rebuildable FTS5 projection contains filenames, available Import Context paths, supported original text, saved notes, and supported active Derived Content. Imports, note changes, deletion, and successful Understanding activation update both word and fragment indexes transactionally. Existing compatible Memories and active Runs are backfilled without reimport or model calls.
 
 ## Document Understanding
 
-- Document Understanding makes a best-effort attempt for every imported Blob and may produce Derived Content and Facts.
+See the [Document Understanding overview](understanding.md) for responsibilities, interfaces, lifecycle, and limits.
+
+- Document Understanding makes a best-effort attempt for every imported Blob and produces Derived Content through configured plugins.
 - An opaque or partially understood Blob is a valid result. An Understanding Run may be sparse and contain only information derived from basic Blob properties and Import Context.
-- The first extraction increment targets PDFs and does not need to assert structured Facts. A plugin may extract embedded text, perform OCR, or describe visual content. Source text and generated descriptions remain distinguishable Derived Content.
 - Each successful interpretation creates an immutable Understanding Run.
 - A coherent Run may include warnings. An understanding attempt fails only when an operational issue prevents it from committing a coherent Run; the failure produces an informative execution log and does not invalidate the Memory.
 - After the Blob and Memory commit, Document Understanding runs best effort in a process-local queue, independently of the client connection. Admission failure does not undo the import; explicit Rebuild can retry.
 - One configured process limit covers imports and manual Rebuilds. Rebuild returns a polling handle with 202; competing queued/running work returns 409 with the existing handle. Terminal handles remain until superseded, deletion, or restart. Invalid handles return 404.
-- A Fact has a name, category, origin, type, and value. Deeper Fact semantics remain an open design question.
+- Typed Fact management remains design work; current structured values live in JSON artifacts.
 
 ## Search
 
+See the [search architecture overview](search.md) for structural decisions, index lifecycle, and known limits.
+
 - Current Search Planning is deterministic and model-free: trim the query, split Unicode words/numbers, lowercase them, and require every term. Operator-like words, connectors, and numeric years remain literal text.
 - The visible Query Plan contains the submitted query and mandatory text terms. No Fact or date interpretation is performed yet; `search_planning` model routing remains unimplemented.
-- Search covers original filenames, available Import Context paths, valid UTF-8 `text/*` original Blobs without NUL bytes, saved user notes, and active textual Derived Content across the whole Vault. Supported JSON artifacts contribute meaningful scalar values from Facts, events, references, and signals, not syntax or processing metadata. Historical Runs and logs are excluded; failed Rebuilds retain the prior searchable active Run.
-- Each mandatory term may match a whole word/English stem or a case-insensitive Unicode substring across current searchable fields. Complete whole-word/stem matches rank first by BM25; fragment-dependent matches follow by BM25 for matching words, then deterministic identity. Fragment-only ties use identity. Totals cover all modes before limiting, and each whole Memory appears once. Filenames and matching original/note/derived excerpts are safely highlighted; metadata-only matches have no fabricated content excerpt.
+- Search covers original filenames, available Import Context paths, valid UTF-8 `text/*` original Blobs without NUL bytes, saved user notes, and active textual Derived Content across the whole Vault. Supported JSON artifacts contribute scalar values through generic recursive extraction that excludes reserved metadata subtrees. Historical Runs and logs are excluded; failed Rebuilds retain the prior searchable active Run.
+- Each mandatory term may match a whole word/English stem or a case-insensitive Unicode substring across current searchable fields. Complete whole-word/stem matches rank first by word-index BM25. Fragment-dependent matches follow by trigram-index BM25; when no indexed substring matches, they use word-index BM25 or 0 if no word matches. Score ties use Memory identity. Totals cover all modes before limiting, and each whole Memory appears once. Filenames and matching original/note/derived excerpts are safely highlighted; metadata-only matches may have no content excerpt.
 - Native FTS5 trigram indexing supports fragments of at least three Unicode characters; one/two-character fragments use a Unicode-aware scan of indexed text. Both indexes update transactionally and the fragment index backfills from existing projection text without reimport or models.
 - The plan executes only on explicit submission and remains visible with empty results. Constraints are not silently removed. Models, aliases, translation, query relaxation, and embeddings are not used.
 - HTTP search pages default to 50, with limits from 1 to 100 and validated query-bound continuations. For an unchanged Vault, paging covers the complete combined ranked set without duplicates or omissions. Concurrent mutations have no snapshot guarantee. Search responses forbid caching.
@@ -92,7 +95,7 @@ The `mem` tool provides `get`, `put`, `list`, `info`, and `delete`. The standalo
 The MVP web UI is a basic interface that will evolve through use. Its initial capabilities are:
 
 - The main view explores every Memory known to the Vault.
-- Selecting a Memory shows its preview or download action, Import Context, all Fact key/value pairs and provenance, Derived Content, and active Understanding Run.
+- Selecting a Memory shows its preview or download action, Import Context, Derived Content, and active Understanding Run.
 - Import shows the selected file, upload progress, and background understanding progress.
 - Search shows the original query, interpreted Query Plan, and matching Memories.
 - Understanding details expose the active Run and available processing information.
@@ -107,7 +110,7 @@ The standalone `mem-understand` tool runs an Understanding Plugin executable sup
 
 - Implement the main server in Go, with SQLite/FTS5 and filesystem content-addressed storage.
 - Model-assisted Document Understanding uses centrally configured providers. The implemented search slice requires no model runtime.
-- The Go server uses `destel/rill` to bound concurrent understanding across requests and startup recovery, but introduces no persistent queue table, separate worker service, or external queue.
+- A process-local queue bounds concurrent understanding across imports and manual Rebuilds. Restart drops pending work; startup schedules nothing. There is no persistent queue table, separate worker service, or external queue.
 - Initial Understanding Plugins are configured executable paths launched as child processes by memoryd. They exchange JSON over standard streams. Plugin discovery, manifests, and a general plugin framework are deferred.
 - Require no application login in the MVP.
 - Treat a checked-in `openapi.yaml` as the API source of truth and generate Go handler interfaces and request/response types from it.
