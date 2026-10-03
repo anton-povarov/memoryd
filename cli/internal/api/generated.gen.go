@@ -218,7 +218,13 @@ type SearchExcerptPart struct {
 // SearchHit defines model for SearchHit.
 type SearchHit struct {
 	Excerpt []SearchExcerptPart `json:"excerpt"`
-	Memory  MemorySummary       `json:"memory"`
+
+	// MatchTier 0 for complete whole-word/stem matches; 1 for fragment-dependent matches. Lower tiers sort first.
+	MatchTier int           `json:"match_tier"`
+	Memory    MemorySummary `json:"memory"`
+
+	// Score SQLite BM25 from the word index for tier 0 and trigram index for tier 1. When no indexed fragments match, tier 1 falls back to word-index BM25 or 0. Lower scores sort first within each match tier; ties sort by Memory ID. Scores from different indexes are not comparable across tiers.
+	Score float64 `json:"score"`
 }
 
 // SearchPage defines model for SearchPage.

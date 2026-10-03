@@ -34,6 +34,9 @@ Open <http://127.0.0.1:8080/> for the web UI.
 
 Buttons, Original / Understanding tabs, and Memory list items highlight on hover
 without moving or changing size.
+Original previews use a single content frame, without an outer decorative card.
+On desktop, preview and Import context frames fit the available viewport height;
+each scrolls independently so their last content remains accessible.
 
 ```sh
 go run ./cli/cmd/mem put /absolute/path/to/file
@@ -56,7 +59,9 @@ server. Run a command without its required arguments to see its usage.
 The web search input sits in the top header alongside the logo and **Add memory**.
 Press **Enter** to submit; typing alone does not search. Results show
 the original query, mandatory text terms, total matches, and safely highlighted
-excerpts. Selecting a result opens existing details; the compact back arrow beside
+excerpts. Each result shows its match tier and BM25 score instead of repeating
+the Media Type shown by its icon. The score tooltip explains sorting and shows
+the full value. Selecting a result opens existing details; the compact back arrow beside
 the filename restores loaded results, query, and scroll position. **Load more**
 appends another page. Clearing the input restores browsing. Deleting a result
 refreshes that query.
@@ -85,9 +90,15 @@ stem or a case-insensitive Unicode substring in any of those fields. `civ2` find
 fields and matching modes. Substrings do not supply aliases: `civ2` does not
 automatically mean `Civilization II`.
 
-Complete whole-word/stem matches rank first by BM25. Fragment-dependent matches
-follow, ordered by BM25 for any matching words, then stable Memory identity.
-Fragment-only ties use identity order. Totals include all matching modes even
+Complete whole-word/stem matches rank first by word-index BM25. Fragment-dependent
+matches follow, ranked by BM25 from the existing trigram index for query terms
+of three or more Unicode characters. If no indexed fragments match, ranking
+falls back to word-index BM25, or 0 when no whole words match. Pure one/two-character
+fragment matches remain tied. All score ties use stable Memory identity.
+Each API hit exposes `match_tier` (0 for whole-word/stem matches, 1 for
+fragment-dependent matches) and `score` (raw SQLite BM25; lower is better within
+each tier). Word and trigram scores use different indexes and are not comparable
+across tiers or confidence percentages. Totals include all matching modes even
 when precise matches exist, before applying the limit. Filenames and excerpts
 highlight literal matching fragments safely. `OR`, connectors, and years remain
 literal terms, not operators or date filters. No models run.
@@ -184,8 +195,10 @@ the preserved preview and Understanding. A right-hand **Sections** sidebar selec
 individual artifacts, **Run details**, or failure **Diagnostics** for the main area.
 The first artifact is selected initially; refresh preserves the selection for the
 same Run. Each artifact retains expandable **Metadata**; Markdown also provides
-**View source**. Status and **Rebuild** share the header with **Download** and
-**Delete**. Status includes **Understanding not started**. Clicking **Rebuild**
+**View source**. The filename heading uses 22–28px text and spans the header up to
+the separate **Download** and **Delete** controls. Status and **Rebuild** sit below
+the filename alongside the Media Type, size, and import-time pills, wrapping when
+space is limited. Status includes **Understanding not started**. Clicking **Rebuild**
 starts a new attempt; pending work disables the button. Automatic polling follows
 the returned handle every three seconds while details are visible. Completion
 reloads Memory details for the new Run; failure keeps the prior Run. An expired
@@ -194,7 +207,8 @@ while visible. These reads preserve Original preview and same-Run selection.
 
 Original previews with detected Media Type `text/markdown` and Markdown artifacts
 render headings, lists, and tables using the same client-side renderer. Leading
-YAML frontmatter stays in a literal block with newlines and indentation preserved;
+YAML frontmatter stays in a literal block with newlines and indentation preserved.
+Long values wrap without horizontal scrolling, and the block has no extra top margin;
 the body still renders as Markdown. The UI uses system fonts, with 16px Markdown
 body text and 14px monospace source and code. Artifacts also provide exact
 **View source** access. Raw HTML and unsafe links are disabled;

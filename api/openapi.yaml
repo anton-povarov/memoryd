@@ -519,10 +519,19 @@ components:
 
     SearchHit:
       type: object
-      required: [memory, excerpt]
+      required: [memory, excerpt, match_tier, score]
       properties:
         memory:
           $ref: "#/components/schemas/MemorySummary"
+        match_tier:
+          type: integer
+          minimum: 0
+          maximum: 1
+          description: "0 for complete whole-word/stem matches; 1 for fragment-dependent matches. Lower tiers sort first."
+        score:
+          type: number
+          format: double
+          description: "SQLite BM25 from the word index for tier 0 and trigram index for tier 1. When no indexed fragments match, tier 1 falls back to word-index BM25 or 0. Lower scores sort first within each match tier; ties sort by Memory ID. Scores from different indexes are not comparable across tiers."
         excerpt:
           type: array
           items:

@@ -26,14 +26,19 @@
     try {
       if (!markdown) throw new Error("Markdown unavailable");
       const frontmatter = content.match(
-        /^(\uFEFF?---[ \t]*\r?\n(?:[^\n]*\n)*?(?:---|\.\.\.)[ \t]*)(?:\r?\n|$)/,
+        /^(\uFEFF?---[ \t]*\r?\n((?:[^\n]*\n)*?)(?:---|\.\.\.)[ \t]*)(?:\r?\n|$)/,
       );
       rendered.innerHTML = markdown.render(
         frontmatter ? content.slice(frontmatter[0].length) : content,
       );
+      console.log(frontmatter);
       if (frontmatter) {
+        // frontmatter[0] - full match
+        // frontmatter[1] - full match without last eol
+        // frontmatter[2] - content without --- wrapping
         const source = document.createElement("pre");
-        source.textContent = frontmatter[1];
+        source.className = "markdown-frontmatter";
+        source.textContent = frontmatter[2];
         rendered.prepend(source);
       }
     } catch {
@@ -306,7 +311,6 @@
     elements.loadMore.hidden = !state.nextCursor;
   }
 
-
   function invalidateSearch() {
     state.searchGeneration += 1;
     state.searchLoading = false;
@@ -316,7 +320,6 @@
     elements.searchLoadMore.textContent = "Load more results";
     elements.searchView.hidden = true;
   }
-
 
   function searchResultStatus(response) {
     if (response.total === 0) return "No memories match this query.";
@@ -360,9 +363,16 @@
         const nextEnd = match.index + match[1].length;
         if (nextEnd <= end) continue;
         if (match.index < end) {
-          name.lastChild.textContent += memory.original_filename.slice(end, nextEnd);
+          name.lastChild.textContent += memory.original_filename.slice(
+            end,
+            nextEnd,
+          );
         } else {
-          name.append(document.createTextNode(memory.original_filename.slice(end, match.index)));
+          name.append(
+            document.createTextNode(
+              memory.original_filename.slice(end, match.index),
+            ),
+          );
           const marked = document.createElement("mark");
           marked.textContent = match[1];
           name.append(marked);
@@ -370,9 +380,11 @@
         end = nextEnd;
       }
       name.append(document.createTextNode(memory.original_filename.slice(end)));
-      const mediaType = document.createElement("span");
-      mediaType.textContent = displayMediaType(memory.media_type);
-      copy.append(name, mediaType);
+
+      const ranking = document.createElement("span");
+      ranking.textContent = `${hit.match_tier === 0 ? "Word match" : "Fragment match"} · Score ${hit.score.toPrecision(3)}`;
+      ranking.title = `Word matches sort before fragment matches, then lower BM25 scores first, then Memory ID. Fragment scores use the trigram index, falling back to word scores or 0 when no indexed fragments match. BM25: ${hit.score}`;
+      copy.append(name, ranking);
 
       if (hit.excerpt?.length) {
         const excerpt = document.createElement("span");
@@ -464,9 +476,7 @@
 
     const params = new URLSearchParams({ query, limit: "50", cursor });
     try {
-      const page = await requestJSON(
-        `${apiBase}/memories/search?${params}`,
-      );
+      const page = await requestJSON(`${apiBase}/memories/search?${params}`);
       if (generation !== state.searchGeneration || !state.searchVisible) return;
       if (page.next_cursor === cursor) {
         throw new Error("The server repeated its search continuation.");
@@ -492,7 +502,9 @@
       renderSearchResponse(state.searchResponse, { items, append: true });
     } catch (error) {
       if (generation !== state.searchGeneration || !state.searchVisible) return;
-      elements.searchStatus.textContent = searchResultStatus(state.searchResponse);
+      elements.searchStatus.textContent = searchResultStatus(
+        state.searchResponse,
+      );
       elements.searchError.textContent = `Could not load more results. ${error.message}`;
       elements.searchError.hidden = false;
     } finally {

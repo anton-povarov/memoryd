@@ -52,7 +52,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer memoryVault.Close() // nolint:errcheck
+	defer memoryVault.Close() // nolint:errcheck // close does not matter
 
 	httpServer, err := server.New(version, cfg, logger, memoryVault)
 	if err != nil {

@@ -26,7 +26,6 @@ const (
 	DefaultDataDir                    = "./data"
 	DefaultLogLevel                   = slog.LevelInfo
 	DefaultUnderstandingMaxConcurrent = 1
-	maxTCPPort                        = 65535
 )
 
 // Config is the complete configuration needed by the server.  Omitted YAML

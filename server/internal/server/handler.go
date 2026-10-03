@@ -165,6 +165,7 @@ func (h *Handler) SearchMemories(
 		}
 		items = append(items, api.SearchHit{
 			Memory: memorySummary(hit.Memory), Excerpt: excerpt,
+			MatchTier: hit.MatchTier, Score: hit.Score,
 		})
 	}
 	var nextCursor *string

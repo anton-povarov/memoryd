@@ -174,12 +174,13 @@ func searchResultQuery(terms []string, limit, offset int64) (string, []any) {
 	args := []any{
 		ftsTerms(terms, "AND"),
 		ftsTerms(terms, "OR"),
-		limit,
-		offset,
-		ftsTerms(terms, "OR"),
 	}
 	if len(longTerms) > 0 {
 		fragmentCondition = "memory_search_fragments MATCH ?"
+		args = append(args, ftsTerms(longTerms, "OR"))
+	}
+	args = append(args, limit, offset, ftsTerms(terms, "OR"))
+	if len(longTerms) > 0 {
 		args = append(args, ftsTerms(longTerms, "OR"))
 	}
 	shortBody, shortNote, shortDerived := "''", "''", "''"
@@ -206,12 +207,17 @@ func searchResultQuery(terms []string, limit, offset int64) (string, []any) {
 	query := `, precise AS MATERIALIZED (SELECT rowid FROM memory_search WHERE memory_search MATCH ?),
 		word_ranks AS MATERIALIZED (
 			SELECT rowid, bm25(memory_search) AS score FROM memory_search WHERE memory_search MATCH ?),
+		fragment_ranks AS MATERIALIZED (
+			SELECT rowid, bm25(memory_search_fragments) AS score
+			FROM memory_search_fragments WHERE ` + fragmentCondition + `),
 		selected AS MATERIALIZED (
 			SELECT matches.rowid, precise.rowid IS NULL AS tier,
-				COALESCE(word_ranks.score, 0) AS score, memories.id
+				CASE WHEN precise.rowid IS NOT NULL THEN COALESCE(word_ranks.score, 0)
+					ELSE COALESCE(fragment_ranks.score, word_ranks.score, 0) END AS score, memories.id
 			FROM matches JOIN memories ON memories.rowid = matches.rowid
 			LEFT JOIN precise ON precise.rowid = matches.rowid
 			LEFT JOIN word_ranks ON word_ranks.rowid = matches.rowid
+			LEFT JOIN fragment_ranks ON fragment_ranks.rowid = matches.rowid
 			ORDER BY tier, score, memories.id LIMIT ? OFFSET ?),
 		words AS MATERIALIZED (
 			SELECT rowid,
@@ -232,7 +238,8 @@ func searchResultQuery(terms []string, limit, offset int64) (string, []any) {
 			COALESCE(words.body, ''), COALESCE(fragments.body, ''),
 			COALESCE(words.note, ''), COALESCE(fragments.note, ''),
 			COALESCE(words.derived, ''), COALESCE(fragments.derived, ''),
-			` + shortBody + `, ` + shortNote + `, ` + shortDerived + `
+			` + shortBody + `, ` + shortNote + `, ` + shortDerived + `,
+			selected.tier, selected.score
 		FROM selected JOIN memories ON memories.rowid = selected.rowid
 		JOIN memory_search ON memory_search.rowid = selected.rowid
 		LEFT JOIN words ON words.rowid = selected.rowid

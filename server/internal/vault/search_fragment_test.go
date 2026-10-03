@@ -140,6 +140,9 @@ func TestSearchMemoriesFragmentTierAndStableTies(t *testing.T) {
 	if limited.Total != 2 || len(limited.Items) != 1 || limited.Items[0].Memory.ID != precise.ID {
 		t.Fatalf("precise-before-fragment limited page = %#v", limited)
 	}
+	if hit := limited.Items[0]; hit.MatchTier != 0 || hit.Score >= 0 {
+		t.Fatalf("whole-word ranking = tier %d, score %g", hit.MatchTier, hit.Score)
+	}
 
 	first := putSearchFixture(t, ctx, v, "aaaCIV2bbb", ImportContext{OriginalFilename: "tie-a.txt"})
 	second := putSearchFixture(
@@ -159,6 +162,9 @@ func TestSearchMemoriesFragmentTierAndStableTies(t *testing.T) {
 		gotIDs := make([]string, 0, len(page.Items))
 		seen := make(map[string]bool)
 		for _, hit := range page.Items {
+			if hit.MatchTier != 1 || hit.Score >= 0 {
+				t.Fatalf("trigram ranking = tier %d, score %g", hit.MatchTier, hit.Score)
+			}
 			id := hit.Memory.ID.String()
 			if seen[id] {
 				t.Fatalf("Memory %s appeared more than once: %#v", id, page.Items)
@@ -170,6 +176,59 @@ func TestSearchMemoriesFragmentTierAndStableTies(t *testing.T) {
 		}
 		if len(gotIDs) != len(wantIDs) || strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
 			t.Fatalf("same-tier tie order attempt %d = %v, want %v", attempt, gotIDs, wantIDs)
+		}
+	}
+}
+
+func TestSearchMemoriesTrigramRanking(t *testing.T) {
+	ctx := context.Background()
+	v := openInitializedSearchVault(t, ctx, t.TempDir())
+	precise := putSearchFixture(t, ctx, v, "needle ox "+strings.Repeat("background ", 120),
+		ImportContext{OriginalFilename: "precise.txt"})
+	strong := putSearchFixture(t, ctx, v, strings.Repeat("microneedleX ", 3)+"fox",
+		ImportContext{OriginalFilename: "strong.txt"})
+	weak := putSearchFixture(t, ctx, v, "microneedleX fox "+strings.Repeat("background ", 120),
+		ImportContext{OriginalFilename: "weak.txt"})
+	wantIDs := []string{precise.ID.String(), strong.ID.String(), weak.ID.String()}
+	for _, query := range []string{"needle", "needle ox"} {
+		cursor := ""
+		var previousScore float64
+		for index, wantID := range wantIDs {
+			page, err := v.SearchMemories(ctx, query, 1, cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if page.Total != 3 || len(page.Items) != 1 ||
+				page.Items[0].Memory.ID.String() != wantID {
+				t.Fatalf("query %q page %d = %#v, want Memory %s", query, index, page, wantID)
+			}
+			hit := page.Items[0]
+			wantTier := 1
+			if index == 0 {
+				wantTier = 0
+			}
+			if hit.MatchTier != wantTier || hit.Score >= 0 ||
+				(index == 2 && hit.Score <= previousScore) {
+				t.Fatalf("query %q page %d: tier %d, score %g, previous %g",
+					query, index, hit.MatchTier, hit.Score, previousScore)
+			}
+			previousScore = hit.Score
+			cursor = page.NextCursor
+			if (cursor != "") != (index < len(wantIDs)-1) {
+				t.Fatalf("query %q page %d cursor = %q", query, index, cursor)
+			}
+		}
+	}
+	short, err := v.SearchMemories(ctx, "ed", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if short.Total != 3 || len(short.Items) != 3 {
+		t.Fatalf("short-fragment matches = %#v", short)
+	}
+	for _, hit := range short.Items {
+		if hit.MatchTier != 1 || hit.Score != 0 {
+			t.Fatalf("short-fragment fallback = tier %d, score %g", hit.MatchTier, hit.Score)
 		}
 	}
 }

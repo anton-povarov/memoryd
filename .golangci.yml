@@ -45,6 +45,16 @@ linters:
         - fmt.Fprintln
         - fmt.Fprintf
 
+    gocritic:
+      # enable-all: true
+      enabled-tags:
+        - diagnostic
+      enabled-checks:
+        - httpNoBody
+      disabled-checks:
+        - commentedOutCode
+        - whyNoLint
+
     # revive:
     #   enable-all-rules: true
     #   rules:

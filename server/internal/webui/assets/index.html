@@ -98,30 +98,32 @@
               </button>
               <div class="detail-title-row">
                 <button class="button" id="back-to-search" type="button" aria-label="Back to search results" title="Back to search results" hidden>
-                  <span aria-hidden="true">←</span>
+                  <span aria-hidden="true">← Back</span>
                 </button>
                 <h2 id="detail-title"></h2>
               </div>
-              <div class="detail-pills" id="detail-pills"></div>
-            </div>
-            <div class="detail-actions">
-              <div class="understanding-toolbar">
-                <span id="understanding-status" role="status">Understanding unavailable</span>
-                <div class="rebuild-split">
-                  <button class="button" id="refresh-understanding" type="button" title="Rebuild Understanding; may incur model costs.">Rebuild</button>
-                  <button class="button" id="rebuild-note-toggle" type="button" aria-label="Rebuild with a note" popovertarget="rebuild-note-popover" aria-controls="rebuild-note-popover" aria-expanded="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
-                  </button>
-                </div>
-                <div id="rebuild-note-popover" popover="auto">
-                  <form id="rebuild-note-form">
-                    <label for="rebuild-user-note">User note</label>
-                    <textarea id="rebuild-user-note" rows="6" aria-describedby="rebuild-note-help"></textarea>
-                    <p id="rebuild-note-help">Saved for this Memory and reused by Rebuild. Clear it to rebuild without a note.</p>
-                    <button class="button" id="rebuild-note-submit" type="submit">Rebuild</button>
-                  </form>
+              <div class="detail-summary">
+                <div class="detail-pills" id="detail-pills"></div>
+                <div class="understanding-toolbar">
+                  <span id="understanding-status" role="status">Understanding unavailable</span>
+                  <div class="rebuild-split">
+                    <button class="button" id="refresh-understanding" type="button" title="Rebuild Understanding; may incur model costs.">Rebuild</button>
+                    <button class="button" id="rebuild-note-toggle" type="button" aria-label="Rebuild with a note" popovertarget="rebuild-note-popover" aria-controls="rebuild-note-popover" aria-expanded="false">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                    </button>
+                  </div>
+                  <div id="rebuild-note-popover" popover="auto">
+                    <form id="rebuild-note-form">
+                      <label for="rebuild-user-note">User note</label>
+                      <textarea id="rebuild-user-note" rows="6" aria-describedby="rebuild-note-help"></textarea>
+                      <p id="rebuild-note-help">Saved for this Memory and reused by Rebuild. Clear it to rebuild without a note.</p>
+                      <button class="button" id="rebuild-note-submit" type="submit">Rebuild</button>
+                    </form>
+                  </div>
                 </div>
               </div>
+            </div>
+            <div class="detail-actions">
               <a class="button button-dark" id="download-memory" href="#" download>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path>

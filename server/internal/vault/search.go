@@ -233,8 +233,10 @@ type SearchExcerptPart struct {
 }
 
 type SearchHit struct {
-	Memory  Memory
-	Excerpt []SearchExcerptPart
+	Memory    Memory
+	Excerpt   []SearchExcerptPart
+	MatchTier int
+	Score     float64
 }
 
 type SearchPage struct {
@@ -283,6 +285,8 @@ func (v *Vault) SearchMemories(
 	}
 	for rows.Next() {
 		var bodySnippet, fragmentBody, noteSnippet, fragmentNote, derivedSnippet, fragmentDerived, shortBody, shortNote, shortDerived string
+		var matchTier int
+		var score float64
 		memory, scanErr := scanMemory(
 			rows,
 			&bodySnippet,
@@ -294,6 +298,8 @@ func (v *Vault) SearchMemories(
 			&shortBody,
 			&shortNote,
 			&shortDerived,
+			&matchTier,
+			&score,
 		)
 		if scanErr != nil {
 			_ = rows.Close()
@@ -306,7 +312,9 @@ func (v *Vault) SearchMemories(
 				break
 			}
 		}
-		page.Items = append(page.Items, SearchHit{Memory: memory, Excerpt: excerpt})
+		page.Items = append(page.Items, SearchHit{
+			Memory: memory, Excerpt: excerpt, MatchTier: matchTier, Score: score,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
